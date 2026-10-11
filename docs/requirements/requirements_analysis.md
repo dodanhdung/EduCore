@@ -7,6 +7,7 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 | **1** | Xác định Actors, 15 User Stories, 43 FR, 14 NFR, 8 Business Rules. |
 | **2** | Làm rõ Role khác Job Position; cho phép một tài khoản có nhiều role; định hướng Automation-first / Human-in-the-loop; bổ sung US-16 đến US-19, FR-44 và FR-45, NFR-15 đến NFR-16, BR-09 đến BR-14. |
 | **3** | Chốt 14 Business Rules thành quy tắc có điều kiện/ngoại lệ rõ ràng; xác định tham số chính sách mặc định, phạm vi P0/P1 và minh họa kiểm thử; cập nhật sơ đồ Automation-first bằng tiếng Việt. |
+| **4** | Đưa thông báo **trong ứng dụng** về P0 (FR-37, phần P0 của FR-39) và dashboard **thống kê cơ bản** về P0 (phần P0 của FR-40); giữ thông báo email, nhắc deadline và báo cáo nâng cao ở P1. Đồng bộ US-02, US-15 và ranh giới triển khai. |
 
 ### 1.2. Thuật ngữ
 - **Role:** Nhóm quyền trong hệ thống (ví dụ `ACCOUNTANT`, `ACADEMIC_STAFF`); không đồng nhất với một vị trí tuyển dụng.
@@ -41,7 +42,7 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 | ID | User Story |
 |---|---|
 | US-01 | Là quản lý, tôi muốn quản lý thông tin giáo viên, học sinh, khóa học và lớp học để tổ chức hoạt động đào tạo. |
-| US-02 | Là quản lý, tôi muốn xem báo cáo tình trạng lớp học, học phí và tiến độ học tập để đánh giá hoạt động trung tâm. |
+| US-02 | Là quản lý, tôi muốn xem dashboard cơ bản về số học sinh, số lớp và công nợ (P0), sau đó xem báo cáo chi tiết tình trạng lớp học, học phí và tiến độ học tập (P1) để đánh giá hoạt động trung tâm. |
 | US-03 | Là quản lý, tôi muốn cấu hình vai trò và quyền truy cập để đảm bảo mỗi nhân viên chỉ được thực hiện các nghiệp vụ được cho phép. |
 
 ### 3.2. Giáo vụ 
@@ -70,7 +71,7 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 |---|---|
 | US-13 | Là học sinh, tôi muốn xem lịch học, nhận bài tập và nộp bài để hoàn thành nhiệm vụ học tập. |
 | US-14 | Là phụ huynh, tôi muốn theo dõi lịch học, chuyên cần, bài tập và học phí của con. |
-| US-15 | Là học sinh hoặc phụ huynh, tôi muốn nhận thông báo khi sắp đến hạn nộp bài hoặc lịch học thay đổi để không bỏ lỡ thông tin. |
+| US-15 | Là học sinh hoặc phụ huynh, tôi muốn nhận thông báo trong ứng dụng khi lịch học thay đổi hoặc có bài tập mới (P0), và được nhắc trước hạn nộp bài (P1), để không bỏ lỡ thông tin. |
 
 ### 3.6. Bổ sung
 | ID | User Story |
@@ -93,7 +94,7 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 ### 4.1. User & Access Management
 | ID | Functional Requirement | Priority |
 |---|---|---|
-| FR-01 | Hệ thống cho phép người dùng đăng nhập, đăng xuất và khôi phục mật khẩu. | P0 |
+| FR-01 | Hệ thống cho phép đăng nhập bằng email/mật khẩu, đăng xuất/thu hồi phiên và khôi phục mật khẩu bằng **OTP gửi email**; xác thực OTP do Backend thực hiện. | P0 |
 | FR-02 | Hệ thống cho phép quản lý tài khoản người dùng và trạng thái hoạt động. | P0 |
 | FR-03 | Hệ thống hỗ trợ phân quyền theo vai trò/quyền thao tác, đồng thời cho phép một tài khoản có nhiều vai trò trong cùng tenant. | P0 |
 | FR-04 | Hệ thống kiểm soát quyền truy cập theo phạm vi dữ liệu, ví dụ giáo viên chỉ được chấm điểm lớp mình phụ trách. | P0 |
@@ -153,17 +154,21 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 ### 4.7. Notification Management
 | ID | Functional Requirement | Priority |
 |---|---|---|
-| FR-37 | Hệ thống gửi thông báo khi lịch học thay đổi hoặc học sinh được giao bài tập mới. | P1 |
+| FR-37 | Hệ thống tạo và hiển thị **thông báo trong ứng dụng** cho đúng người nhận khi thay đổi lịch học đã được xác nhận hoặc khi giao bài tập mới (P0); có thể bổ sung kênh gửi ngoài ứng dụng như email ở P1. | **P0 (in-app); P1 (kênh ngoài)** |
 | FR-38 | Hệ thống tự động nhắc nhở trước deadline bài tập theo thời điểm được cấu hình. | P1 |
-| FR-39 | Hệ thống hỗ trợ lưu trạng thái gửi thông báo và xử lý gửi lại khi thất bại. | P1 |
+| FR-39 | Hệ thống lưu thông báo trong ứng dụng cùng trạng thái **chưa đọc/đã đọc** và chống tạo trùng cho cùng sự kiện (P0); theo dõi trạng thái gửi qua kênh ngoài và hỗ trợ retry khi gửi thất bại ở P1. | **P0 (in-app); P1 (gửi ngoài/retry)** |
+
+**Ranh giới MVP của Notification:** P0 chỉ yêu cầu thông báo in-app khi **lịch đã thay đổi hợp lệ** hoặc **bài tập mới đã được giao**; chỉ người nhận thuộc tenant/phạm vi hợp lệ được xem. Lỗi tạo/hiển thị thông báo không được làm mất kết quả nghiệp vụ gốc đã hoàn tất. P0 không bắt buộc email, push notification hay nhắc deadline tự động; retry tác vụ tự động có tác động dữ liệu theo BR-12 vẫn áp dụng độc lập.
 
 ### 4.8. Reporting & System Administration
 | ID | Functional Requirement | Priority |
 |---|---|---|
-| FR-40 | Hệ thống cung cấp báo cáo tổng quan số lượng học sinh, lớp học, tình trạng học tập và học phí. | P1 |
+| FR-40 | Hệ thống cung cấp **dashboard thống kê cơ bản** cho người có quyền: số lượng học sinh, số lớp học và công nợ học phí trong phạm vi tenant (P0); cung cấp báo cáo chi tiết tình trạng học tập, học phí, bộ lọc và phân tích mở rộng ở P1. | **P0 (dashboard cơ bản); P1 (báo cáo nâng cao)** |
 | FR-41 | Hệ thống lưu nhật ký thay đổi cho các thao tác quan trọng như đổi lịch, sửa hóa đơn và thay đổi phân quyền. | P0 |
 | FR-42 | Hệ thống hỗ trợ quản lý dữ liệu độc lập theo từng trung tâm, bảo đảm người dùng không truy cập dữ liệu của trung tâm khác. | P0* |
 | FR-43 | Hệ thống cho phép cấu hình chính sách riêng cho từng trung tâm như học phí và quy định nghỉ học. | P1 |
+
+**Ranh giới MVP của Reporting:** Dashboard P0 tổng hợp **số học sinh ghi danh ACTIVE (không đếm trùng), số lớp hoạt động và tổng khoản công nợ học phí chưa thu từ hóa đơn đã phát hành**, sau điều chỉnh/tín dụng đã phân bổ; phải thể hiện phạm vi/thời điểm dữ liệu, không gộp doanh thu với đã thu. Công thức chi tiết đã chốt tại Q-12 ở mục 7; báo cáo nâng cao vẫn thuộc P1.
 
 ### 4.9. Automation & Approval Workflow
 | ID | Functional Requirement | Priority |
@@ -196,7 +201,9 @@ NFR xác định các thuộc tính chất lượng và ràng buộc vận hành
 
 > **Lưu ý:** Các mục tiêu về độ sẵn sàng, sao lưu và hiệu năng áp dụng khi triển khai chính thức. Chưa được xem là đã đáp ứng nếu chưa kiểm thử.
 
-## 6. Business Rules — Bộ quy tắc nghiệp vụ chốt cho EduCore
+## 6. Business Rules — Bộ quy tắc nghiệp vụ chốt cho EduCore (Baseline v3)
+
+**Trạng thái:** Được lựa chọn làm **baseline thiết kế và kiểm thử cho đồ án EduCore**. Đây là **các quyết định nghiệp vụ đề xuất**, được cụ thể hóa từ các câu hỏi BR-01 đến BR-14 ở phiên bản 2; **chưa phải chính sách đã được một trung tâm thực tế xác nhận**. Khi triển khai thương mại, trung tâm cần chấp thuận hoặc điều chỉnh các tham số ở mục 6.2 trước khi áp dụng. Giữ nguyên mã BR để truy vết đến FR, Use Case và Test Case.
 
 ### 6.1. Quy tắc nghiệp vụ đã xác định
 
@@ -219,7 +226,7 @@ NFR xác định các thuộc tính chất lượng và ràng buộc vận hành
 
 ### 6.2. Các tham số chính sách mặc định đề xuất
 
-Các giá trị dưới đây được **chọn để thống nhất thiết kế và viết test**, **không phải dữ liệu khảo sát từ trung tâm**.
+Các giá trị dưới đây được **chọn để thống nhất thiết kế và viết test**, **không phải dữ liệu khảo sát từ trung tâm**. Trong MVP có thể lưu dưới dạng cấu hình cố định của tenant thử nghiệm; đến P1 cần hỗ trợ cấu hình theo FR-43/FR-44 mà vẫn lưu phiên bản chính sách theo BR-14.
 
 | Tham số | Giá trị baseline | BR liên quan |
 |---|---|---|
@@ -276,3 +283,4 @@ flowchart TD
 **Trạng thái workflow dùng ở baseline:** `DRAFT`, `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `NEEDS_INFORMATION`, `COMPLETED`, `FAILED`. `SELF_APPROVED` là **cờ kiểm toán** đối với quyết định tự duyệt, **không phải trạng thái workflow**. Luồng chuyển trạng thái chi tiết của từng nghiệp vụ được xây dựng ở Detailed Design.
 
 **Quy tắc thay đổi sau khi chốt:** Nếu thay đổi hạn xin nghỉ, thời hạn học bù, công thức giảm giá, người có quyền phê duyệt hoặc mức tự động hóa, phải tăng phiên bản tài liệu, cập nhật Business Rules liên quan và đối chiếu lại FR/Use Cases/Test Cases. Không tự ý thay đổi các giả định trên khi lập trình.
+
