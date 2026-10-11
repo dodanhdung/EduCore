@@ -5,7 +5,8 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 | Phiên bản | Thay đổi |
 |---|---|
 | **1** | Xác định Actors, 15 User Stories, 43 FR, 14 NFR, 8 Business Rules. |
-| **2** | Làm rõ Role khác Job Position; cho phép một tài khoản có nhiều role; định hướng Automation-first / Human-in-the-loop; bổ sung US-16 đến US-19, FR-44 và FR-45, NFR-15 đến NFR-16, BR-09 đến BR-14.|
+| **2** | Làm rõ Role khác Job Position; cho phép một tài khoản có nhiều role; định hướng Automation-first / Human-in-the-loop; bổ sung US-16 đến US-19, FR-44 và FR-45, NFR-15 đến NFR-16, BR-09 đến BR-14. |
+| **3** | Chốt 14 Business Rules thành quy tắc có điều kiện/ngoại lệ rõ ràng; xác định tham số chính sách mặc định, phạm vi P0/P1 và minh họa kiểm thử; cập nhật sơ đồ Automation-first bằng tiếng Việt. |
 
 ### 1.2. Thuật ngữ
 - **Role:** Nhóm quyền trong hệ thống (ví dụ `ACCOUNTANT`, `ACADEMIC_STAFF`); không đồng nhất với một vị trí tuyển dụng.
@@ -195,44 +196,83 @@ NFR xác định các thuộc tính chất lượng và ràng buộc vận hành
 
 > **Lưu ý:** Các mục tiêu về độ sẵn sàng, sao lưu và hiệu năng áp dụng khi triển khai chính thức. Chưa được xem là đã đáp ứng nếu chưa kiểm thử.
 
-## 6. Business Rules — Quy tắc nghiệp vụ cần xác nhận
-| ID | Business Rule cần xác định |
+## 6. Business Rules — Bộ quy tắc nghiệp vụ chốt cho EduCore
+
+### 6.1. Quy tắc nghiệp vụ đã xác định
+
+| ID | Quy tắc đã chọn | Phạm vi triển khai |
+|---|---|---|
+| **BR-01 — Xung đột lịch** | Hai buổi `A`, `B` bị trùng khi `A.start < B.end` **và** `B.start < A.end`, đồng thời cùng sử dụng **ít nhất một** giáo viên, phòng học (nếu học trực tiếp) hoặc học sinh trong cùng tenant. Lịch bận đã xác nhận của giáo viên/học sinh cũng được tính là xung đột. Lịch `CANCELLED` không chiếm tài nguyên; hai buổi tiếp giáp tại thời điểm kết thúc/bắt đầu không bị coi là trùng. Không cho xác nhận lịch còn xung đột hoặc vượt sức chứa phòng/lớp. Kiểm tra lại tính khả dụng khi ghi dữ liệu để hạn chế đặt trùng đồng thời. | **P0** |
+| **BR-02 — Điều kiện học bù** | Chỉ cho đăng ký học bù khi có **một buổi nghỉ có phép đã duyệt** và chưa dùng quyền học bù; buổi học thay thế phải cùng môn và trình độ tương đương, còn chỗ, không trùng lịch học sinh, nằm trong hạn học bù và nội dung tương đương (nếu không xác định được mức tương đương thì chuyển người có quyền duyệt). Buổi học bù phải liên kết với buổi nghỉ gốc; không làm thay đổi danh sách học sinh chính thức của lớp đích. | **P1** |
+| **BR-03 — Số lần và thời hạn học bù** | **Một buổi nghỉ có phép tối đa một lượt học bù được sử dụng**, trong vòng **30 ngày** kể từ ngày học gốc. Được đổi lịch học bù trước khi diễn ra nếu còn hợp lệ; học bù đã tham dự hoặc vắng không phép thì đóng quyền học bù. Nếu trung tâm hủy buổi học bù, học sinh được sắp lại trong thời hạn còn lại; trường hợp hết hạn do phía trung tâm chuyển duyệt ngoại lệ. **Không được tính học phí hai lần** cho buổi gốc và buổi học bù thay thế. | **P1** |
+| **BR-04 — Nghỉ học và số buổi tính phí** | Đơn nghỉ được gửi **ít nhất 24 giờ** trước giờ bắt đầu và được chấp thuận thì ghi nhận `EXCUSED`; nộp muộn chỉ được tính `EXCUSED` khi người có quyền duyệt ngoại lệ. Buổi `ATTENDED` và `UNEXCUSED` được tính **1 buổi tính phí**; buổi `EXCUSED` được tính **0**; buổi do trung tâm hủy được tính **0**. Nếu học bù cho buổi `EXCUSED` được thực hiện, chỉ buổi học bù được tính **1** (hoặc trừ 1 quyền học trong gói trả trước), buổi gốc vẫn là **0**. Vắng không phép tại buổi học bù đã giữ chỗ tính **1**; buổi học bù bị trung tâm hủy tính **0**. Không chốt bảng kê tự động nếu điểm danh chưa được xác nhận. | **P0** (nghỉ/điểm danh/tính phí); **P1** (học bù) |
+| **BR-05 — Bảo lưu** | Bảo lưu có ngày bắt đầu, ngày kết thúc và phải được người có quyền phê duyệt. Trong khoảng bảo lưu, không tính buổi học phát sinh cho học sinh; số tiền đã đóng cho **các buổi chưa sử dụng** được giữ dưới dạng **số dư tín dụng học phí**, không tự động hoàn tiền. Khi quay lại, phải kiểm tra trình độ, lịch, sức chứa trước khi xếp lớp; tín dụng còn lại được khấu trừ vào học phí tương lai. Mọi hoàn/điều chỉnh tiền phải đi qua quy trình tài chính có kiểm soát, không sửa trực tiếp hóa đơn đã phát hành. | **P1** |
+| **BR-06 — Giảm giá và thứ tự tính** | Học sinh được nhận ưu đãi anh/chị/em khi **quan hệ anh chị em được xác minh** và các em có ghi danh hợp lệ cùng tenant; ưu đãi combo chỉ áp dụng cho **gói đóng trước đủ 6 tháng**. Mặc định cho phép áp dụng đồng thời hai ưu đãi: **combo 5% trước, anh/chị/em 10% sau** trên số tiền còn lại. Không cộng trực tiếp thành 15% (tổng ưu đãi thực tế khi đủ hai điều kiện là **14,5%**). Không áp dụng cùng lúc ưu đãi khác nếu chưa có chính sách riêng; số tiền cuối cùng không âm, làm tròn đến đồng Việt Nam khi kết thúc phép tính. Chỉ áp dụng điều kiện và mức giá có hiệu lực tại thời điểm lập khoản tính phí, không tự tính lại hóa đơn đã phát hành. | **P0** (một loại ưu đãi); **P1** (kết hợp ưu đãi, cấu hình) |
+| **BR-07 — Giáo viên dạy thay** | Giáo viên thay thế phải thuộc cùng tenant, đáp ứng môn/chuyên môn, cấp độ giảng dạy phù hợp, còn khả dụng trong toàn bộ buổi học và không vượt giới hạn phân công. Hệ thống **đề xuất**, giáo viên thay thế **xác nhận nhận lớp**, sau đó người có quyền **xác nhận phân công**. Chỉ khi đủ các điều kiện mới cập nhật lịch chính thức và gửi thông báo; nếu không có người phù hợp thì tạo ngoại lệ để đổi/hủy lịch, không tự phân công người không đạt điều kiện. | **P1** |
+| **BR-08 — Thẩm quyền phê duyệt** | Việc duyệt dựa trên **permission + phạm vi tenant/lớp**, không dựa đơn thuần vào tên role. Mặc định: học bù/bảo lưu/dạy thay/ngoại lệ lịch thuộc `ACADEMIC_STAFF` hoặc `MANAGER` được cấp quyền tương ứng; phát hành/điều chỉnh hóa đơn thuộc `ACCOUNTANT` hoặc `MANAGER` được cấp quyền tài chính tương ứng. Phê duyệt ngoại lệ phải ghi **người duyệt, thời điểm, lý do và kết quả**. Vai trò chỉ có quyền xem không được duyệt. | **P0** (quyền mặc định); **P1** (quy trình duyệt nâng cao) |
+| **BR-09 — Tự động hay chờ duyệt** | Chỉ xử lý tự động khi: người/sự kiện gọi hợp lệ; dữ liệu đầy đủ; cùng tenant; không vi phạm ràng buộc; nghiệp vụ nằm trong danh sách được tự động hóa; và không cần phê duyệt theo chính sách đang hiệu lực. Nếu **thiếu dữ liệu**, chuyển `NEEDS_INFORMATION`; nếu **hợp lệ nhưng cần duyệt/ngoại lệ**, chuyển `PENDING_APPROVAL`; nếu **xung đột hoặc vi phạm quy tắc cấm**, từ chối thao tác, không tự ghi kết quả. Giai đoạn P0 chỉ tự động kiểm tra xung đột, tính phí và tạo **hóa đơn dự thảo**, không mặc định tự phê duyệt hành động nhạy cảm. | **P0** (giới hạn); **P1** (mở rộng) |
+| **BR-10 — Không có Giáo vụ/Kế toán riêng** | Mỗi tenant đang hoạt động phải có **ít nhất một tài khoản Manager hợp lệ**. Khi không có tài khoản Giáo vụ/Kế toán riêng, Manager có permission thích hợp đảm nhiệm công việc phê duyệt tương ứng. Không tự cấp quyền cho một người chỉ vì role nghiệp vụ vắng mặt; không cho truy cập vượt tenant hoặc phạm vi được giao. | **P0** |
+| **BR-11 — Tự phê duyệt và tách nhiệm vụ** | Với yêu cầu thông thường, người tạo **có thể** tự duyệt nếu có permission và chính sách cho phép. **Điều chỉnh/hủy hóa đơn đã phát hành** luôn phải được xét duyệt thủ công, có lý do và audit log; ưu tiên **người duyệt khác người tạo** nếu có người đủ quyền. Đối với trung tâm chỉ có một Manager, cho phép Manager tự duyệt ngoại lệ tài chính để không khóa hoạt động, nhưng phải đánh dấu `SELF_APPROVED`, lưu lý do và lịch sử thay đổi; không bao giờ tự động duyệt loại này. | **P0** (kiểm soát thủ công); **P1** (cấu hình tách nhiệm vụ) |
+| **BR-12 — Xử lý lỗi tác vụ** | Mỗi thao tác tự động có mã chống lặp (*idempotency key*) để retry không sinh thêm buổi học, hóa đơn hoặc thanh toán. Với lỗi tạm thời, thử lại tối đa **3 lần** có giãn cách; sau đó chuyển `FAILED` và thông báo người quản lý xử lý. Với thiếu dữ liệu, chuyển `NEEDS_INFORMATION`, không retry vô hạn. Với yêu cầu cần duyệt nhưng chưa có người thích hợp, giữ `PENDING_APPROVAL` và thông báo Manager; **không bỏ qua bước duyệt**. | **P0** cho tác vụ tác động dữ liệu |
+| **BR-13 — Những quyết định không tự xác nhận mặc định** | Hệ thống **được tự tạo hóa đơn dự thảo**, nhưng **không tự phát hành hóa đơn** trong P0; người có quyền phải xác nhận phát hành. Hệ thống **không tự phân công giáo viên dạy thay** và **không tự chuyển lớp** theo mặc định; hai nghiệp vụ chỉ có hiệu lực sau khi được xác nhận đúng quyền và điều kiện. Ở P1, từng tenant **có thể** bật tự xác nhận các trường hợp rủi ro thấp khi thỏa chính sách BR-09/BR-14; điều chỉnh/hủy hóa đơn đã phát hành vẫn không được tự duyệt. | **P0** (giới hạn an toàn); **P1** (cấu hình tự động) |
+| **BR-14 — Chính sách theo tenant và phiên bản** | Chính sách nghiệp vụ/giảm giá/tự động hóa thuộc **tenant** và có `policy_version`, thời điểm hiệu lực và người sửa. Khi một yêu cầu được tạo, hệ thống gắn **phiên bản chính sách đã dùng**; xử lý lại/retry không âm thầm đổi phiên bản. Chính sách mới áp dụng cho yêu cầu tạo sau ngày hiệu lực, **không áp dụng hồi tố** cho hóa đơn đã phát hành; nếu muốn thay đổi kết quả cũ phải tạo nghiệp vụ điều chỉnh được ủy quyền. **Quyền truy cập luôn kiểm tra theo quyền hiện hành tại thời điểm thực thi**, kể cả khi yêu cầu từng được tạo hợp lệ. | **P0** (tenant isolation, audit); **P1** (quản trị phiên bản chính sách) |
+
+### 6.2. Các tham số chính sách mặc định đề xuất
+
+Các giá trị dưới đây được **chọn để thống nhất thiết kế và viết test**, **không phải dữ liệu khảo sát từ trung tâm**.
+
+| Tham số | Giá trị baseline | BR liên quan |
+|---|---|---|
+| `absence_notice_hours` | **24 giờ** trước buổi học; trường hợp khẩn cấp chuyển duyệt thủ công | BR-04 |
+| `makeup_valid_days` | **30 ngày** tính từ ngày buổi nghỉ gốc | BR-03 |
+| `makeup_max_used_per_absence` | **1 lượt** trên mỗi buổi nghỉ có phép | BR-03 |
+| `sibling_discount_rate` | **10%** sau khi xác minh quan hệ anh/chị/em | BR-06 |
+| `six_month_prepaid_discount_rate` | **5%** cho gói trả trước đủ 6 tháng | BR-06 |
+| `discount_application_order` | Combo **trước**, anh/chị/em **sau** | BR-06 |
+| `auto_retry_max_attempts` | **3 lần thử lại** cho lỗi tạm thời, cùng idempotency key | BR-12 |
+| `invoice_auto_issue` | **false** ở MVP: chỉ tự tạo dự thảo | BR-13 |
+| `teacher_substitution_auto_confirm` | **false** mặc định | BR-07, BR-13 |
+| `student_transfer_auto_confirm` | **false** mặc định | BR-13 |
+
+**Phân biệt khoản thu:** `hóa đơn` trong phạm vi EduCore là **chứng từ/bảng kê học phí nội bộ**, không mặc nhiên là **hóa đơn điện tử hợp pháp**. Phát hành hóa đơn điện tử theo quy định thuế hoặc hoàn tiền qua cổng thanh toán cần được đặc tả thành chức năng riêng nếu đưa vào phạm vi sau này.
+
+### 6.3. Ánh xạ về yêu cầu hệ thống
+
+| Nhóm Business Rules | Các FR liên quan chính |
 |---|---|
-| BR-01 | Hai buổi học như thế nào được xem là trùng lịch? Những tài nguyên nào không được phép trùng? |
-| BR-02 | Điều kiện để một học sinh được học bù là gì? Cần cùng trình độ, còn chỗ và không trùng lịch hay còn điều kiện khác? |
-| BR-03 | Mỗi buổi nghỉ được học bù tối đa bao nhiêu lần? Học bù có phát sinh thêm học phí không? |
-| BR-04 | Học sinh nghỉ có phép được giảm học phí trong trường hợp nào? Nghỉ không phép được xử lý ra sao? |
-| BR-05 | Khi bảo lưu, học phí đã đóng được giữ thành tín dụng, hoàn lại hay xử lý bằng cách khác? |
-| BR-06 | Một học sinh được áp dụng đồng thời giảm giá anh em ruột và combo 6 tháng không? Nếu có, tính theo thứ tự nào? |
-| BR-07 | Giáo viên dạy thay có bắt buộc cùng chuyên môn, trình độ hoặc thỏa mãn điều kiện được phân công không? |
-| BR-08 | Ai có quyền phê duyệt học bù, bảo lưu, dạy thay và điều chỉnh hóa đơn? |
-| **BR-09** | Điều kiện/giới hạn nào để xử lý **tự động hoàn toàn**, và điều kiện nào bắt buộc tạo yêu cầu phê duyệt? |
-| **BR-10** | Ai có quyền phê duyệt mỗi loại ngoại lệ nếu trung tâm **không có tài khoản Giáo vụ hoặc Kế toán riêng**? |
-| **BR-11** | Với từng loại nghiệp vụ, có cho phép người tạo yêu cầu **tự phê duyệt** không? Giao dịch nào phải tách người tạo và người duyệt? |
-| **BR-12** | Nếu tác vụ tự động lỗi, thiếu dữ liệu, hoặc không có người đủ quyền xử lý thì trạng thái chờ, cơ chế thử lại và thông báo được xử lý ra sao? |
-| **BR-13** | Việc tự động phát hành hóa đơn, phân công giáo viên thay thế hoặc chuyển lớp có được cho phép mặc định không? Điều kiện cần để xác nhận thay mặt con người là gì? |
-| **BR-14** | Quy tắc/phạm vi tự động hóa có được cấu hình riêng theo tenant không? Khi chính sách thay đổi, yêu cầu đã tạo trước đó áp dụng phiên bản chính sách nào? |
+| BR-01 | FR-11, FR-12, FR-13, FR-14, FR-16 |
+| BR-02, BR-03 | FR-18, FR-19, FR-20, FR-21 |
+| BR-04, BR-05, BR-06 | FR-18, FR-19, FR-22, FR-23, FR-25 đến FR-31 |
+| BR-07 | FR-09, FR-13, FR-24 |
+| BR-08 đến BR-11 | FR-03, FR-04, FR-05, FR-41, FR-44, FR-45 |
+| BR-12 | FR-39, FR-41, FR-45; NFR-15, NFR-16 |
+| BR-13 | FR-10, FR-24, FR-29, FR-31, FR-44, FR-45 |
+| BR-14 | FR-42, FR-43, FR-44; NFR-16 |
 
-**Quan trọng:** Không tự động mặc định rằng mọi buổi nghỉ có phép đều được miễn học phí; mỗi trung tâm có thể áp dụng chính sách khác nhau.
-
-
-### Quy trình Automation-first & Human-in-the-loop
+### 6.4. Quy trình Automation-first & Human-in-the-loop
 
 ```mermaid
 flowchart TD
-    A[User request / Scheduled event] --> B[Check authorization and tenant scope]
-    B --> C[Validate data and apply business rules]
-    C --> D{Eligible for auto-processing?}
-    D -- Yes --> E[Execute authorized automatic action]
-    D -- No --> F[Create exception / approval request]
-    F --> G[Authorized user reviews]
-    G --> H{Approve?}
-    H -- Yes --> I[Execute approved action]
-    H -- No --> J[Reject / request more information]
-    E --> K[Persist result and audit trail]
+    A["Yêu cầu người dùng / Sự kiện theo lịch"] --> B{"Hợp lệ về quyền và phạm vi tenant?"}
+    B -- "Không" --> X["Từ chối truy cập"]
+    B -- "Có" --> C{"Dữ liệu đầy đủ và hợp lệ?"}
+    C -- "Không" --> N["Yêu cầu bổ sung thông tin"]
+    C -- "Có" --> D{"Đủ điều kiện tự động xử lý?"}
+    D -- "Có" --> E["Thực hiện thao tác tự động được phép"]
+    D -- "Không - cần duyệt" --> F["Tạo yêu cầu ngoại lệ / phê duyệt"]
+    D -- "Không - vi phạm quy tắc cấm" --> X
+    F --> G["Người có quyền xem xét"]
+    G --> H{"Phê duyệt?"}
+    H -- "Có" --> I["Kiểm tra lại quyền và điều kiện, rồi thực hiện"]
+    H -- "Không" --> J["Từ chối / Yêu cầu bổ sung thông tin"]
+    X --> K["Lưu kết quả và nhật ký"]
+    N --> K
+    E --> K
     I --> K
     J --> K
-    K --> L[Notify relevant users]
+    K --> L["Thông báo cho người dùng liên quan khi cần"]
 ```
 
-**Trạng thái workflow tham khảo:** `DRAFT`, `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `NEEDS_INFORMATION`, `COMPLETED`, `FAILED` (cần xác định trạng thái nào áp dụng cho từng loại yêu cầu ở Detailed Design).
+**Trạng thái workflow dùng ở baseline:** `DRAFT`, `PENDING_APPROVAL`, `APPROVED`, `REJECTED`, `NEEDS_INFORMATION`, `COMPLETED`, `FAILED`. `SELF_APPROVED` là **cờ kiểm toán** đối với quyết định tự duyệt, **không phải trạng thái workflow**. Luồng chuyển trạng thái chi tiết của từng nghiệp vụ được xây dựng ở Detailed Design.
+
+**Quy tắc thay đổi sau khi chốt:** Nếu thay đổi hạn xin nghỉ, thời hạn học bù, công thức giảm giá, người có quyền phê duyệt hoặc mức tự động hóa, phải tăng phiên bản tài liệu, cập nhật Business Rules liên quan và đối chiếu lại FR/Use Cases/Test Cases. Không tự ý thay đổi các giả định trên khi lập trình.
