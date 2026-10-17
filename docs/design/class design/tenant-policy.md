@@ -213,3 +213,8 @@ apps/api/src/modules/tenant-policy/
 ```
 
 Không bắt buộc tạo đủ thư mục/abstraction nếu module ít CRUD. **Controller không giữ business rule; guard/check quyền không chỉ nằm ở Controller**, phải đánh giá lại trong service khi xử lý job/duyệt. Các enum nghiệp vụ áp dụng TypeScript và PostgreSQL CHECK/constraint, kiểu VND dùng `bigint` hoặc `Decimal` đúng ngữ cảnh; REST JSON serialize `bigint` thành string.
+
+## P0 bootstrap approved 17/10/2026
+
+- Ops CLI provisions tenant with immutable initial policy version and first Manager membership using one DB transaction. Manager completes OTP ACTIVATION and sets own Argon2id password; tenant is operational only after active Manager. This is an operations bootstrap, NOT P1 tenant lifecycle management UI. Do not email temporary passwords or general-purpose invitation email in P0.
+- Source of truth: Requirements Analysis v5; API + Detailed Design Approved group A. Policy snapshots are pinned and not changed during retries; authorization rechecked dynamically.
