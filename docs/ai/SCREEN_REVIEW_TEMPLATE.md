@@ -1,6 +1,6 @@
 # EduCore — Single Screen Review and Handoff Template
 
-> Copy to `docs/vibecoding/screens/<SCREEN_ID>.md` only for a planned, approved-review task. Status starts `PROPOSED`, never `APPROVED` automatically. Screen IDs from `SCREEN_MAP.md` are canonical. Route/UI fields are **proposals** until reviewer confirms.
+> Copy to `docs/ai/screens/<SCREEN_ID>.md` only for a planned, approved-review task. Status starts `PROPOSED`, never `APPROVED` automatically. Screen IDs from `SCREEN_MAP.md` are canonical. Route/UI fields are **proposals** until reviewer confirms.
 
 ## Metadata
 

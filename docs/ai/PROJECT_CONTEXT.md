@@ -19,7 +19,7 @@ EduCore is a **multi-tenant learning-center management web app** for scheduling 
 | Logical class/service ports | `docs/design/class design/<module>.md` | Module in question only |
 | Transaction/state implementation design | `docs/design/detailed_des.md` | Group A approved decisions + per-slice pending |
 | External REST contract proposal | `docs/design/api_spec.md` | API v1 after group A; not live API |
-| Routes/screens | `docs/vibecoding/SCREEN_MAP.md` and `SCREEN_SPECIFICATIONS.md` | Canonical 71 design units with detailed per-screen card; UI routes/proposals, not business source |
+| Routes/screens | `docs/ai/SCREEN_MAP.md` and `SCREEN_SPECIFICATIONS.md` | Canonical 71 design units with detailed per-screen card; UI routes/proposals, not business source |
 
 **Version caveat:** `main` inspected on 17/10/2026 was a minimal frontend/backend scaffold with an older Requirements document; v5/design group-A updates were in a **separate PR #1**, not guaranteed merged. Each coding session must inspect the **current checkout**, not assume PR is integrated.
 

@@ -1,6 +1,6 @@
 # EduCore — Vertical Slice Specification Template
 
-> **Instruction:** Copy this file as `docs/vibecoding/features/<feature-slug>.md` only after explicit approval. Replace bracketed fields; mark unresolved technical choices `PROPOSED` or `NEEDS_DECISION`, never quietly assume `APPROVED`. This is a feature-slice spec, not a replacement for FR/UC.
+> **Instruction:** Copy this file as `docs/ai/features/<feature-slug>.md` only after explicit approval. Replace bracketed fields; mark unresolved technical choices `PROPOSED` or `NEEDS_DECISION`, never quietly assume `APPROVED`. This is a feature-slice spec, not a replacement for FR/UC.
 
 ## Metadata
 

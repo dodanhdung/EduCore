@@ -12,7 +12,7 @@ Use this skill only when asked to design/implement/test **one named feature slic
 ## Strict gates
 
 1. Check git ref and inspect current files; confirm Requirements v5 and approved design group A exist **in checked-out branch**. If missing, flag mismatch; do not silently use outdated docs.
-2. Read `docs/vibecoding/PROJECT_CONTEXT.md`, feature slice spec (if none exists: use `FEATURE_SPEC_TEMPLATE.md` and produce **review draft only**), relevant UC and acceptance cases + related FR/BR/Q, one module class design, owned DB/API sections. Read only relevant sections.
+2. Read `docs/ai/PROJECT_CONTEXT.md`, feature slice spec (if none exists: use `FEATURE_SPEC_TEMPLATE.md` and produce **review draft only**), relevant UC and acceptance cases + related FR/BR/Q, one module class design, owned DB/API sections. Read only relevant sections.
 3. Before code show a concise plan: source IDs, priorities P0/P1, actor/permissions/scope, operations/state transitions, affected tables, transaction boundary, touched file list, tests and unresolved decisions. Design remains `PROPOSED` unless explicitly approved.
 4. When approval to implement exists: write minimal code under allowed paths, make backend authorization server-side, enforce composite tenant references + per-record scope, audit/immutability, idempotency and outbox when applicable. `APPROVED` vs `COMPLETED` stays distinct. No fake API behavior.
 5. Add test cases for success, invalid input, 401/403, wrong tenant, wrong student/class scope, race/duplicate, retry, failed transaction, business invariants and P0/P1 boundary. For PG-specific locking use real DB integration tests rather than mocks only.

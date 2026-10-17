@@ -26,7 +26,7 @@ If missing, outdated, conflicting, or not merged: **report it**. Do not claim th
 
 ## Efficient task workflow
 
-1. Read `docs/vibecoding/PROJECT_CONTEXT.md` **and only relevant FR/UC/Q/BR, design sections, API endpoints and module file**.
+1. Read `docs/ai/PROJECT_CONTEXT.md` **and only relevant FR/UC/Q/BR, design sections, API endpoints and module file**.
 2. For UI tasks: use `.agents/skills/educore-ui-slice/SKILL.md`, ONE canonical ID from `SCREEN_MAP.md`, ONLY that card in `SCREEN_SPECIFICATIONS.md`, plus approved `DESIGN_TOKENS.md` / `UI_GUIDELINES.md` sections; never paste all 71 cards. Canonical IDs are AU01/G01/SC03/BL07 (v0.9 IDs aliases only). For full stack tasks: use `educore-feature-slice`.
 3. Inspect repository state. State allowed file paths, expected outputs, acceptance tests, and unresolved questions. If an unresolved decision changes business behavior or security, **stop that part and ask for approval**; proceed only with independent safe work.
 4. Implement minimally, add meaningful tests, run available relevant checks, summarize what **actually ran** and what was skipped.

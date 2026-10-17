@@ -105,7 +105,7 @@ Codex returns list of changed files and actual verification. **Wait for explicit
 ### A — Context discovery (cheap)
 
 ```text
-Use AGENTS.md and docs/vibecoding/PROJECT_CONTEXT.md.
+Use AGENTS.md and docs/ai/PROJECT_CONTEXT.md.
 Task: inspect UC-XX / FR-XX for [one feature]. Read only relevant Q/BR, the module class design,
 database tables and the API section. Read current code in touched directories.
 Return: scope P0/P1; existing vs absent source code; exact files needed;

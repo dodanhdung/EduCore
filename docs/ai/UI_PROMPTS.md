@@ -12,7 +12,7 @@
 
 ```text
 Task: Draft a design for [SCREEN_ID — Vietnamese title] only. Status PROPOSED.
-Review: docs/vibecoding/SCREEN_MAP.md row [SCREEN_ID], the matching single card
+Review: docs/ai/SCREEN_MAP.md row [SCREEN_ID], the matching single card
 in SCREEN_SPECIFICATIONS.md, DESIGN_TOKENS.md, relevant Fxx from SCREEN_FLOWS.md,
 and UC-XX/Q-XX (only needed sections).
 Frame: [desktop 1440x900 / mobile 390x844]; actor and object scope: [...].
