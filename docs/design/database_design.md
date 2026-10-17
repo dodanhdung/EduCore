@@ -1,5 +1,12 @@
 # EduCore — Database Design
 
+**Phiên bản:** 1.1 — 17/10/2026  
+**Trạng thái:** Approved — quyết định nhóm A (SQL migrations chưa được kiểm thử)  
+**Đầu vào:** `requirements_analysis(7).md` (FR-01–FR-45, BR-01–BR-14), `specification(1).md` (UC-01–UC-37, Q-01–Q-15), `architectural_design(1).md` (kiến trúc và ADR).  
+**Đầu ra:** thiết kế logic/physical ở mức bảng, ERD, FK, UNIQUE, CHECK, index, transaction và roadmap schema. **Không phải** schema đã migration hay kết quả đã kiểm thử trên PostgreSQL.
+
+> **Phân biệt nguồn và đề xuất:** Các mã FR/UC/BR/Q, trạng thái và tham số ghi là **Baseline** đến từ ba tài liệu. Tên bảng, cách tách thực thể, index, kiểu cột và giải pháp SQL là **Đề xuất Database Design**, chưa được nguồn xác nhận như lựa chọn triển khai cuối cùng. Không tự bổ sung nghiệp vụ ngoài P0.
+
 ## 1. Phạm vi và quyết định thiết kế
 
 | Chủ đề | Thiết kế |
@@ -139,6 +146,12 @@ erDiagram
 
 **Quy tắc profile–membership:** Giáo viên/học sinh có thể được tạo hồ sơ trước khi có tài khoản; `teacher_profiles.membership_id` và `student_profiles.membership_id` được phép `NULL`, nếu có thì phải trỏ tới membership **cùng tenant** và unique (một membership không gắn hai hồ sơ giáo viên/học sinh cùng loại). Liên kết phụ huynh dùng membership đã xác minh, không phụ thuộc việc học sinh có login.
 
+#### Quyết định IAM nhóm A (Approved 17/10/2026)
+- P0 seed permission catalog/mapping role cố định, có kiểm soát version; role editor động chỉ ở P1. Danh mục quyền xem Detailed Design §A.2. Quyền được kiểm tra cùng tenant, scope TENANT/CLASS/STUDENT và parent-student verified link.
+- users.status bổ sung PENDING_ACTIVATION/ACTIVE/DISABLED và activated_at nullable. OTP có purpose ACTIVATION/PASSWORD_RESET (giữ bảng password_reset_otps cho tương thích), hash, hạn 15 phút, dùng một lần, rate-limit; không gửi password tạm.
+- Tenant và Manager đầu tiên tạo bằng CLI vận hành, seed policy/role/permission cùng transaction; người dùng kích hoạt bằng OTP email. Tenant ACTIVE chỉ khi có ít nhất một Manager active. Backend luôn chặn xóa quyền Manager hợp lệ cuối.
+- OTP verification + set Argon2id password + consume OTP + revoke old sessions thực hiện nguyên tử trong DB transaction.
+
 ### 3.3. Academic Management — 10 bảng
 
 | Bảng | Cột nghiệp vụ chính | Ràng buộc / ý nghĩa |
@@ -216,6 +229,14 @@ Valid payment     = allocations từ payment chưa đảo; khi đảo toàn bộ
 `discount_vnd = gross_vnd - total_vnd` khi phát hành, sau khi ROUND_HALF_UP **cuối phép tính**. Với invoice nhiều lớp trong một tháng, chỉ chốt sau khi **tất cả** buổi liên quan hợp lệ. **Không** coi số tiền draft, tiền trả trước chưa phân bổ, hoặc khoản thu bị đảo là tiền đã thu hợp lệ.
 
 **Giao dịch bắt buộc:** (i) phát hành: khóa run/invoice + nguồn, kiểm tra lại attendance/price/policy, insert `invoiced_participation_claims` và gắn `invoice_number/issued_at`, ghi audit trong cùng transaction; (ii) thu tiền: khóa invoice, tính công nợ từ ledger, kiểm tra idempotency và `amount <= due`, insert payment+allocation+audit trong **một transaction**; (iii) approval điều chỉnh/hủy: ghi quyết định, `APPLIED` adjustment và audit trong transaction; hóa đơn gốc vẫn giữ số tiền đã phát hành.
+
+#### Quyết định Billing nhóm A (Approved 17/10/2026)
+- **Một hóa đơn logic cho mỗi học sinh/tenant/tháng**, gộp các lớp thành invoice_lines; giữ unique billing_runs(tenant_id,period_id,student_id).
+- Mã invoice chỉ cấp khi ISSUE qua transaction + counter theo tenant/năm, unique (tenant_id,invoice_number), format hiển thị INV-{YEAR}-{SEQUENCE}; không phải hóa đơn điện tử hợp pháp.
+- price_rules: triển khai exclusion SQL trên (tenant, scope target, daterange hiệu lực [from,to)) để ngăn giá overlap, bao gồm write đồng thời. Null end biểu thị vô hạn; cần test PostgreSQL.
+- Bổ sung bảng **payment_excess_resolutions**: id, tenant_id, invoice_id, trigger_adjustment_id, amount_vnd BIGINT positive, status PENDING_RESOLUTION/RESOLVED, resolution_kind nullable, approval_request_id nullable, reason, resolved_at nullable, operation_key, created_at. UQ(tenant_id,operation_key), composite tenant FKs. Khi điều chỉnh giảm sau thu làm allocation vượt adjusted total, ghi chênh lệch cần xử lý trong cùng transaction, công nợ hiển thị 0 thay vì âm. Không sửa payment gốc, không tự refund/credit P0. Phải có permission/audit/approval thích hợp để xử lý.
+- Công nợ = MAX(0, issued adjusted net - valid allocations); tổng thu vượt được trình bày và đối soát riêng. Chống double count khi JOIN.
+- Tên bảng/constraint là lựa chọn thiết kế, chưa phải migration đã chạy.
 
 ### 3.7. Assignments, Submissions & Files — 7 bảng
 
@@ -362,3 +383,52 @@ Không tạo bảng `dashboard_metrics` tại P0. Tính bằng SQL aggregate v�
 | `approval_policies`, `policy_change_history` | UI cấu hình điều kiện/permission và phiên bản chính sách, có audit; `policy_versions` từ P0 tiếp tục làm snapshot bất biến. | FR-43/44, UC-33, BR-14 |
 | Reporting read models | Materialized view / projection kèm refresh watermark khi thực sự cần; không trộn P1 analytics vào tài chính P0. | FR-40, UC-30/32 |
 
+## 8. Thứ tự tạo migration và kiểm thử — Approved nhóm A
+
+| Phase | Bảng phụ thuộc | Kiểm thử |
+|---|---|---|
+| 1 | Tenant/policy, users/credentials/sessions/OTP, membership/roles/permissions/scopes, audit, idempotency | Bootstrap, OTP, Manager cuối, multi-tenant isolation |
+| 2 | Workflow approvals, automation jobs/attempts, transactional outbox | Retry, dedup, changed-permission and worker concurrency |
+| 3 | Academic/relationships, course/class/enrollment/transfer | Composite FK, transfer/capacity |
+| 4 | Resource bookings, scheduling, attendance/leave | GiST exclusion, concurrent overlaps, all-or-nothing |
+| 5 | Pricing, billing invoice/claims/payments/reversal/adjustment and payment_excess_resolutions | One invoice per student/month, price overlaps, excess after adjustment |
+| 6 | Assignments/file/grading, notifications, dashboard SQL | Staging, permission scopes, published grade/outbox |
+
+Tạo migration theo từng vertical slice; không migrate P1 trong P0. Tránh triển khai nghiệp vụ phụ thuộc jobs/outbox/approval trước hạ tầng cần thiết.
+
+**Schema readiness gate trước lập trình feature:** Prisma schema và migration SQL áp dụng sạch lên DB mới; test rollback transaction; `prisma migrate deploy` chỉ chạy qua bước release kiểm soát; có seed baseline quyền/policy; kiểm thử concurrency với **hai client DB thực**; kiểm thử backup/restore PostgreSQL lẫn Volume; không được tuyên bố đạt hiệu năng/availability trước khi đo NFR.
+
+## 9. Decision log — nhóm A đã Approved; các vấn đề khác còn review theo slice
+
+1. **Kỳ billing [APPROVED]:** một hóa đơn/học sinh/tháng, gộp tất cả các lớp trong tenant theo §3.6.
+2. **Giá trị tiền/kiểu dữ liệu:** chọn `BIGINT` nguyên VND và `DECIMAL` cho tỷ lệ; cần thống nhất trên frontend serialization `BigInt -> string` trong REST JSON, không ép sang JS `number` thiếu an toàn cho số lớn.
+3. **Mã khóa ngoại với snapshot:** composite FK trên tất cả quan hệ quan trọng, song `invoice.snapshot_json`, event target đa hình, source revision vẫn phải xác minh thêm ở domain layer; DB không tự biết tính đúng của snapshot.
+4. **Cấp quyền vận hành:** catalog `permissions` và mapping role seed P0 cần liệt kê từng permission cụ thể trong Authorization Detailed Design; tài liệu nguồn quy định nguyên tắc, chưa cung cấp danh sách đầy đủ permission cho từng role.
+5. **Thứ tự và phương thức cấp số hóa đơn nội bộ:** chỉ cấp khi ISSUE trong transaction, unique theo tenant; format `INV-{YEAR}-{SEQUENCE}` là **đề xuất**, chưa phải quyết định nguồn. Không đồng nhất hóa đơn nội bộ với hóa đơn điện tử hợp pháp.
+6. **Lịch hủy đã tham dự, học phí âm và payment khi hủy:** cần bảng chuyển trạng thái/validation rõ cho các ca đã phát hành/thu rồi, nhất là điều chỉnh giảm và refund ngoài phạm vi; không tự xóa nợ/hoàn tiền.
+7. **Versioning lần nộp/chấm:** grade gắn với `submission_version`; khi có bản nháp sửa điểm sau publish, xác định rõ bản điểm published gần nhất vẫn hiển thị đến khi công bố phiên bản mới.
+8. **Biên dữ liệu nhân thân:** quyết định các trường PII tối thiểu cho teacher/student/parent, thời hạn lưu và cách xử lý quyền xóa dữ liệu mà không phá lịch sử tài chính/điểm.
+9. **Kiểm tra ràng buộc tài nguyên:** mô hình resource registry + exclusion constraint là phương án phòng vệ DB bổ sung so với lock giao dịch trong Architectural Design; xác minh với load/concurrency test trước khi chốt.
+10. **Tình trạng đầu vào [RESOLVED]:** Requirements v5 đã đồng bộ vào docs/requirements/requirements_analysis.md. Q-01–Q-15 thuộc baseline hiện tại.
+
+## 10. Ma trận truy vết nhanh
+
+| Module/bảng chủ chốt | FR/UC | BR/Q |
+|---|---|---|
+| `users`, `tenant_memberships`, `roles`, `membership_roles`, `access_scopes`, `parent_student_links` | FR-01–06; UC-01–06, UC-36 | BR-08/10/14; Q-01/02/15 |
+| `student_profiles`, `classes`, `enrollments`, `enrollment_transfers` | FR-07–10; UC-07–10 | BR-13; Q-03 |
+| `class_sessions`, `resource_bookings`, `schedule_series`, `session_participants` | FR-11–17; UC-11–14 | BR-01; Q-04 |
+| `absence_requests`, `attendance_records`, `attendance_finalizations` | FR-18/19; UC-15/16 | BR-04; Q-05 |
+| `price_rules`, `billing_runs`, `invoices`, `invoice_lines`, `invoice_discounts` | FR-25–29; UC-21–24 | BR-04/06/13/14; Q-08/09 |
+| `payments`, `payment_reversals`, `receivable_allocations`, `invoice_adjustments` | FR-30/31; UC-25/26 | BR-08/11/12; Q-10 |
+| `assignments`, `assignment_recipients`, `submission_versions`, `stored_files`, `grades` | FR-32–35; UC-27–29 | Q-11 |
+| `outbox_events`, `notifications` | FR-37/39 P0; UC-31 | BR-12; Q-13 |
+| Dashboard aggregate queries | FR-40 P0; UC-32 | Q-12 |
+| `approval_requests`, `approval_decisions`, `automation_jobs`, `idempotency_records`, `audit_logs`, `policy_versions` | FR-41/42/45; UC-34–37 | BR-08–14; Q-13/14/15 |
+| P1 extension tables | FR-20–24, FR-28, FR-38, FR-43/44; UC-17–20/30/33 | BR-02/03/05/07; Q-06/07 |
+
+---
+
+### Kết luận thiết kế
+
+Thiết kế sử dụng **một PostgreSQL chung với các FK gắn tenant**, giữ **nguồn dữ liệu và snapshot bất biến** cho học phí/điểm danh/bài nộp, sử dụng **transaction và resource booking exclusion** để chống tranh chấp lịch, và **job/outbox + idempotency** cho automation/notification. P0 chỉ triển khai nghiệp vụ nội bộ, ngoại lệ bên ngoài duy nhất là **gửi OTP email**. Các điểm §9 phải được chốt trong Detailed Design trước khi viết migration chính thức; tài liệu này là bản thiết kế đề xuất, không ngầm sửa baseline từ ba nguồn.

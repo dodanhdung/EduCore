@@ -301,3 +301,10 @@ apps/api/src/modules/identity-access/
 ```
 
 Không bắt buộc tạo đủ thư mục/abstraction nếu module ít CRUD. **Controller không giữ business rule; guard/check quyền không chỉ nằm ở Controller**, phải đánh giá lại trong service khi xử lý job/duyệt. Các enum nghiệp vụ áp dụng TypeScript và PostgreSQL CHECK/constraint, kiểu VND dùng `bigint` hoặc `Decimal` đúng ngữ cảnh; REST JSON serialize `bigint` thành string.
+
+## P0 decisions approved 17/10/2026 (supersedes Proposed onboarding/auth alternatives)
+
+- Permission catalog, default role seeds and scope checks are defined in ../detailed_des.md §A.2. P0 role mappings are seeded/versioned, not edited in UI. All checks enforce active membership + target resource scope; Parent requires verified active link; last active Manager cannot be revoked.
+- User status PENDING_ACTIVATION/ACTIVE/DISABLED and nullable activatedAt are proposed DB v1.1 fields. Ops CLI provisions tenant+initial Manager pending; setup happens by OTP email, no temporary password and no invitation email.
+- password_reset_otps stores purpose ACTIVATION/PASSWORD_RESET; OTP 15min, one use, hashed with throttling. Password reset/activation commands atomically verify+consume OTP, set Argon2id password (>=12 chars), update status where needed, revoke sessions. API uses /auth/password/reset and /auth/activation/complete; standalone verify route removed from P0.
+- Access JWT in JS memory 15min; rotated hashed refresh token <=7 days in host-only HttpOnly Secure SameSite=Lax cookie scoped to /api/v1/auth; Origin + CSRF guard on cookie-auth mutations. See ../api_spec.md §A.2.
