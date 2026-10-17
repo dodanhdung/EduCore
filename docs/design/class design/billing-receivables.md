@@ -340,3 +340,9 @@ apps/api/src/modules/billing-receivables/
 ```
 
 Không bắt buộc tạo đủ thư mục/abstraction nếu module ít CRUD. **Controller không giữ business rule; guard/check quyền không chỉ nằm ở Controller**, phải đánh giá lại trong service khi xử lý job/duyệt. Các enum nghiệp vụ áp dụng TypeScript và PostgreSQL CHECK/constraint, kiểu VND dùng `bigint` hoặc `Decimal` đúng ngữ cảnh; REST JSON serialize `bigint` thành string.
+
+## P0 decisions approved 17/10/2026
+
+- Exactly one invoice logic per (tenant, student, billing month), aggregating all class invoice lines. Invoice number assigned only upon ISSUE with tenant-scoped uniqueness; automatic draft does not issue.
+- Price effective ranges are exclusive per tenant+target and must be protected by PostgreSQL exclusion constraints, not just application validation. Migration must include real concurrency tests.
+- An approved downward adjustment after already-allocated payment may produce excess. This is NOT negative receivables and NOT P1 tuition credit: retain immutable payment/allocations and record excess in payment_excess_resolutions as PENDING_RESOLUTION with authorization/audit; do not auto-refund/credit in P0. See ../database_design.md v1.1. Financial resolution details remain for Billing slice review.
