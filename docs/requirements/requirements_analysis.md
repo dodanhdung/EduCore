@@ -9,6 +9,7 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 | **3** | Chốt 14 Business Rules thành quy tắc có điều kiện/ngoại lệ rõ ràng; xác định tham số chính sách mặc định, phạm vi P0/P1 và minh họa kiểm thử; cập nhật sơ đồ Automation-first bằng tiếng Việt. |
 | **4** | Đưa thông báo **trong ứng dụng** về P0 (FR-37, phần P0 của FR-39) và dashboard **thống kê cơ bản** về P0 (phần P0 của FR-40); giữ thông báo email, nhắc deadline và báo cáo nâng cao ở P1. Đồng bộ US-02, US-15 và ranh giới triển khai. |
 | **5** | Chốt Q-01–Q-15 làm baseline thiết kế; chọn OTP email cho khôi phục mật khẩu; chốt quyền, lịch, học phí, bài tập, chỉ số và audit; ràng buộc P0 **Internal-first** (chỉ kết nối ngoài để gửi OTP email). Đồng bộ UC và tiêu chí nghiệm thu. |
+| **5 — O-12 amendment, 18/10/2026** | **APPROVED business change** theo chỉ đạo trực tiếp của chủ dự án trong cuộc trao đổi ngày 18/10/2026 (`Asia/Ho_Chi_Minh`): O12-A=A giá theo ngày bắt đầu session; B=B1 kỳ theo local start; C=C1 freeze timezone P0; D=D generation-based recompute. Thay quy tắc giá lúc lập khoản phí của BR-06; giữ điều kiện/tỷ lệ ưu đãi, BR-14 và giới hạn P0/P1. Approval này không cho phép triển khai schema/migrations. |
 
 ### 1.2. Thuật ngữ
 - **Role:** Nhóm quyền trong hệ thống (ví dụ `ACCOUNTANT`, `ACADEMIC_STAFF`); không đồng nhất với một vị trí tuyển dụng.
@@ -17,6 +18,9 @@ EduCore là hệ thống web quản lý trung tâm đào tạo, tập trung vào
 - **Automation-first:** Tự động tính toán/xử lý trường hợp đủ điều kiện theo quy tắc đã xác nhận.
 - **Human-in-the-loop:** Cần người được ủy quyền kiểm tra, phê duyệt hoặc giải quyết trường hợp ngoại lệ.
 - **Tenant:** Một trung tâm (hoặc một tổ chức quản lý trung tâm) có phạm vi dữ liệu và cấu hình riêng.
+- **Source business date / pricing local date (O-12):** ngày bắt đầu `ClassSession.startsAt` tại timezone tenant đã chụp bất biến; cùng một ngày dùng để chọn PriceRule và suy ra tháng học phí. Đây là DATE, không phải UTC date.
+- **Generation:** một lần nhận yêu cầu tính phí có snapshot nguồn, giá, calculation policy và kết quả riêng. Retry giữ generation; recompute có chủ đích là yêu cầu mới, không tạo thêm invoice logic.
+- **Calculation policy:** chính sách tính/ưu đãi pin theo BR-14 khi nhận yêu cầu. Không đồng nhất thời điểm hiệu lực policy (instant) với ngày hiệu lực PriceRule (local DATE); `chargeCreatedAt` chỉ là admission/audit, không chọn giá.
 
 ## 2. Actors — Các vai trò sử dụng
 
@@ -215,7 +219,7 @@ NFR xác định các thuộc tính chất lượng và ràng buộc vận hành
 | **BR-03 — Số lần và thời hạn học bù** | **Một buổi nghỉ có phép tối đa một lượt học bù được sử dụng**, trong vòng **30 ngày** kể từ ngày học gốc. Được đổi lịch học bù trước khi diễn ra nếu còn hợp lệ; học bù đã tham dự hoặc vắng không phép thì đóng quyền học bù. Nếu trung tâm hủy buổi học bù, học sinh được sắp lại trong thời hạn còn lại; trường hợp hết hạn do phía trung tâm chuyển duyệt ngoại lệ. **Không được tính học phí hai lần** cho buổi gốc và buổi học bù thay thế. | **P1** |
 | **BR-04 — Nghỉ học và số buổi tính phí** | Đơn nghỉ được gửi **ít nhất 24 giờ** trước giờ bắt đầu và được chấp thuận thì ghi nhận `EXCUSED`; nộp muộn chỉ được tính `EXCUSED` khi người có quyền duyệt ngoại lệ. Buổi `ATTENDED` và `UNEXCUSED` được tính **1 buổi tính phí**; buổi `EXCUSED` được tính **0**; buổi do trung tâm hủy được tính **0**. Nếu học bù cho buổi `EXCUSED` được thực hiện, chỉ buổi học bù được tính **1** (hoặc trừ 1 quyền học trong gói trả trước), buổi gốc vẫn là **0**. Vắng không phép tại buổi học bù đã giữ chỗ tính **1**; buổi học bù bị trung tâm hủy tính **0**. Không chốt bảng kê tự động nếu điểm danh chưa được xác nhận. | **P0** (nghỉ/điểm danh/tính phí); **P1** (học bù) |
 | **BR-05 — Bảo lưu** | Bảo lưu có ngày bắt đầu, ngày kết thúc và phải được người có quyền phê duyệt. Trong khoảng bảo lưu, không tính buổi học phát sinh cho học sinh; số tiền đã đóng cho **các buổi chưa sử dụng** được giữ dưới dạng **số dư tín dụng học phí**, không tự động hoàn tiền. Khi quay lại, phải kiểm tra trình độ, lịch, sức chứa trước khi xếp lớp; tín dụng còn lại được khấu trừ vào học phí tương lai. Mọi hoàn/điều chỉnh tiền phải đi qua quy trình tài chính có kiểm soát, không sửa trực tiếp hóa đơn đã phát hành. | **P1** |
-| **BR-06 — Giảm giá và thứ tự tính** | Học sinh được nhận ưu đãi anh/chị/em khi **quan hệ anh chị em được xác minh** và các em có ghi danh hợp lệ cùng tenant; ưu đãi combo chỉ áp dụng cho **gói đóng trước đủ 6 tháng**. Mặc định cho phép áp dụng đồng thời hai ưu đãi: **combo 5% trước, anh/chị/em 10% sau** trên số tiền còn lại. Không cộng trực tiếp thành 15% (tổng ưu đãi thực tế khi đủ hai điều kiện là **14,5%**). Không áp dụng cùng lúc ưu đãi khác nếu chưa có chính sách riêng; số tiền cuối cùng không âm, làm tròn đến đồng Việt Nam khi kết thúc phép tính. Chỉ áp dụng điều kiện và mức giá có hiệu lực tại thời điểm lập khoản tính phí, không tự tính lại hóa đơn đã phát hành. | **P0** (một loại ưu đãi); **P1** (kết hợp ưu đãi, cấu hình) |
+| **BR-06 — Giảm giá và thứ tự tính** | Học sinh được nhận ưu đãi anh/chị/em khi **quan hệ anh chị em được xác minh** và các em có ghi danh hợp lệ cùng tenant; ưu đãi combo chỉ áp dụng cho **gói đóng trước đủ 6 tháng**. Mặc định cho phép áp dụng đồng thời hai ưu đãi: **combo 5% trước, anh/chị/em 10% sau** trên số tiền còn lại. Không cộng trực tiếp thành 15% (tổng ưu đãi thực tế khi đủ hai điều kiện là **14,5%**). Không áp dụng cùng lúc ưu đãi khác nếu chưa có chính sách riêng; số tiền cuối cùng không âm, làm tròn đến đồng Việt Nam khi kết thúc phép tính. **O12-A=A:** mỗi buổi dùng PriceRule có hiệu lực tại ngày bắt đầu session theo timezone tenant, ưu tiên buổi → lớp → khóa. Giá mới chỉ áp dụng cho buổi từ ngày hiệu lực; không sửa giá cũ/backdate để thay giá buổi đã bắt đầu. Tạo charge, draft hay recompute muộn không đổi ngày áp giá; không tự tính lại hóa đơn đã phát hành. Điều kiện ưu đãi giữ nguyên và calculation policy được pin theo BR-14, độc lập ngày chọn PriceRule. | **P0** (một loại ưu đãi); **P1** (kết hợp ưu đãi, cấu hình) |
 | **BR-07 — Giáo viên dạy thay** | Giáo viên thay thế phải thuộc cùng tenant, đáp ứng môn/chuyên môn, cấp độ giảng dạy phù hợp, còn khả dụng trong toàn bộ buổi học và không vượt giới hạn phân công. Hệ thống **đề xuất**, giáo viên thay thế **xác nhận nhận lớp**, sau đó người có quyền **xác nhận phân công**. Chỉ khi đủ các điều kiện mới cập nhật lịch chính thức và gửi thông báo; nếu không có người phù hợp thì tạo ngoại lệ để đổi/hủy lịch, không tự phân công người không đạt điều kiện. | **P1** |
 | **BR-08 — Thẩm quyền phê duyệt** | Việc duyệt dựa trên **permission + phạm vi tenant/lớp**, không dựa đơn thuần vào tên role. Mặc định: học bù/bảo lưu/dạy thay/ngoại lệ lịch thuộc `ACADEMIC_STAFF` hoặc `MANAGER` được cấp quyền tương ứng; phát hành/điều chỉnh hóa đơn thuộc `ACCOUNTANT` hoặc `MANAGER` được cấp quyền tài chính tương ứng. Phê duyệt ngoại lệ phải ghi **người duyệt, thời điểm, lý do và kết quả**. Vai trò chỉ có quyền xem không được duyệt. | **P0** (quyền mặc định); **P1** (quy trình duyệt nâng cao) |
 | **BR-09 — Tự động hay chờ duyệt** | Chỉ xử lý tự động khi: người/sự kiện gọi hợp lệ; dữ liệu đầy đủ; cùng tenant; không vi phạm ràng buộc; nghiệp vụ nằm trong danh sách được tự động hóa; và không cần phê duyệt theo chính sách đang hiệu lực. Nếu **thiếu dữ liệu**, chuyển `NEEDS_INFORMATION`; nếu **hợp lệ nhưng cần duyệt/ngoại lệ**, chuyển `PENDING_APPROVAL`; nếu **xung đột hoặc vi phạm quy tắc cấm**, từ chối thao tác, không tự ghi kết quả. Giai đoạn P0 chỉ tự động kiểm tra xung đột, tính phí và tạo **hóa đơn dự thảo**, không mặc định tự phê duyệt hành động nhạy cảm. | **P0** (giới hạn); **P1** (mở rộng) |
@@ -294,3 +298,100 @@ flowchart TD
 
 **Quy tắc thay đổi sau khi chốt:** Nếu thay đổi hạn xin nghỉ, thời hạn học bù, công thức giảm giá, người có quyền phê duyệt hoặc mức tự động hóa, phải tăng phiên bản tài liệu, cập nhật Business Rules liên quan và đối chiếu lại FR/Use Cases/Test Cases. Không tự ý thay đổi các giả định trên khi lập trình.
 
+## 7. Quyết định chi tiết đã chốt từ Q-01 đến Q-15
+
+Các quyết định dưới đây được **người xây dựng EduCore chấp thuận ngày 11/10/2026** làm baseline phân tích/thiết kế của đồ án. Đây không phải chính sách đã khảo sát hoặc được một trung tâm thương mại xác nhận. Tại P0, chỉ triển khai phạm vi gắn nhãn P0; các chức năng P1 không được tự đưa vào MVP. Các giá trị có tính chính sách phải được quản lý theo tenant và phiên bản khi triển khai phần cấu hình P1 (BR-14). Nếu có xung đột, yêu cầu an toàn trong BR-01–BR-14 tiếp tục bắt buộc; quyết định chi tiết này làm rõ chứ không cho phép bỏ qua quy tắc cấm.
+
+### Q-01 — Đăng nhập, phiên và khôi phục bằng OTP email (P0)
+- Đăng nhập bằng **email + mật khẩu**; một tài khoản có thể được gán nhiều tenant/role; sau xác thực chọn tenant được phép. Mật khẩu tối thiểu **12 ký tự**, lưu băm bằng **Argon2id**. Giới hạn thử sai đăng nhập/OTP và tránh tiết lộ email có tài khoản hay không qua thông báo khôi phục.
+- Dùng **OTP gửi qua email** để khôi phục mật khẩu, **không dùng link khôi phục**. OTP do Backend tạo và xác minh, chỉ sử dụng **một lần**, hết hạn sau **15 phút**; chỉ lưu dạng băm/giá trị đã được bảo vệ, không ghi mã vào audit/log. Email chỉ là kênh chuyển mã; không giao xác thực cho Gmail.
+- Access token có hạn **15 phút**; refresh token tối đa **7 ngày**, có khả năng thu hồi và được bảo vệ khi lưu/truyền. Đăng xuất thu hồi phiên hiện tại; đổi/khôi phục mật khẩu thu hồi các phiên cũ. P0 **không bắt buộc OAuth/Google Sign-In, SMS hay SSO**.
+
+### Q-02 — Thẩm quyền, liên kết phụ huynh và yêu cầu học vụ (P0/P1)
+- Manager/Academic Staff được cấp permission có thể **tạo, xác minh, thu hồi** liên kết Parent–Student; chỉ kích hoạt sau khi đối chiếu căn cứ quan hệ; mã mời nội bộ (nếu dùng) không thay thế xác minh. Student/Parent được **gửi đơn nghỉ P0** và **gửi yêu cầu học bù/bảo lưu P1** cho chính mình/con đã liên kết; gửi yêu cầu không đồng nghĩa được duyệt.
+- Người có quyền học vụ phê duyệt nghỉ/học bù/bảo lưu; nghỉ muộn cần **permission duyệt ngoại lệ**. Người có permission tài chính xác minh ưu đãi anh/chị/em và phát hành/điều chỉnh học phí. Xác minh quan hệ anh/chị/em là quy trình độc lập với liên kết phụ huynh; không dựa chỉ vào trùng họ tên/số điện thoại. Mọi quyền đều kiểm tra ở Backend theo tenant/phạm vi (BR-08, BR-10).
+
+### Q-03 — Trạng thái ghi danh và chuyển lớp (P0)
+- Tách trạng thái hồ sơ học sinh khỏi **trạng thái ghi danh theo lớp**: `PENDING`, `ACTIVE`, `SUSPENDED`, `COMPLETED`, `WITHDRAWN`, `TRANSFERRED` (trạng thái ghi danh lớp cũ).
+- Ghi danh/chuyển lớp kiểm tra tenant, trình độ, chỗ, lịch và thẩm quyền. Chuyển lớp phải có xác nhận của người có permission; mặc định hiệu lực từ **buổi tương lai tiếp theo chưa diễn ra** hoặc một ngày/buổi tương lai được chỉ định. Giữ nguyên lịch sử buổi đã học.
+- Chênh lệch học phí được ghi nhận để xử lý qua tín dụng/điều chỉnh có quyền; **không sửa trực tiếp hóa đơn đã phát hành**. P0 xác nhận/chuyển lớp và xử lý tài chính thủ công khi cần; P1 hỗ trợ đề xuất/phân bổ tín dụng tự động.
+
+### Q-04 — Lịch lặp, múi giờ và hạn học bù (P0/P1)
+- **O12-C=C1 (18/10/2026):** Ops chỉ cấu hình timezone trước nguồn thời gian đầu tiên: `ScheduleSeries` hoặc `ClassSession` (kể cả DRAFT), `BillingPeriod` hoặc `BillingRun/generation`. Tạo nguồn đầu và freeze cùng transaction; freeze giữ vĩnh viễn kể cả nguồn bị hủy/xóa. Không đổi timezone để diễn giải lại ngày học, giá hoặc kỳ cũ; transition sau freeze cần phạm vi/phê duyệt riêng, không thuộc P0 hiện tại.
+- Lịch lặp hằng tuần trong khoảng có ngày đầu/cuối, **tối đa 6 tháng cho một lần tạo**. Xác nhận chuỗi theo **all-or-nothing**: có bất cứ buổi nào vi phạm thì chưa xác nhận buổi nào trong cả chuỗi; có thể sửa/loại buổi không hợp lệ rồi thử lại. Đổi/hủy được một buổi hoặc những buổi **tương lai** trong chuỗi, không sửa lịch sử.
+- Múi giờ mặc định của tenant tại Việt Nam: `Asia/Ho_Chi_Minh`; lưu thời điểm UTC và timezone tenant. Xung đột dùng khoảng `[start, end)` theo BR-01. Hạn 30 ngày học bù tính từ **ngày buổi gốc**, buổi học bù phải bắt đầu không muộn hơn cuối ngày thứ 30 theo giờ địa phương tenant.
+
+### Q-05 — Điểm danh, khóa và nghỉ tại buổi học bù (P0/P1)
+- Teacher phụ trách ghi/duyệt điểm danh trong buổi hoặc sau khi kết thúc; khóa chỉnh sửa thông thường sau **48 giờ kể từ giờ kết thúc** hoặc **ngay khi dữ liệu đã được dùng phát hành hóa đơn**, tùy mốc nào đến trước. Chưa xác nhận thì không chốt dự thảo tính phí tự động. Manager/Academic Staff có permission xử lý bản chưa được xác nhận quá hạn.
+- Sau khóa, chỉ permission điều chỉnh điểm danh mới được sửa, phải ghi lý do/audit; thay đổi ảnh hưởng hóa đơn đã phát hành đi qua UC-26. Nếu đã được duyệt nghỉ mà học sinh thực tế dự học, trạng thái cuối là `ATTENDED`, tính 1 buổi và không có quyền học bù.
+- P1: nghỉ có phép tại chính buổi học bù cho phép **đổi lịch** nếu còn hạn từ buổi gốc và quyền chưa bị sử dụng/đóng; không tự gia hạn 30 ngày. Vắng không phép tại buổi học bù đã giữ chỗ thì tính 1 và đóng quyền; trung tâm hủy thì tính 0, hết hạn do trung tâm chuyển duyệt ngoại lệ.
+
+### Q-06 — Tín dụng học phí khi bảo lưu (P1)
+- Tín dụng bảo lưu = **phần tiền thực tế đã thu được phân bổ cho các buổi chưa sử dụng** sau ưu đãi đã áp dụng hợp lệ; ưu tiên phân bổ phần tiền đã thu cho buổi đã sử dụng, **không tạo tín dụng từ công nợ chưa thu**. Không áp dụng hồi tố ưu đãi/hóa đơn cũ.
+- Với học phí mới: tính đơn giá và ưu đãi hợp lệ **trước**, rồi mới khấu trừ tín dụng (số còn phải trả không âm). Tín dụng gắn học sinh/tenant, không tự chuyển cho người khác, mặc định **không tự hết hạn**, chỉ dùng học phí tương lai, không tự hoàn tiền.
+- Không chấp nhận hai khoảng bảo lưu chồng lấn; thay đổi khoảng phải duyệt lại. Quay lại trước hạn cần xác nhận của người có quyền, kiểm tra trình độ/lịch/sức chứa và cập nhật trạng thái bảo lưu trước khi sắp lớp.
+
+### Q-07 — Tương đương học bù và giáo viên dạy thay (P1)
+- Giới hạn phân công baseline: **tối đa 8 giờ dạy/ngày và 40 giờ dạy/tuần** trên lịch đã xác nhận trong tenant; có thể cấu hình theo tenant về sau. Buổi học bù phải cùng môn, trình độ và **nội dung/bài học tương đương**; nếu không xác định được thì chuyển người có quyền xử lý.
+- Dạy thay: hệ thống chỉ **đề xuất** người cùng tenant, đúng chuyên môn/cấp độ, không xung đột, không quá giới hạn; **Teacher nhận lớp trước, người có permission xác nhận phân công sau**, rồi mới đổi lịch và thông báo. Mặc định **không bật tự xác nhận dạy thay cả ở P1 baseline** để giữ BR-07; BR-13 chỉ mở khả năng thiết kế chính sách tương lai sau khi sửa/duyệt rõ ranh giới tương ứng.
+
+### Q-08 — Đơn giá, kỳ và làm tròn học phí (P0/P1)
+- **O12-A=A, B=B1 (18/10/2026):** `sourceBusinessDate=local_date(ClassSession.startsAt,timezoneSnapshot)`; `pricingLocalDate=sourceBusinessDate`; `billingMonth=first_day_of_month(sourceBusinessDate)`. Window PriceRule DATE là `[effectiveFrom,effectiveTo)`, NULL end=vô hạn. Không dùng UTC month, session end, ngày tạo draft/charge/generation hoặc ngày issue để chọn kỳ/giá. Một session không chia hai kỳ; một invoice logic/student/tenant/month có thể chứa nhiều đơn giá đúng từng ngày học. Giá DATE không hỗ trợ đổi giữa ngày; tariff sau công bố chọn ngày local tương lai phù hợp, không tác động buổi đã bắt đầu trong ngày.
+- **O12-D=D:** G1 giữ snapshot nguồn/giá/policy/timezone và kết quả; retry cùng key/hash không chọn lại giá/policy. Recompute DRAFT bằng command/key mới, reason, expected generation và CAS tạo G2, giữ G1/diff/audit; G2 có thể pin calculation policy hiện hành của request mới nhưng vẫn resolve từng giá theo ngày session. Nguồn và tariff hợp lệ không đổi thì không tăng đơn giá chỉ vì tạo G2 muộn. Thiếu giá/nguồn xác nhận → NEEDS_INFORMATION, không ngầm giá 0; CANCELLED tính 0 theo ngoại lệ nguồn hủy, vẫn cần giá hợp lệ. Issue kiểm quyền/nguồn/generation hiện hành, chặn stale, không reprice/repin; ISSUED chỉ correction/adjustment có thẩm quyền. Claim participation đã issued là vĩnh viễn, kể cả dòng 0/hủy invoice; không tính lại ở kỳ khác.
+- Khi có nhiều giá cùng hiệu lực, ưu tiên **buổi học → lớp học → khóa học**. P0 tính theo các buổi thực tế đủ điều kiện/đã xác nhận trong **kỳ tháng**; lập dự thảo **đầu tháng sau** khi dữ liệu tháng trước đầy đủ và phát hành thủ công. Hạn thanh toán baseline **7 ngày sau phát hành**.
+- Chỉ làm tròn **một lần ở cuối phép tính** đến đồng Việt Nam theo `ROUND_HALF_UP`; không làm tròn tiền ưu đãi ở từng bước trung gian. Gói trả trước đủ 6 tháng và hạch toán phân bổ theo buổi thuộc P1; quyền hưởng combo chỉ được chốt sau khi đã đóng đủ gói, không tự tính lại hóa đơn phát hành.
+
+### Q-09 — Ưu đãi P0 và phối hợp ưu đãi P1
+- **P0 chỉ áp dụng ưu đãi anh/chị/em 10%** sau xác minh quan hệ và ghi danh hợp lệ cùng tenant. Nếu cũng đáp ứng combo thì P0 vẫn chỉ áp dụng 10%, không tự cộng thêm ưu đãi chưa triển khai.
+- **P1:** combo trả trước đủ 6 tháng **5% trước**, sau đó anh/chị/em **10% trên phần còn lại**; đủ hai điều kiện cho mức giảm hiệu dụng **14,5%**. Ưu đãi khác hoặc cộng dồn khác chỉ áp dụng khi có chính sách được duyệt/phiên bản rõ ràng (BR-06).
+
+### Q-10 — Thanh toán và điều chỉnh (P0/P1)
+- P0 **chỉ ghi nhận thủ công** tiền mặt hoặc chuyển khoản do nhân sự đối soát bên ngoài hệ thống; cho phép thanh toán một phần, mỗi khoản gắn **một hóa đơn**, có chống ghi trùng. **Không kết nối ngân hàng/cổng thanh toán**, không tự xác minh chuyển khoản. Nếu số tiền nhập vượt công nợ còn lại thì từ chối phần vượt ở P0.
+- Khoản thu ghi sai phải đảo/điều chỉnh bằng bản ghi mới có thẩm quyền/lý do/audit, không xóa lịch sử. Hóa đơn đã thu bị giảm/hủy: phần tiền thu vượt chờ xử lý tín dụng/điều chỉnh đã được phê duyệt, không tự hoàn tiền. P1 mới hỗ trợ phân bổ một khoản cho nhiều hóa đơn, tự ghi tín dụng khi trả thừa hoặc tích hợp đối soát theo phạm vi dự án sau.
+
+### Q-11 — Bài tập và chấm điểm (P0)
+- Priority stars từ **1 đến 5**; thang điểm **0–10**, chính xác **1 chữ số thập phân**. Tệp nộp: PDF, DOCX, JPG, PNG; tối đa **10 MB/tệp**, **5 tệp/lần nộp**. P0 lưu tệp bằng hạ tầng lưu trữ **do EduCore tự quản lý**, không bắt buộc Google Drive/S3.
+- Nộp muộn tối đa **7 ngày** sau deadline, đánh dấu `LATE`; được nộp lại **trước khi chấm/công bố điểm** và khi vẫn còn trong hạn nhận bài, lưu phiên bản cũ. Giáo viên chấm phiên bản hợp lệ mới nhất.
+- Khi đã có bài nộp, không âm thầm thay đổi yêu cầu hoặc rút ngắn deadline; chỉ có thể gia hạn có dấu vết. Kết quả chỉ hiện cho Student/Parent sau khi giáo viên **chủ động công bố**. Sửa điểm đã công bố phải có lý do và audit.
+
+### Q-12 — Thống kê, tiến độ và quyền xem (P0/P1)
+- **Dashboard P0:** đếm học sinh có ít nhất một ghi danh `ACTIVE` trong tenant (đếm duy nhất học sinh); đếm lớp đang hoạt động; công nợ = **tổng số còn phải thu chưa thanh toán của hóa đơn nội bộ đã phát hành**, sau các điều chỉnh/tín dụng đã phân bổ hợp lệ. Không trộn với hóa đơn dự thảo hoặc tiền trả trước chưa sử dụng; gắn thời điểm và phạm vi số liệu.
+- **Tiến độ P1:** tỷ lệ chuyên cần = `ATTENDED / (ATTENDED + UNEXCUSED) × 100%` (loại buổi `EXCUSED`/trung tâm hủy, không đếm lại buổi gốc học bù); tỷ lệ hoàn thành bài tập = số bài đã nộp hợp lệ / tổng bài đến hạn (không tính bài đã hủy); điểm trung bình là trung bình bài **đã chấm và công bố**, không coi bài chưa chấm là 0. Mẫu số = 0 → `N/A` thay vì tự coi 0%.
+- **Báo cáo P1:** phân biệt doanh thu học phí ghi nhận theo buổi/dịch vụ đã cung cấp; giá trị hóa đơn phát hành sau điều chỉnh; **đã thu** ròng khoản thu hợp lệ sau đảo/hoàn; **phải thu** là phần chưa thanh toán; **công nợ quá hạn** là phần phải thu quá hạn thanh toán. Không đồng nhất tiền trả trước với doanh thu đã thực hiện.
+- Parent chỉ xem lịch, chuyên cần, bài tập, **điểm đã công bố**, tiến độ và học phí **của học sinh đã liên kết**; không xem học sinh khác hoặc sổ tài chính nội bộ trung tâm.
+
+### Q-13 — Thông báo và retry tác vụ (P0/P1)
+- **P0:** chỉ thông báo **in-app** khi lịch đã được đổi/hủy hợp lệ hoặc bài tập mới giao thành công; lưu trạng thái chưa đọc/đã đọc, chống trùng theo `(sự kiện, người nhận)`. Lỗi tạo thông báo không đảo ngược sự kiện gốc; Manager có danh sách tác vụ `FAILED` hoặc `PENDING_APPROVAL` cần xử lý trong ứng dụng.
+- **P1:** nhắc deadline **24 giờ và 1 giờ trước hạn**; email ngoài ứng dụng có thể bổ sung nhưng **không thuộc P0**. Lỗi gửi tạm thời/tác vụ có retry: **tối đa 3 lần thử lại** sau lần đầu, giãn cách **1, 5, 15 phút** và giữ cùng idempotency key/policy_version. Hết lượt -> `FAILED`; người có permission mới được chạy lại sau kiểm tra, vẫn chống trùng tác động dữ liệu. Thiếu dữ liệu -> `NEEDS_INFORMATION`, không retry vô hạn.
+
+### Q-14 — Nhật ký và quyền kiểm tra (P0/P1)
+- P0 ghi audit **và có màn hình tra cứu cơ bản** với bộ lọc đối tượng, người thực hiện, khoảng thời gian, kết quả. Mặc định Manager chỉ thấy log tenant của mình; người có quyền học vụ/tài chính chỉ xem log đúng phạm vi được giao. Log quan trọng có actor, thời điểm, sự kiện, thay đổi, lý do, kết quả và policy_version khi có.
+- Baseline lưu nhật ký **24 tháng**, không cho sửa/xóa lịch sử qua giao diện; tránh ghi mật khẩu, OTP và dữ liệu nhạy cảm không cần thiết. Thời hạn lưu cần rà soát theo pháp luật/chính sách sản phẩm khi thương mại hóa. Xuất/điều tra audit nâng cao thuộc P1.
+
+### Q-15 — P0* và vòng đời tenant
+- **FR-42 `P0*` nghĩa là tenant isolation bắt buộc từ P0**; dấu `*` chỉ phạm vi: công cụ quản trị vòng đời tenant nâng cao chưa nằm trong MVP, không phải ngoại lệ bảo mật.
+- P0: bên vận hành khởi tạo tenant và bật/tạm khóa bằng thao tác vận hành có kiểm soát, không cần trang quản trị SaaS đầy đủ; mỗi tenant `ACTIVE` phải có ít nhất một Manager hợp lệ. P1: quản lý tenant qua giao diện với trạng thái `CREATED`, `ACTIVE`, `SUSPENDED`, `ARCHIVED` và chính sách/gói dịch vụ nếu được đặc tả.
+- System Administrator **không tự có quyền xem/sửa dữ liệu cá nhân, học tập và tài chính** của mọi tenant; hỗ trợ kỹ thuật đặc biệt (nếu có về sau) phải được ủy quyền có phạm vi, thời hạn và audit.
+
+## 8. Ranh giới tích hợp P0 — Internal-first
+
+1. **P0 xử lý toàn bộ nghiệp vụ cốt lõi nội bộ EduCore**, gồm quản lý học vụ/lịch/điểm danh, ghi nhận thanh toán thủ công, học phí, nộp bài bằng vùng lưu trữ do hệ thống quản lý, dashboard tổng hợp từ DB, thông báo in-app, audit và workflow. Không phụ thuộc API nghiệp vụ hệ thống ngoài để vận hành các chức năng này.
+2. **Ngoại lệ duy nhất được phép ở P0:** kết nối máy chủ/dịch vụ gửi **OTP qua email** cho khôi phục/xác minh tài khoản. Email đích có thể là Gmail hoặc hộp thư khác; **không cần Gmail API**, có thể dùng SMTP hoặc nhà cung cấp chuyển phát email. Backend EduCore tự tạo/kiểm tra OTP.
+3. **Không thuộc P0:** cổng thanh toán/ngân hàng tự động, Google Sign-In/OAuth bên thứ ba, Google Calendar, gửi email thông báo nghiệp vụ, SMS, Zalo, web push qua FCM, Google Drive/S3 bắt buộc, AI API bên ngoài hay đồng bộ dữ liệu hệ thống khác. Các phương án tích hợp ở P1/P2 chỉ được triển khai khi có đặc tả và được duyệt phạm vi.
+4. Web hosting, HTTPS, sao lưu và DB là **hạ tầng vận hành**, không được hiểu là API nghiệp vụ bên ngoài; tuy nhiên các dịch vụ hạ tầng được lựa chọn không làm phát sinh yêu cầu tích hợp nghiệp vụ P0. Triển khai production vẫn phải đáp ứng NFR đã đặt ra.
+
+## 9. Quản lý thay đổi và truy vết quyết định
+
+| Quyết định | FR chính | UC liên quan | BR cần giữ |
+|---|---|---|---|
+| Q-01, Q-02 | FR-01–FR-06 | UC-01–UC-06, UC-16–UC-18 | BR-08, BR-10, BR-14 |
+| Q-03–Q-05 | FR-09–FR-19 | UC-09–UC-17 | BR-01–BR-04, BR-07–BR-09 |
+| Q-06–Q-10 | FR-20–FR-31 | UC-17–UC-26 | BR-03–BR-14 |
+| Q-11–Q-13 | FR-32–FR-40, FR-45 | UC-27–UC-32, UC-37 | BR-08, BR-12, BR-14 |
+| Q-14–Q-15 | FR-41–FR-42 | UC-35–UC-36 | BR-08, BR-10, BR-14 |
+| Internal-first | FR-01, FR-30, FR-34, FR-37–FR-40 | UC-03, UC-25, UC-28, UC-31–UC-32 | BR-12, BR-14 |
+| O-12 amendment 2026-10-18 (A=A, B=B1, C=C1, D=D) | FR-16, FR-25–FR-31, FR-41–FR-42, FR-45 | UC-13, UC-21, UC-23, UC-24, UC-26, UC-37 | BR-04, BR-06, BR-08, BR-12–BR-14; Q-04/08/09 |
+
+Nguồn quyết định O-12: chỉ đạo trực tiếp của chủ dự án ngày 18/10/2026, `Asia/Ho_Chi_Minh`; [Decision Register](../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18) và [addendum N](../ai/reviews/database/O12_DECISION_PROPOSAL.md#n-final-approved-decision--2026-10-18). Đây là quyết định nghiệp vụ đã duyệt; thiết kế kỹ thuật, PostgreSQL và runtime phải qua gate riêng.
+
+Không tự thay đổi các baseline/giới hạn này trong lúc lập trình; nếu thay đổi phải cập nhật tài liệu Requirements Analysis trước, sau đó Use Case Specifications và test cases liên quan.

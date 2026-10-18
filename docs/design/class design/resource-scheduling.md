@@ -2,6 +2,8 @@
 
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
+**v1.0 + O-12 amendment · 18/10/2026 · Asia/Ho_Chi_Minh:** business A=A, B=B1, C=C1, D=D được chủ dự án phê duyệt trực tiếp; [Decision Register](../../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Source contract bên dưới phục vụ Billing; class/storage/locking vẫn PROPOSED, không schema/migration/implementation approval. Group A Database v1.1 giữ nguyên.
+
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-11–FR-17**, **UC-11–UC-14**, **BR-01, BR-12**.
 
 > **Quy tắc đọc:** thông số BR/Q, hành vi UC và quyết định ADR là baseline từ nguồn; **tên class, chữ ký TypeScript, cách tách service/port, trạng thái kỹ thuật mới** trong file này là đề xuất Detailed Design, chưa phải source code hay Prisma schema đã kiểm chứng. Danh sách thuộc tính là lớp nghiệp vụ (không nhất thiết khớp 1:1 toàn bộ cột DB). Không tự coi tính năng P1 thành P0.
@@ -15,11 +17,13 @@ Quản lý phòng, lịch bận, chuỗi tuần và từng buổi học; chống
 - Identity & Access (quyền xếp lịch).
 - Notification (event sau đổi/hủy hợp lệ).
 - Attendance & Leave (buổi đã hoàn tất không sửa lịch sử).
+- Billing & Receivables (source attribution/lineage/revisions qua public port; phối hợp stale/issue guards, không tính học phí ở Scheduling).
 
 **Hợp đồng công khai được đề xuất:**
 - `ScheduleQueryPort.getSessions(scope,range): SessionSummary[]`.
 - `AvailabilityPort.assertResourcesFree(bookingDrafts): void`.
 - `SchedulingCommandPort.confirmSession/confirmSeries/reschedule/cancel(command): Result`.
+- `BillingSourceQueryPort.getSessionSource(participantId): SessionSourceEvidence` — đề xuất read contract trả same-tenant student/participant/session, startsAt/endsAt UTC, frozen timezone và derived sourceBusinessDate, original class/course/enrollment lineage, source revision; không trả giá/tổng học phí do Scheduling tự tính.
 
 ## 2. Class Diagram (logic UML)
 
@@ -151,8 +155,11 @@ classDiagram
 | `classId: UUID` | lớp |
 | `teacherId: UUID` | snapshot giáo viên |
 | `roomId?: UUID` | ONSITE bắt buộc |
-| `startAt: Date` | UTC |
-| `endAt: Date` | UTC |
+| `startsAt: Date` | UTC, canonical source time; `startAt` ở API/DTO cũ là alias mapping của cùng mốc, không clock khác |
+| `endsAt: Date` | UTC, không dùng để chọn billing month |
+| `timezoneSnapshot: string` | proposed source evidence từ tenant zone đã freeze C1 |
+| `sourceBusinessDate: LocalDate` | derived local_date(startsAt,z), không client-supplied; lưu trong billing source snapshot theo representation review |
+| `sourceClassCourseLineage: SourceLineage` | original class/course/enrollment IDs + revisions cho buổi; không current enrollment sau transfer |
 | `status: SessionStatus` | DRAFT/CONFIRMED/COMPLETED/CANCELLED |
 | `revision: number` | optimistic check |
 
@@ -161,7 +168,7 @@ classDiagram
 | Method/contract (đề xuất) | Trách nhiệm / kiểm soát |
 |---|---|
 | `confirm(): void` | chỉ nếu đủ nguồn + no conflict |
-| `reschedule(start,end): void` | chỉ buổi/đoạn tương lai |
+| `reschedule(start,end): void` | chỉ future-only + source revision guard, phối hợp Billing invalidation; không đổi past/issued source hoặc âm thầm dời kỳ/giá |
 | `cancel(reason): void` | không giữ resource |
 | `complete(): void` | khóa lịch sử |
 
@@ -252,6 +259,10 @@ classDiagram
 
 `SchedulingService.confirmSeries()` expand ≤6 tháng → lấy Student/Teacher/Room tại từng buổi → mở DB transaction, khóa resource IDs theo thứ tự ổn định → re-read xung đột và sức chứa → insert sessions/participants/bookings + audit/outbox → commit toàn bộ hoặc rollback toàn bộ.
 
+**O-12 source contract:** `sourceBusinessDate=local_date(ClassSession.startsAt,z)` với `z=tenant.timezoneSnapshot`; Billing dùng ngày đó làm pricingLocalDate và monthStart. Overnight 30/09 23:30–01/10 00:30 thuộc Sep, 01/10 00:00 thuộc Oct; không split, không UTC month. C1 freeze cùng first ScheduleSeries/ClassSession (kể cả DRAFT), BillingPeriod/BillingRun-generation; marker sticky kể cả cancel/delete. Ops chỉ cấu hình trước source, sau freeze reject kể cả Ops; không reinterpret timezone cho source cũ. Scheduling cung cấp lineage tại buổi và giữ lịch sử khi student transfer; không truy ngược enrollment hiện tại để rewrite chain, không triển khai price selection/discount arithmetic ở đây.
+
+**Mutation/lock coordination — PROPOSED, O-01 pending:** resource locking ở flow trên là bước con sau tenant gate chung với Billing/Attendance/Price/Tenant writers. Gate trước source reads, fresh statement sau chờ → auth/key → period/run/G → course/class/price/resources/session sorted → participant/attendance → affected invoices/lines/claims → audit/outbox. Coordinator khám phá OLD+NEW dependencies dưới gate; không lấy thêm tenant gate sau resource/invoice lock. Future reschedule release/rebook/revision và invalidate affected draft trong cùng transaction; nếu change làm persisted line sai tháng/date thì rebuild có thẩm quyền hoặc reject/rollback whole command trước commit, không để final state sai rồi “eventual repair”. Không chuyển period của logical invoice cũ, không mutate G1 payload; G2 command mới mới capture/apply dữ liệu đổi. Nguồn đã bắt đầu/issued không được reschedule; attendance correction hậu khóa có quy trình riêng, issued financial effect qua adjustment. Source thắng trước capture thì Billing đọc mới; giữa prepare/apply/issue thì stale/block, không refresh G cũ; issue thắng thì giữ frozen history/claims. Deferred period guards không thay mutex/permissions; immediate history guards không hoãn. Deadlock/serialization retry hữu hạn cùng key sau rollback, unknown commit lookup; actual PG two-client/privileges/lock tests còn NOT RUN. Xem [DB §3.6](../database_design.md), [DD §5.7](../detailed_design.md) và [O-12 N](../../ai/reviews/database/O12_DECISION_PROPOSAL.md#n-final-approved-decision--2026-10-18).
+
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
 ## 5. Invariants / Business Rules phải bảo vệ
@@ -267,6 +278,7 @@ classDiagram
 - [ ] Chuỗi tuần có 1 buổi conflict → rollback toàn chuỗi.
 - [ ] Buổi sát giờ không bị báo conflict; CANCELLED giải phóng booking.
 - [ ] Học trực tiếp không có Room hoặc vượt capacity bị từ chối.
+- [ ] O12-AC-05/06/15/16/24/27: month/midnight/UTC vs local; historical class/course transfer; frozen-zone race; source mutation vs billing prepare/apply/issue; rollback không để wrong-period line. Chỉ acceptance spec; không nhận là concurrency PASS trước PostgreSQL ≥2 connections.
 
 ## 7. Phạm vi P1 và điểm nối mở rộng
 

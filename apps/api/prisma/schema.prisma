@@ -1,4 +1,4 @@
-// EduCore P0 — phases 2A–2E. Times are UTC instants; tenant-local display uses Tenant.timezone.
+// EduCore P0 — phases 2A–2G. Times are UTC instants; tenant-local display uses Tenant.timezone.
 // SQL-only constraints and deferred cross-module relations are tracked in docs/ai/SCHEMA_REVIEW.md.
 generator client {
   provider = "prisma-client"
@@ -112,6 +112,71 @@ enum PaymentExcessResolutionStatus {
   RESOLVED
 }
 
+enum AssignmentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SubmissionVersionStatus {
+  SUBMITTED
+}
+
+enum StoredFileStatus {
+  STAGING
+  READY
+  ORPHANED
+}
+
+enum GradeStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum ApprovalStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  NEEDS_INFORMATION
+  COMPLETED
+  FAILED
+}
+
+enum ApprovalDecisionKind {
+  APPROVE
+  REJECT
+  REQUEST_INFO
+}
+
+enum AutomationJobStatus {
+  READY
+  RUNNING
+  NEEDS_INFORMATION
+  PENDING_APPROVAL
+  COMPLETED
+  FAILED
+}
+
+enum OutboxEventStatus {
+  NEW
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum NotificationKind {
+  SCHEDULE_CHANGED
+  ASSIGNMENT_PUBLISHED
+  ADMIN_ALERT
+}
+
+enum AuditActorKind {
+  USER
+  WORKER
+  OPERATOR
+}
+
 model Tenant {
   id          String    @id @default(uuid()) @db.Uuid
   code        String    @unique @db.Text
@@ -164,6 +229,21 @@ model Tenant {
   paymentReversals             PaymentReversal[]
   receivableAllocations        ReceivableAllocation[]
   paymentExcessResolutions     PaymentExcessResolution[]
+  assignments                  Assignment[]
+  assignmentRecipients         AssignmentRecipient[]
+  submissions                  Submission[]
+  submissionVersions           SubmissionVersion[]
+  storedFiles                  StoredFile[]
+  submissionFiles              SubmissionFile[]
+  grades                       Grade[]
+  approvalRequests             ApprovalRequest[]
+  approvalDecisions            ApprovalDecision[]
+  automationJobs               AutomationJob[]
+  jobAttempts                  JobAttempt[]
+  idempotencyRecords           IdempotencyRecord[]
+  outboxEvents                 OutboxEvent[]
+  notifications                Notification[]
+  auditLogs                    AuditLog[]
 
   @@map("tenants")
 }
@@ -180,12 +260,15 @@ model PolicyVersion {
   createdByMembershipId String?   @map("created_by_membership_id") @db.Uuid
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy     TenantMembership? @relation("PolicyVersionCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
-  classSessions ClassSession[]
-  priceRules    PriceRule[]
-  billingRuns   BillingRun[]
-  invoices      Invoice[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy        TenantMembership? @relation("PolicyVersionCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  classSessions    ClassSession[]
+  priceRules       PriceRule[]
+  billingRuns      BillingRun[]
+  invoices         Invoice[]
+  approvalRequests ApprovalRequest[]
+  automationJobs   AutomationJob[]
+  auditLogs        AuditLog[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, versionCode])
@@ -204,6 +287,7 @@ model User {
   updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   credential  Credential?
+  auditLogs   AuditLog[]
   sessions    AuthSession[]
   otps        PasswordResetOtp[]
   memberships TenantMembership[]
@@ -296,6 +380,12 @@ model TenantMembership {
   invoiceAdjustmentsApplied      InvoiceAdjustment[]           @relation("AdjustmentApplier")
   paymentsRecorded               Payment[]                     @relation("PaymentRecorder")
   paymentReversalsPerformed      PaymentReversal[]             @relation("PaymentReverser")
+  filesUploaded                  StoredFile[]                  @relation("FileUploader")
+  approvalRequestsMade           ApprovalRequest[]             @relation("ApprovalRequester")
+  approvalDecisionsMade          ApprovalDecision[]            @relation("ApprovalDecider")
+  automationJobsActed            AutomationJob[]               @relation("JobActor")
+  notificationsReceived          Notification[]                @relation("NotificationRecipient")
+  auditLogsActed                 AuditLog[]                    @relation("AuditMembershipActor")
 
   @@unique([tenantId, id])
   @@unique([tenantId, userId])
@@ -415,6 +505,8 @@ model TeacherProfile {
   classTeacherAssignments ClassTeacherAssignment[]
   schedulableResource     SchedulableResource?
   classSessions           ClassSession[]
+  assignmentsCreated      Assignment[]
+  gradesGiven             Grade[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, teacherCode])
@@ -444,6 +536,7 @@ model StudentProfile {
   sessionParticipants   SessionParticipant[]
   billingRuns           BillingRun[]
   invoices              Invoice[]
+  assignmentRecipients  AssignmentRecipient[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -534,6 +627,7 @@ model Class {
   scheduleSeries     ScheduleSeries[]
   classSessions      ClassSession[]
   priceRules         PriceRule[]
+  assignments        Assignment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -601,15 +695,16 @@ model Enrollment {
   createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  student             StudentProfile       @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  class               Class                @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
-  priorEnrollment     Enrollment?          @relation("EnrollmentLineage", fields: [tenantId, studentId, priorEnrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
-  nextEnrollments     Enrollment[]         @relation("EnrollmentLineage")
-  createdBy           TenantMembership     @relation("EnrollmentCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
-  sourceTransfers     EnrollmentTransfer[] @relation("TransferSource")
-  targetTransfers     EnrollmentTransfer[] @relation("TransferTarget")
-  sessionParticipants SessionParticipant[]
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  student              StudentProfile        @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  class                Class                 @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  priorEnrollment      Enrollment?           @relation("EnrollmentLineage", fields: [tenantId, studentId, priorEnrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
+  nextEnrollments      Enrollment[]          @relation("EnrollmentLineage")
+  createdBy            TenantMembership      @relation("EnrollmentCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  sourceTransfers      EnrollmentTransfer[]  @relation("TransferSource")
+  targetTransfers      EnrollmentTransfer[]  @relation("TransferTarget")
+  sessionParticipants  SessionParticipant[]
+  assignmentRecipients AssignmentRecipient[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentId, id])
@@ -631,7 +726,6 @@ model EnrollmentTransfer {
   targetEnrollmentId      String?  @map("target_enrollment_id") @db.Uuid
   requestedByMembershipId String   @map("requested_by_membership_id") @db.Uuid
   confirmedByMembershipId String?  @map("confirmed_by_membership_id") @db.Uuid
-  // ApprovalRequest is outside phase 2B; its same-tenant FK is deferred.
   approvalRequestId       String?  @map("approval_request_id") @db.Uuid
   reason                  String   @db.Text
   operationKey            String   @map("operation_key") @db.Text
@@ -644,6 +738,7 @@ model EnrollmentTransfer {
   targetEnrollment Enrollment?       @relation("TransferTarget", fields: [tenantId, targetClassId, targetEnrollmentId], references: [tenantId, classId, id], onDelete: Restrict)
   requestedBy      TenantMembership  @relation("TransferRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
   confirmedBy      TenantMembership? @relation("TransferConfirmer", fields: [tenantId, confirmedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvalRequest  ApprovalRequest?  @relation("TransferApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, operationKey])
@@ -860,6 +955,7 @@ model SessionParticipant {
   @@unique([tenantId, id])
   @@unique([tenantId, sessionId, id])
   @@unique([tenantId, sessionId, studentId])
+  @@unique([tenantId, sessionId, studentId, id], map: "sp_tenant_session_student_id_uq")
   @@index([tenantId, studentId, sessionId])
   @@index([tenantId, enrollmentId])
   @@map("session_participants")
@@ -902,15 +998,15 @@ model AbsenceRequest {
   status                 String    @db.Text
   approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
   decidedAt              DateTime? @map("decided_at") @db.Timestamptz(6)
-  // ApprovalRequest belongs to a later module; do not fabricate a relation.
   approvalRequestId      String?   @map("approval_request_id") @db.Uuid
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  participant SessionParticipant @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
-  requester   TenantMembership   @relation("AbsenceRequester", fields: [tenantId, requesterMembershipId], references: [tenantId, id], onDelete: Restrict)
-  approvedBy  TenantMembership?  @relation("AbsenceApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  participant     SessionParticipant @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
+  requester       TenantMembership   @relation("AbsenceRequester", fields: [tenantId, requesterMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvedBy      TenantMembership?  @relation("AbsenceApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvalRequest ApprovalRequest?   @relation("AbsenceApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId, participantId, status])
@@ -939,6 +1035,7 @@ model AttendanceFinalization {
 
   @@unique([tenantId, id])
   @@unique([tenantId, sessionId])
+  @@unique([tenantId, sessionId, id], map: "af_tenant_session_id_uq")
   @@index([tenantId, confirmedByMembershipId])
   @@map("attendance_finalizations")
 }
@@ -947,6 +1044,7 @@ model AttendanceFinalization {
 model AttendanceRecord {
   id                     String           @id @default(uuid()) @db.Uuid
   tenantId               String           @map("tenant_id") @db.Uuid
+  sessionId              String           @map("session_id") @db.Uuid
   participantId          String           @map("participant_id") @db.Uuid
   finalizationId         String?          @map("finalization_id") @db.Uuid
   attendanceStatus       AttendanceStatus @map("attendance_status")
@@ -957,8 +1055,8 @@ model AttendanceRecord {
   updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  participant  SessionParticipant      @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
-  finalization AttendanceFinalization? @relation(fields: [tenantId, finalizationId], references: [tenantId, id], onDelete: Restrict)
+  participant  SessionParticipant      @relation(fields: [tenantId, sessionId, participantId], references: [tenantId, sessionId, id], onDelete: Restrict, onUpdate: Restrict, map: "ar_participant_session_fk")
+  finalization AttendanceFinalization? @relation(fields: [tenantId, sessionId, finalizationId], references: [tenantId, sessionId, id], onDelete: Restrict, onUpdate: Restrict, map: "ar_finalization_session_fk")
   recordedBy   TenantMembership        @relation(fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
   corrections  AttendanceCorrection[]
   invoiceLines InvoiceLine[]
@@ -966,7 +1064,9 @@ model AttendanceRecord {
   @@unique([tenantId, id])
   @@unique([tenantId, participantId, id])
   @@unique([tenantId, participantId])
+  @@unique([tenantId, sessionId, participantId], map: "ar_tenant_session_participant_uq")
   @@index([tenantId, finalizationId])
+  @@index([tenantId, sessionId, finalizationId], map: "ar_tenant_session_finalization_idx")
   @@index([tenantId, recordedByMembershipId])
   @@map("attendance_records")
 }
@@ -982,14 +1082,14 @@ model AttendanceCorrection {
   requestedByMembershipId String           @map("requested_by_membership_id") @db.Uuid
   approvedByMembershipId  String?          @map("approved_by_membership_id") @db.Uuid
   correctedAt             DateTime         @map("corrected_at") @db.Timestamptz(6)
-  // ApprovalRequest belongs to a later module; Invoice is not linked in phase 2D.
   approvalRequestId       String?          @map("approval_request_id") @db.Uuid
   createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  attendance  AttendanceRecord  @relation(fields: [tenantId, attendanceId], references: [tenantId, id], onDelete: Restrict)
-  requestedBy TenantMembership  @relation("AttendanceCorrectionRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
-  approvedBy  TenantMembership? @relation("AttendanceCorrectionApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  attendance      AttendanceRecord  @relation(fields: [tenantId, attendanceId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy     TenantMembership  @relation("AttendanceCorrectionRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvedBy      TenantMembership? @relation("AttendanceCorrectionApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvalRequest ApprovalRequest?  @relation("AttendanceCorrectionApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId, attendanceId, correctedAt])
@@ -1117,6 +1217,7 @@ model Invoice {
   @@unique([tenantId, id])
   @@unique([tenantId, billingRunId])
   @@unique([tenantId, billingRunId, studentId, periodId])
+  @@unique([tenantId, id, studentId], map: "inv_tenant_id_student_uq")
   @@unique([tenantId, periodId, studentId])
   // PostgreSQL unique permits multiple NULL draft numbers, but no duplicate issued number.
   @@unique([tenantId, invoiceNumber])
@@ -1129,6 +1230,7 @@ model InvoiceLine {
   id                 String   @id @default(uuid()) @db.Uuid
   tenantId           String   @map("tenant_id") @db.Uuid
   invoiceId          String   @map("invoice_id") @db.Uuid
+  studentId          String   @map("student_id") @db.Uuid
   participantId      String   @map("participant_id") @db.Uuid
   sessionId          String   @map("session_id") @db.Uuid
   attendanceId       String?  @map("attendance_id") @db.Uuid
@@ -1143,8 +1245,8 @@ model InvoiceLine {
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant      Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  invoice     Invoice                     @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
-  participant SessionParticipant          @relation(fields: [tenantId, sessionId, participantId], references: [tenantId, sessionId, id], onDelete: Restrict)
+  invoice     Invoice                     @relation(fields: [tenantId, invoiceId, studentId], references: [tenantId, id, studentId], onDelete: Restrict, onUpdate: Restrict, map: "il_invoice_student_fk")
+  participant SessionParticipant          @relation(fields: [tenantId, sessionId, studentId, participantId], references: [tenantId, sessionId, studentId, id], onDelete: Restrict, onUpdate: Restrict, map: "il_participant_student_fk")
   session     ClassSession                @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
   attendance  AttendanceRecord?           @relation(fields: [tenantId, participantId, attendanceId], references: [tenantId, participantId, id], onDelete: Restrict)
   priceRule   PriceRule?                  @relation(fields: [tenantId, priceRuleId], references: [tenantId, id], onDelete: Restrict)
@@ -1205,7 +1307,6 @@ model InvoiceAdjustment {
   id                    String                  @id @default(uuid()) @db.Uuid
   tenantId              String                  @map("tenant_id") @db.Uuid
   invoiceId             String                  @map("invoice_id") @db.Uuid
-  // ApprovalRequest is introduced in a later phase; this required ID is not a fake FK.
   approvalRequestId     String                  @map("approval_request_id") @db.Uuid
   adjustmentKind        InvoiceAdjustmentKind   @map("adjustment_kind")
   deltaVnd              BigInt                  @map("delta_vnd") @db.BigInt
@@ -1220,6 +1321,7 @@ model InvoiceAdjustment {
   tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   invoice           Invoice                   @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
   appliedBy         TenantMembership?         @relation("AdjustmentApplier", fields: [tenantId, appliedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvalRequest   ApprovalRequest           @relation("InvoiceAdjustmentApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
   excessResolutions PaymentExcessResolution[]
 
   @@unique([tenantId, id])
@@ -1272,9 +1374,10 @@ model PaymentReversal {
   operationKey           String   @map("operation_key") @db.Text
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  payment    Payment          @relation(fields: [tenantId, paymentId], references: [tenantId, id], onDelete: Restrict)
-  reversedBy TenantMembership @relation("PaymentReverser", fields: [tenantId, reversedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  payment         Payment          @relation(fields: [tenantId, paymentId], references: [tenantId, id], onDelete: Restrict)
+  reversedBy      TenantMembership @relation("PaymentReverser", fields: [tenantId, reversedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvalRequest ApprovalRequest? @relation("PaymentReversalApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, paymentId])
@@ -1326,6 +1429,7 @@ model PaymentExcessResolution {
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   invoice           Invoice           @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
   triggerAdjustment InvoiceAdjustment @relation(fields: [tenantId, invoiceId, triggerAdjustmentId], references: [tenantId, invoiceId, id], onDelete: Restrict)
+  approvalRequest   ApprovalRequest?  @relation("PaymentExcessApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, operationKey])
@@ -1333,4 +1437,401 @@ model PaymentExcessResolution {
   @@index([tenantId, triggerAdjustmentId])
   @@index([tenantId, approvalRequestId])
   @@map("payment_excess_resolutions")
+}
+
+// A class assignment may also target explicitly selected students; recipient rows are the publish snapshot.
+model Assignment {
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @map("tenant_id") @db.Uuid
+  classId            String?          @map("class_id") @db.Uuid
+  createdByTeacherId String           @map("created_by_teacher_id") @db.Uuid
+  title              String           @db.Text
+  description        String           @db.Text
+  priority           Int              @db.SmallInt
+  deadlineAt         DateTime         @map("deadline_at") @db.Timestamptz(6)
+  publishedAt        DateTime?        @map("published_at") @db.Timestamptz(6)
+  status             AssignmentStatus
+  revision           Int
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  class            Class?                @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  createdByTeacher TeacherProfile        @relation(fields: [tenantId, createdByTeacherId], references: [tenantId, id], onDelete: Restrict)
+  recipients       AssignmentRecipient[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, classId, status])
+  @@index([tenantId, createdByTeacherId, status])
+  @@map("assignments")
+}
+
+// A revoked recipient is retained; reassigning uses the same row and audit history.
+model AssignmentRecipient {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  assignmentId       String    @map("assignment_id") @db.Uuid
+  studentId          String    @map("student_id") @db.Uuid
+  enrollmentId       String?   @map("enrollment_id") @db.Uuid
+  assignedAt         DateTime  @map("assigned_at") @db.Timestamptz(6)
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(6)
+  deadlineOverrideAt DateTime? @map("deadline_override_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignment Assignment     @relation(fields: [tenantId, assignmentId], references: [tenantId, id], onDelete: Restrict)
+  student    StudentProfile @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  enrollment Enrollment?    @relation(fields: [tenantId, studentId, enrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
+  submission Submission?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, assignmentId, studentId])
+  @@index([tenantId, studentId, revokedAt])
+  @@index([tenantId, enrollmentId])
+  @@map("assignment_recipients")
+}
+
+// Stable container; currentVersionId points only to a version of this submission.
+model Submission {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  recipientId      String   @map("recipient_id") @db.Uuid
+  currentVersionId String?  @map("current_version_id") @db.Uuid
+  status           String   @db.Text
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  recipient      AssignmentRecipient @relation(fields: [tenantId, recipientId], references: [tenantId, id], onDelete: Restrict)
+  currentVersion SubmissionVersion?  @relation("CurrentSubmissionVersion", fields: [tenantId, id, currentVersionId], references: [tenantId, submissionId, id], onDelete: Restrict)
+  versions       SubmissionVersion[] @relation("SubmissionVersions")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, currentVersionId])
+  @@unique([tenantId, recipientId])
+  @@map("submissions")
+}
+
+// Append-only answer snapshot. A resubmission creates the next version, never overwrites this row.
+model SubmissionVersion {
+  id           String                  @id @default(uuid()) @db.Uuid
+  tenantId     String                  @map("tenant_id") @db.Uuid
+  submissionId String                  @map("submission_id") @db.Uuid
+  versionNo    Int                     @map("version_no")
+  submittedAt  DateTime                @map("submitted_at") @db.Timestamptz(6)
+  answerText   String?                 @map("answer_text") @db.Text
+  isLate       Boolean                 @map("is_late")
+  status       SubmissionVersionStatus
+  contentHash  String?                 @map("content_hash") @db.Text
+  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant               Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  submission           Submission       @relation("SubmissionVersions", fields: [tenantId, submissionId], references: [tenantId, id], onDelete: Restrict)
+  currentForSubmission Submission?      @relation("CurrentSubmissionVersion")
+  files                SubmissionFile[]
+  grades               Grade[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, submissionId, id])
+  @@unique([tenantId, submissionId, versionNo])
+  @@index([tenantId, submittedAt])
+  @@map("submission_versions")
+}
+
+// File bytes live on a private volume; this table stores only ownership and validated metadata.
+model StoredFile {
+  id                     String           @id @default(uuid()) @db.Uuid
+  tenantId               String           @map("tenant_id") @db.Uuid
+  uploadedByMembershipId String           @map("uploaded_by_membership_id") @db.Uuid
+  privateStorageKey      String           @map("private_storage_key") @db.Text
+  originalFilename       String           @map("original_filename") @db.Text
+  mimeType               String           @map("mime_type") @db.Text
+  sizeBytes              BigInt           @map("size_bytes") @db.BigInt
+  sha256                 String           @db.Text
+  storageStatus          StoredFileStatus @map("storage_status")
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  uploadedBy  TenantMembership @relation("FileUploader", fields: [tenantId, uploadedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  submissions SubmissionFile[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, privateStorageKey])
+  @@index([tenantId, uploadedByMembershipId, createdAt])
+  @@index([tenantId, storageStatus, createdAt])
+  @@map("stored_files")
+}
+
+// Links only READY files in the same tenant when a version is finalized under a transaction.
+model SubmissionFile {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  submissionVersionId String   @map("submission_version_id") @db.Uuid
+  fileId              String   @map("file_id") @db.Uuid
+  sortOrder           Int      @map("sort_order") @db.SmallInt
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  submissionVersion SubmissionVersion @relation(fields: [tenantId, submissionVersionId], references: [tenantId, id], onDelete: Restrict)
+  file              StoredFile        @relation(fields: [tenantId, fileId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, submissionVersionId, fileId])
+  @@index([tenantId, fileId])
+  @@map("submission_files")
+}
+
+// Published revisions are historical records; a correction creates a new revision with a reason.
+model Grade {
+  id                  String      @id @default(uuid()) @db.Uuid
+  tenantId            String      @map("tenant_id") @db.Uuid
+  submissionVersionId String      @map("submission_version_id") @db.Uuid
+  revisionNo          Int         @map("revision_no")
+  score               Decimal     @db.Decimal(3, 1)
+  feedback            String?     @db.Text
+  gradedByTeacherId   String      @map("graded_by_teacher_id") @db.Uuid
+  gradedAt            DateTime    @map("graded_at") @db.Timestamptz(6)
+  status              GradeStatus
+  publishedAt         DateTime?   @map("published_at") @db.Timestamptz(6)
+  reasonForRevision   String?     @map("reason_for_revision") @db.Text
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  submissionVersion SubmissionVersion @relation(fields: [tenantId, submissionVersionId], references: [tenantId, id], onDelete: Restrict)
+  gradedByTeacher   TeacherProfile    @relation(fields: [tenantId, gradedByTeacherId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, submissionVersionId, revisionNo])
+  @@index([tenantId, gradedByTeacherId, gradedAt])
+  @@index([tenantId, submissionVersionId, status, publishedAt])
+  @@map("grades")
+}
+
+// Polymorphic target identity is checked by the executing coordinator, not inferred from UUID alone.
+model ApprovalRequest {
+  id                    String         @id @default(uuid()) @db.Uuid
+  tenantId              String         @map("tenant_id") @db.Uuid
+  operationType         String         @map("operation_type") @db.Text
+  targetType            String         @map("target_type") @db.Text
+  targetId              String         @map("target_id") @db.Uuid
+  requesterMembershipId String?        @map("requester_membership_id") @db.Uuid
+  policyVersionId       String         @map("policy_version_id") @db.Uuid
+  status                ApprovalStatus
+  reason                String         @db.Text
+  payloadSnapshotJson   Json           @map("payload_snapshot_json") @db.JsonB
+  correlationId         String         @map("correlation_id") @db.Uuid
+  decidedAt             DateTime?      @map("decided_at") @db.Timestamptz(6)
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  requester                TenantMembership?         @relation("ApprovalRequester", fields: [tenantId, requesterMembershipId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion            PolicyVersion             @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  decisions                ApprovalDecision[]
+  enrollmentTransfers      EnrollmentTransfer[]      @relation("TransferApproval")
+  absenceRequests          AbsenceRequest[]          @relation("AbsenceApproval")
+  attendanceCorrections    AttendanceCorrection[]    @relation("AttendanceCorrectionApproval")
+  invoiceAdjustments       InvoiceAdjustment[]       @relation("InvoiceAdjustmentApproval")
+  paymentReversals         PaymentReversal[]         @relation("PaymentReversalApproval")
+  paymentExcessResolutions PaymentExcessResolution[] @relation("PaymentExcessApproval")
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, targetType, targetId])
+  @@index([tenantId, requesterMembershipId, createdAt])
+  @@index([tenantId, correlationId])
+  @@index([tenantId, policyVersionId])
+  @@map("approval_requests")
+}
+
+// Decisions are retained independently of request status; self approval is an audit flag.
+model ApprovalDecision {
+  id                    String               @id @default(uuid()) @db.Uuid
+  tenantId              String               @map("tenant_id") @db.Uuid
+  approvalRequestId     String               @map("approval_request_id") @db.Uuid
+  decidedByMembershipId String               @map("decided_by_membership_id") @db.Uuid
+  decision              ApprovalDecisionKind
+  reason                String               @db.Text
+  decidedAt             DateTime             @map("decided_at") @db.Timestamptz(6)
+  selfApproved          Boolean              @default(false) @map("self_approved")
+  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  approvalRequest ApprovalRequest  @relation(fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
+  decidedBy       TenantMembership @relation("ApprovalDecider", fields: [tenantId, decidedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, approvalRequestId, decidedAt])
+  @@index([tenantId, decidedByMembershipId, decidedAt])
+  @@map("approval_decisions")
+}
+
+// Persisted execution state; workers claim rows with PostgreSQL row locks and bounded leases.
+model AutomationJob {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  jobKind           String              @map("job_kind") @db.Text
+  operationKey      String              @map("operation_key") @db.Text
+  idempotencyKey    String              @map("idempotency_key") @db.Text
+  policyVersionId   String              @map("policy_version_id") @db.Uuid
+  triggerEventId    String?             @map("trigger_event_id") @db.Uuid
+  actorMembershipId String?             @map("actor_membership_id") @db.Uuid
+  correlationId     String              @map("correlation_id") @db.Uuid
+  status            AutomationJobStatus
+  attemptCount      Int                 @map("attempt_count")
+  nextAttemptAt     DateTime            @map("next_attempt_at") @db.Timestamptz(6)
+  leaseOwner        String?             @map("lease_owner") @db.Text
+  leaseUntil        DateTime?           @map("lease_until") @db.Timestamptz(6)
+  lastErrorCode     String?             @map("last_error_code") @db.Text
+  payloadJson       Json                @map("payload_json") @db.JsonB
+  resultJson        Json?               @map("result_json") @db.JsonB
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  policyVersion PolicyVersion     @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  triggerEvent  OutboxEvent?      @relation(fields: [tenantId, triggerEventId], references: [tenantId, id], onDelete: Restrict)
+  actor         TenantMembership? @relation("JobActor", fields: [tenantId, actorMembershipId], references: [tenantId, id], onDelete: Restrict)
+  attempts      JobAttempt[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, operationKey])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status, nextAttemptAt])
+  @@index([tenantId, idempotencyKey])
+  @@index([tenantId, triggerEventId])
+  @@index([tenantId, correlationId])
+  @@map("automation_jobs")
+}
+
+model JobAttempt {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  jobId      String    @map("job_id") @db.Uuid
+  attemptNo  Int       @map("attempt_no")
+  startedAt  DateTime  @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  outcome    String    @db.Text
+  errorCode  String?   @map("error_code") @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  job    AutomationJob @relation(fields: [tenantId, jobId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, jobId, attemptNo])
+  @@index([tenantId, jobId, startedAt])
+  @@map("job_attempts")
+}
+
+model IdempotencyRecord {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  operationType  String    @map("operation_type") @db.Text
+  idempotencyKey String    @map("idempotency_key") @db.Text
+  requestHash    String    @map("request_hash") @db.Text
+  status         String    @db.Text
+  resultRefType  String?   @map("result_ref_type") @db.Text
+  resultRefId    String?   @map("result_ref_id") @db.Uuid
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, operationType, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, expiresAt])
+  @@map("idempotency_records")
+}
+
+// Domain mutation and event insertion share one transaction; delivery is at least once.
+model OutboxEvent {
+  id            String            @id @default(uuid()) @db.Uuid
+  tenantId      String            @map("tenant_id") @db.Uuid
+  eventKey      String            @map("event_key") @db.Text
+  eventType     String            @map("event_type") @db.Text
+  aggregateType String            @map("aggregate_type") @db.Text
+  aggregateId   String            @map("aggregate_id") @db.Uuid
+  payloadJson   Json              @map("payload_json") @db.JsonB
+  occurredAt    DateTime          @map("occurred_at") @db.Timestamptz(6)
+  status        OutboxEventStatus
+  attemptCount  Int               @map("attempt_count")
+  availableAt   DateTime          @map("available_at") @db.Timestamptz(6)
+  correlationId String            @map("correlation_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  triggeredJobs AutomationJob[]
+  notifications Notification[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, eventKey])
+  @@index([status, availableAt])
+  @@index([tenantId, status, availableAt])
+  @@index([tenantId, aggregateType, aggregateId])
+  @@index([tenantId, correlationId])
+  @@map("outbox_events")
+}
+
+// P0 inbox kinds are restricted to confirmed schedule changes, assigned work and Manager alerts.
+model Notification {
+  id                    String           @id @default(uuid()) @db.Uuid
+  tenantId              String           @map("tenant_id") @db.Uuid
+  recipientMembershipId String           @map("recipient_membership_id") @db.Uuid
+  outboxEventId         String           @map("outbox_event_id") @db.Uuid
+  kind                  NotificationKind
+  title                 String           @db.Text
+  body                  String           @db.Text
+  readAt                DateTime?        @map("read_at") @db.Timestamptz(6)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  recipient TenantMembership @relation("NotificationRecipient", fields: [tenantId, recipientMembershipId], references: [tenantId, id], onDelete: Restrict)
+  event     OutboxEvent      @relation(fields: [tenantId, outboxEventId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, outboxEventId, recipientMembershipId, kind])
+  @@index([tenantId, recipientMembershipId, createdAt])
+  @@index([tenantId, recipientMembershipId, readAt])
+  @@map("notifications")
+}
+
+// Append-only trace; before/after payloads must be redacted before insertion and retained >=24 months.
+model AuditLog {
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @map("tenant_id") @db.Uuid
+  actorUserId       String?        @map("actor_user_id") @db.Uuid
+  actorMembershipId String?        @map("actor_membership_id") @db.Uuid
+  actorKind         AuditActorKind @map("actor_kind")
+  eventType         String         @map("event_type") @db.Text
+  entityType        String         @map("entity_type") @db.Text
+  entityId          String         @map("entity_id") @db.Uuid
+  action            String         @db.Text
+  reason            String?        @db.Text
+  beforeJson        Json?          @map("before_json") @db.JsonB
+  afterJson         Json?          @map("after_json") @db.JsonB
+  policyVersionId   String?        @map("policy_version_id") @db.Uuid
+  correlationId     String         @map("correlation_id") @db.Uuid
+  ipAddress         String?        @map("ip_address") @db.Text
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  actorUser       User?             @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  actorMembership TenantMembership? @relation("AuditMembershipActor", fields: [tenantId, actorMembershipId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion   PolicyVersion?    @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityType, entityId, createdAt])
+  @@index([tenantId, correlationId])
+  @@index([tenantId, actorMembershipId, createdAt])
+  @@index([tenantId, actorUserId, createdAt])
+  @@map("audit_logs")
 }

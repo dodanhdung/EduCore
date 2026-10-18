@@ -1,4 +1,7 @@
 # EduCore — Use Case Specifications
+
+**Baseline v1.3 + O-12 amendment · 18/10/2026 · APPROVED business change.** Nguồn: chỉ đạo trực tiếp của chủ dự án ngày 18/10/2026 (`Asia/Ho_Chi_Minh`), Requirements v5 O-12 amendment và [Decision Register](../../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Đồng bộ UC-21/23/24 và AC theo A=A, B=B1, C=C1, D=D; giữ ID/ưu đãi/P0/P1. Không là phê duyệt code, schema hoặc migrations.
+
 ## 1. Mục đích và quy ước
 
 Tài liệu mô tả các tương tác để đạt mục tiêu nghiệp vụ của EduCore, phục vụ thiết kế, lập trình và xây dựng test case. Các ID `UC-01`–`UC-37` được tạo mới cho đặc tả này; không thay thế hoặc đánh số lại US/FR/BR trong nguồn.
@@ -900,12 +903,13 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 1. Người dùng chọn phạm vi áp dụng và nhập đơn giá.
 2. Hệ thống kiểm tra dữ liệu, tenant và thời điểm hiệu lực.
 3. Người có quyền xác nhận lưu; hệ thống ghi dấu vết cấu hình đã áp dụng.
-4. Các khoản tính phí mới sử dụng mức giá có hiệu lực tại thời điểm lập khoản tính phí.
+4. Với từng nguồn buổi học, Backend suy `sourceBusinessDate=local_date(ClassSession.startsAt,timezoneSnapshot)` và `pricingLocalDate=sourceBusinessDate`; chọn PriceRule DATE theo `[effectiveFrom,effectiveTo)` và precedence **SESSION > CLASS > COURSE**. Ngày tạo charge/draft/generation/issue không chọn giá. Lưu bằng chứng rule/target/window/unit price/ngày học/timezone và lineage session/class/course gốc.
 
 **Luồng thay thế và ngoại lệ**
 
 - 2a. Có nhiều mức giá có hiệu lực: chọn theo thứ tự **buổi học → lớp học → khóa học**, ghi căn cứ; nếu cùng mức ưu tiên còn mâu thuẫn thì cần bổ sung/sửa dữ liệu.
 - 4a. Giá mới khác giá hóa đơn đã phát hành: không tính lại hóa đơn cũ; điều chỉnh qua UC-26 nếu được ủy quyền.
+- 2b. Sửa giá lịch sử hoặc backdate làm đổi giá buổi đã bắt đầu: từ chối, giữ snapshot. Publish tariff cho buổi tương lai theo ngày local; DATE không hỗ trợ đổi giá giữa ngày. Thiếu tariff quá khứ không được lấp bằng giá hiện tại/giá 0 hoặc backdate qua luồng thông thường; cần đối soát và phạm vi sửa dữ liệu được duyệt riêng.
 
 **Hậu điều kiện:** Đơn giá có phạm vi và hiệu lực rõ ràng; lịch sử khoản tính phí được bảo toàn. Bảo đảm thất bại theo C-09.
 
@@ -913,6 +917,8 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 - AC-21-01: Không cập nhật hồi tố hóa đơn đã phát hành khi đổi giá.
 - AC-21-02 (P0): Khi đồng thời có giá buổi, lớp, khóa, hệ thống ưu tiên giá theo buổi; giá đã dùng được lưu với khoản tính phí.
+- AC-21-03 (O-12): Buổi 20/09 giá 100.000, tariff 150.000 từ 01/10, draft 02/10 vẫn 100.000; recompute tháng 11 không tự đổi đơn giá buổi đó.
+- AC-21-04 (O-12): Window DATE inclusive start/exclusive end; không dùng giờ client/charge/issue, không override giá; mutation hồi tố bị từ chối. Snapshot mỗi line chứa sourceBusinessDate/pricingLocalDate/timezone/rule/window/unitPrice/tier và source lineage.
 
 <a id="uc-22"></a>
 
@@ -970,11 +976,11 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 **Luồng chính**
 
-1. Hệ thống xác định phạm vi tính phí, mã chống lặp và phiên bản chính sách.
+1. Hệ thống xác định một logical run/invoice mỗi student/tenant/month theo tháng bắt đầu session tại timezone tenant đã freeze (C1). Initial monthly draft chỉ nhận sau kỳ đóng; pin generation G1, key/request hash, calculation policy theo BR-14 và thời điểm admission phục vụ audit.
 2. Hệ thống kiểm tra tính đầy đủ và trạng thái xác nhận điểm danh.
 3. Hệ thống phân loại từng buổi: ATTENDED/UNEXCUSED = 1; EXCUSED/trung tâm hủy = 0; áp dụng các quy tắc P1 nếu đã triển khai.
-4. Hệ thống áp dụng đơn giá và giảm giá hợp lệ; trình bày chi tiết số buổi, căn cứ, số tiền và điều chỉnh/tín dụng nếu có chính sách đã chốt.
-5. Hệ thống lưu dự thảo, phiên bản chính sách và dấu vết tính toán.
+4. Hệ thống resolve giá từng buổi theo local session-start date như UC-21, dùng session/class/course gốc kể cả đã chuyển lớp; áp dụng ưu đãi hợp lệ theo calculation policy đã pin. Một invoice có thể có nhiều mức giá trong tháng; trình bày căn cứ từng line và làm tròn HALF_UP một lần cuối, giữ phạm vi ưu đãi P0/P1.
+5. Hệ thống lưu snapshot nguồn/revisions, ngày học/ngày giá/timezone, PriceRule/window/unitPrice/tier, policy và kết quả bất biến của generation; apply vào cùng draft với current generation/history/audit atomic. Thiếu nguồn/giá không tạo draft hoàn tất.
 6. Hệ thống trả dự thảo để người có quyền kiểm tra; phát hành qua UC-24.
 
 **Luồng thay thế và ngoại lệ**
@@ -984,6 +990,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - 3b. P1: buổi trong khoảng bảo lưu không phát sinh số buổi tính phí.
 - 5a. Lỗi tạm thời: xử lý theo UC-37, retry cùng khóa không sinh thêm hóa đơn.
 - 5b. Đã có hóa đơn phát hành liên quan: không ghi đè; sai lệch phải qua UC-26.
+- 5c. Retry cùng key/hash giữ G1/captured inputs/policy/kết quả; không đọc tariff hiện hành để reprice. Cùng key khác hash bị conflict; replay G1 sau G2 không ghi G1 trở lại current invoice. Kiểm quyền hiện hành cả khi replay.
+- 5d. Recompute có chủ đích khi chưa có invoice hoặc invoice còn DRAFT: command/key mới + reason + expected base/applied generation; CAS chỉ cho một winner tạo/apply G2 theo contract D. Pin policy của request mới, đọc lại nguồn hợp lệ, vẫn chọn giá theo ngày session; giữ G1, before/after diff và audit, không invoice thứ hai. Nếu nguồn/tariff không đổi thì không tăng unit price do ngày tạo G2.
+- 5e. Nguồn thay đổi sau capture/apply: generation stale, chặn issue; không tự refresh G1. Cần rà soát và recompute command mới. Recompute đang pending cũng chặn issue draft cũ; không expose tổng G1 như đã kiểm chứng hiện hành.
+- 1a. Session qua tháng thuộc tháng bắt đầu, không split: 30/09 23:30–01/10 00:30 thuộc Sep; 01/10 00:00 thuộc Oct. Kiểm `[monthStart,nextMonthStart)` bằng tenant-local date; không đưa nguồn vào tháng tạo draft. Initial draft trước khi kỳ đóng bị từ chối.
 
 **Hậu điều kiện:** Có dự thảo có căn cứ hoặc yêu cầu bổ sung rõ lý do; P0 không tự phát hành. Bảo đảm thất bại theo C-09.
 
@@ -996,6 +1006,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - AC-23-01: Chưa xác nhận điểm danh thì không chốt bảng kê tự động.
 - AC-23-02: Retry cùng yêu cầu không tạo thêm hóa đơn.
 - AC-23-03: Dự thảo hiển thị số buổi tính phí và chính sách dùng để tính.
+- AC-23-04 (O-12): Draft tạo tháng sau vẫn giá/kỳ theo local session start, nhiều line có thể khác giá; two students cùng session có hai invoice identities đúng student, không trộn participation.
+- AC-23-05 (O-12): Retry giữ generation/result/policy; recompute key/reason/CAS hợp lệ tạo G2 giữ G1/history, cùng logical invoice; hai recomputes cùng base tối đa một thắng.
+- AC-23-06 (O-12): Missing price/confirmed attendance → NEEDS_INFORMATION, không implicit 0; CANCELLED units=0 không đòi attendance giả nhưng vẫn cần tariff. Source đổi → stale/block issue; transfer không đổi lineage lớp/khóa buổi cũ.
+- AC-23-07 (O-12): Thử đổi timezone sau first series/session (kể cả DRAFT)/period/run-generation bị từ chối; hủy/xóa nguồn không unfreeze. Test chi tiết [O12-AC-01–27](../../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa), chưa là kết quả thực thi.
 
 <a id="uc-24"></a>
 
@@ -1018,7 +1032,7 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 1. Người dùng xem dự thảo và các căn cứ tính phí.
 2. Hệ thống kiểm tra quyền tài chính hiện hành, tenant và các điều kiện phát hành.
 3. Người có quyền xác nhận phát hành; nếu chính sách yêu cầu phê duyệt riêng thì thực hiện UC-34.
-4. Hệ thống kiểm tra lại điều kiện và ghi nhận hóa đơn đã phát hành cùng người/thời điểm xác nhận.
+4. Trong transaction, hệ thống kiểm quyền hiện hành, tenant/student/period, source revisions/completeness, snapshot và current generation đã apply (không pending/stale); tạo permanent issued claims kể cả dòng 0, cấp số/issue timestamp/audit atomic. Không chọn lại giá theo ngày phát hành hoặc repin calculation policy; giữ giá từng session từ generation hiện hành.
 5. Hệ thống đưa hóa đơn vào theo dõi thanh toán/công nợ và chặn sửa trực tiếp.
 
 **Luồng thay thế và ngoại lệ**
@@ -1034,6 +1048,8 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 - AC-24-01: Tạo dự thảo thành công không đồng nghĩa đã phát hành.
 - AC-24-02: Người chỉ có quyền xem hóa đơn không được phát hành.
+- AC-24-03 (O-12): Issue sau ngày tăng giá giữ per-session snapshots; source hoặc current generation thay đổi thì rollback/block, không sửa rồi issue. Thiếu quyền vẫn từ chối dù draft trước đây hợp lệ.
+- AC-24-04 (O-12): ISSUED không recompute/reprice/repin, không sửa/xóa line/claim; correction có thẩm quyền qua UC-26 append-only. Claim không giải phóng sau hủy để đưa participation sang tháng khác.
 
 <a id="uc-25"></a>
 
@@ -1760,7 +1776,7 @@ Các câu hỏi của bản 1.0–1.2 đã được **quyết định làm basel
 | **Q-05** | Teacher xác nhận điểm danh; khóa sau 48h hoặc khi đã phát hành hóa đơn; sửa đặc biệt có audit; dự học thực tế = ATTENDED; xử lý học bù trong hạn gốc. | UC-15–UC-17, UC-23 | Đã chốt |
 | **Q-06** | Tín dụng chỉ tính từ tiền đã thu cho buổi chưa dùng sau ưu đãi; khấu trừ sau ưu đãi mới, không tự hoàn/hết hạn; quay lại trước hạn cần duyệt. | UC-18, UC-19, UC-23, UC-26 | Đã chốt |
 | **Q-07** | Dạy tối đa 8h/ngày, 40h/tuần baseline; bù cùng môn/trình độ/nội dung; dạy thay cần Teacher nhận + người có quyền duyệt, không tự xác nhận. | UC-17, UC-20, UC-33 | Đã chốt |
-| **Q-08** | Ưu tiên giá buổi → lớp → khóa; tính theo tháng P0, hạn thanh toán 7 ngày, ROUND_HALF_UP cuối phép tính; gói trả trước P1. | UC-21–UC-25 | Đã chốt |
+| **Q-08** | Ưu tiên giá buổi → lớp → khóa tại local session-start date (O12-A=A), month cũng theo local start (B1); freeze C1; retry giữ generation/recompute mới D; hạn 7 ngày, HALF_UP cuối; trả trước P1. | UC-21–UC-25 | Đã chốt; O-12 amendment 18/10/2026 |
 | **Q-09** | P0 ưu đãi anh/chị/em 10%; P1 thêm combo 5% trước rồi 10% sau, hiệu dụng 14,5%; không cộng dồn tùy ý. | UC-22, UC-23 | Đã chốt |
 | **Q-10** | P0 tiền mặt/chuyển khoản đối soát và nhập thủ công, thu một phần/1 hóa đơn, từ chối vượt nợ; đảo khoản thu sai, không kết nối cổng thanh toán. | UC-25, UC-26 | Đã chốt |
 | **Q-11** | Priority 1–5; điểm 0–10 (1 chữ số); PDF/DOCX/JPG/PNG, ≤10 MB/tệp và 5 tệp; nộp muộn 7 ngày, nộp lại trước chấm, công bố điểm thủ công. | UC-27–UC-29 | Đã chốt |

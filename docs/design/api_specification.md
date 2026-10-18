@@ -2,9 +2,11 @@
 
 > **Document ID:** EC-API-001  
 > **Version:** 1.1-approved-group-A · **Date:** 17/10/2026 · **Status:** Approved group A API contract — NOT implemented  
-> **Recommended repository path:** `docs/design/api_spec.md`  
+> **Actual repository path:** `docs/design/api_specification.md`
 > **Audience:** NestJS backend, React/Vite frontend, Codex and QA.  
-> **Baselines:** Requirements Analysis **v5 đồng bộ vào repo (nhánh docs/approve-design-baseline-20261017)**, Use Case Specifications **v1.3**, Architectural Design (Accepted stack), Database Design v1.1 (Approved group A), 14 Class Design files v1.0 (Proposed), `docs/design/detailed_des.md`.
+> **Baselines:** Requirements Analysis **v5 đồng bộ vào repo (nhánh docs/approve-design-baseline-20261017)**, Use Case Specifications **v1.3**, Architectural Design (Accepted stack), Database Design v1.1 (Approved group A), 14 Class Design files v1.0 (Proposed), `docs/design/detailed_design.md`.
+
+**Changelog — v1.1 + O-12 amendment, 18/10/2026 (`Asia/Ho_Chi_Minh`):** business A=A, B=B1, C=C1, D=D đã được chủ dự án phê duyệt trực tiếp; [Decision Register](../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). DTO/generation/recompute transport bên dưới là **PROPOSED / PENDING API REVIEW**, không routes đã implemented hoặc phê duyệt schema/migration. Không thêm endpoint recompute vào route catalog.
 
 ## 0. Cảnh báo đồng bộ source of truth
 
@@ -207,8 +209,8 @@ Notice cutoff ≥24h is classified by server using session start; no submission 
 
 | Method & path | Input → output | P / invariants |
 |---|---|---|
-| `GET T/price-rules` / `POST T/price-rules` | filters / `{scope:SESSION|CLASS|COURSE,scopeId,unitPriceVnd,effectiveFrom,effectiveTo?}` | `pricing.read/manage`; effective ranges no ambiguous overlap |
-| `PATCH T/price-rules/{id}` | modify future-effective rule | `pricing.manage`; historical snapshot immutable |
+| `GET T/price-rules` / `POST T/price-rules` | filters / `{scope:SESSION|CLASS|COURSE,scopeId,unitPriceVnd,effectiveFrom,effectiveTo?}`; effective dates `YYYY-MM-DD`, `[from,to)` | `pricing.read/manage`; no overlap same tenant/target; selection by local session-start date, future-only tariff publication |
+| `PATCH T/price-rules/{id}` | modify future-effective rule; protect begun sessions and captured selection even before draft | `pricing.manage`; no historical amount/target/backdated override, no implicit past-tariff repair; snapshots immutable |
 | `GET T/billing/periods` | `{year?}` → monthly periods | `billing.read` |
 | `POST T/billing/runs` | `{period:YYYY-MM,studentIds?}` → job(s)/run(s), 202 possible | `billing.generate_draft`, **IDEMP**; only confirmed attendance; early next month |
 | `GET T/billing/runs/{id}` | status/snapshot error/source completeness | `billing.read`, scoped |
@@ -400,6 +402,49 @@ Example finalized DRAFT invoice read model, after worker success:
 
 **Arithmetic example**, not tariff baseline: 8 confirmed charge units × sample 125,000 VND = 1,000,000; verified sibling discount 10% → 900,000; combo not applied P0. Issuing is separate `POST /invoices/{id}/issue` with `invoice.issue` and idempotency key; response includes `status=ISSUED`, issue timestamp and `dueAt = issuedAt + 7 days` according to business timezone/calendar rule selected consistently. If sources incomplete, run returns `NEEDS_INFORMATION`, not an issued invoice.
 
+#### O-12 contract amendment — business approved; DTO/transport pending API review
+
+Every line derives `sourceBusinessDate=pricingLocalDate=local_date(ClassSession.startsAt,timezoneSnapshot)` on the server; `billingMonth=first_day_of_month(sourceBusinessDate)`. One logical invoice/student/tenant/month may contain different rates for different session dates. Window `effectiveFrom <= pricingLocalDate < effectiveTo` (NULL end=infinity), SESSION > CLASS > COURSE. Source class/course is historical lineage, not current enrollment after transfer. Initial monthly draft requires closed period `[monthStart,nextMonthStart)` and confirmed attendance, with CANCELLED units0 exception; missing price even for cancelled source → NEEDS_INFORMATION, not implicit 0.
+
+| Read DTO field (proposed) | Format / meaning / authority |
+|---|---|
+| `sourceBusinessDate`, `pricingLocalDate` | `YYYY-MM-DD`, equal per line, server-derived from session start and frozen z; not from charge/generation/issue/worker/client date |
+| `timezoneSnapshot`, `billingMonth` | IANA ID, `YYYY-MM`; frozen C1, source-start month, not UTC calendar month |
+| `priceRuleId`, `effectiveFrom`, `effectiveTo` | UUID; DATE strings and nullable DATE end, captured selection window |
+| `unitPriceVnd`, `baseAmountVnd`, totals/discounts | exact integer decimal strings, e.g. `"100000"`; no money JSON number; HALF_UP once at invoice end |
+| `selectionTier`, `selectionSourceId`, `sourceLineage` | SESSION/CLASS/COURSE, selected UUID and original session/class/course IDs/revisions; proof readable only in authorized scope |
+| `generationId`, `generationNo`, `baseGenerationId`, `appliedGenerationId` | UUID/positive integer/pointers, separate historical generation result from current invoice projection |
+| `chargeCreatedAt`, `generationCreatedAt`, `calculationPolicyVersionId` | server UTC RFC3339 instant(s), audit/admission and request-policy pin only; never tariff selector. Tariff policy provenance separately reported |
+| `requestHash`, `recomputeReason`, `beforeAfterDiff`, `correlationId` | canonical server hash, authorized reason and safe totals/rule/source/policy diff, audit correlation; no arbitrary client snapshot |
+
+Read model example for **one line** (not a second complete invoice fixture):
+
+```json
+{
+  "sourceBusinessDate":"2026-09-20","pricingLocalDate":"2026-09-20",
+  "timezoneSnapshot":"Asia/Ho_Chi_Minh","billingMonth":"2026-09",
+  "priceRuleId":"603c6e0a-87b3-46fc-9ac9-3f3ce5d963ab",
+  "effectiveFrom":"2026-09-01","effectiveTo":"2026-10-01",
+  "selectionTier":"COURSE","selectionSourceId":"230564e0-bc32-42bd-b01e-62be5bbf2c74",
+  "unitPriceVnd":"100000","baseAmountVnd":"100000",
+  "generationCreatedAt":"2026-10-02T02:00:00Z"
+}
+```
+
+| Operation | Required behavior |
+|---|---|
+| Initial via catalog `POST T/billing/runs` | Durable G1 receipt + source/price/policy/zone capture atomically with job enqueue if async; existing monthly identity reused/unique. Worker never picks a fresh policy or price clock |
+| Retry same typed Idempotency-Key/hash | Return/continue same G1/pinned inputs/result, current permission rechecked. Different hash → conflict. Historical G1 replay after G2 must not overwrite current G2 |
+| Deliberate recompute | **PROPOSED / PENDING API REVIEW:** new key, nonempty reason, expected base + applied generation/CAS, new G2/history/diff; only before issue, no second logical invoice. G2 pins policy for new request but resolves all prices at their session dates. Concrete route/path, permission mapping and exact DTO/status transitions require review; neither a new endpoint nor a new mode of existing POST is approved here |
+| Issue via existing catalog command | Validate current applied G, no pending/stale recompute, source revisions/completeness/snapshot/current authority; retain per-session prices/policy, create permanent claims including units0 and number/issue/audit atomically; no price lookup at issue date |
+| Issued correction/adjustment | Reject recompute/reprice/line patch; UC-26 authorized append-only adjustment flow and original basis/audit; no automatic refund/credit |
+
+Reject unknown/server-owned write fields: pricingLocalDate/sourceBusinessDate, timezoneSnapshot, generation/charge clock, selected priceRuleId/unitPriceVnd/result override (except unitPriceVnd in authorized tariff configuration), policyVersion override. Use HTTP 400 validation for these proposed DTO violations, never trust a client price date. Same logical key with new arbitrary body is not recompute. Freeze C1 after first ScheduleSeries/ClassSession (including DRAFT), BillingPeriod or BillingRun/generation; even Ops cannot change frozen zone through ordinary operations. No new timezone endpoint is introduced.
+
+**Proposed error mapping (pending API review):** 409 GENERATION_CONFLICT/GENERATION_STALE for expected-generation/source mismatch or pending recompute; 409 IDEMPOTENCY_KEY_REUSED for hash mismatch; 409 INVOICE_ALREADY_ISSUED for recompute/illegal mutate; 422 PERIOD_NOT_CLOSED/PERIOD_SOURCE_MISMATCH, PRICE_NOT_DEFINED/PRICE_AMBIGUOUS or SOURCE_NOT_FINALIZED (run NEEDS_INFORMATION for missing valid input); 422 TIMEZONE_FROZEN/PRICE_HISTORY_PROTECTED for prohibited ordinary config changes. Existing 401/403/404 authority rules remain; missing permission is not NEEDS_INFORMATION. Infrastructure retry must keep key/G/pin; unknown commit lookup receipt first. Failure rolls back business effects; error attempts can be audited separately after rollback.
+
+New tariff applies future local dates only; DATE cannot price intraday. No historical amount/target edit or backdated rule/override for already-started sessions even if no invoice exists. Future close of an open window must preserve old selections/snapshots; irrelevant future tariff changes do not stale/reprice G1. Missing historic prices require explicit data-repair review outside ordinary create/update; never silently use current tariff. Scheduling/attendance/price writer vs capture/apply/issue must follow the reviewed common transaction protocol in [DB §3.6](database_design.md) and [DD §5.7](detailed_design.md); O-01 SQL privileges/lock order remain pending, no concurrency safety claim here. Acceptance [O12-AC-01–27](../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa) is a test specification, not test evidence.
+
 ### 5.5. Payment (P0)
 
 ```http
@@ -465,7 +510,7 @@ The amount is verified manually by authorized staff **outside EduCore**. Server 
 | schedule confirm series | `tenant+series+operation`, sorted resource locks, exclusion constraints, rollback all | `SCHEDULE_CONFIRMED`; schedule-change event only when relevant |
 | schedule reschedule/cancel | `If-Match` + operation key; resource release/rebook atomic | `ScheduleChanged` (in-app recipients via outbox) |
 | finalize attendance | one finalization/session + operation key; full participant set | attendance finalized + correction audit |
-| billing run | `(tenant,student,period,run kind)` unique + input snapshot hash | billing draft audit; job statuses |
+| billing run | `(tenant,student,period)` logical unique; generation typed key/hash, new-command expected-generation CAS; session-date pricing snapshots | initial/retry/recompute diff/history audit; job attempts separate; O-12 transport pending review |
 | issue invoice | invoice row lock + unique participation charge claim | issued audit; no auto in-app billing message P0 |
 | payment record | invoice lock + `(tenant,operationType,idempotencyKey)` unique | payment recorded audit; no duplicate allocation |
 | finance approve/execute | approval revision + unique target execution operation | decision and execution audit separately |
@@ -546,7 +591,7 @@ No standalone otp/verify endpoint. OTP expires in 15 min, hashed one-use with at
 
 ### A.4. P0 bootstrap contract and permissions
 - Tenant+initial Manager provision by operator CLI only (not public REST), seeds baseline policy, permission catalog and role mappings; Manager pending activation. Manager creates further memberships with role assignment by secured /members POST; activation OTP email is only external business email.
-- Seed permissions and default role mapping are enumerated in detailed_des.md §A.2; dynamic role/permission editing is P1. Every API route must map to one concrete catalog permission; no wildcard runtime grant. MANAGER TENANT, TEACHER CLASS assigned, STUDENT self, PARENT verified linked STUDENT, ACCOUNTANT/ACADEMIC_STAFF scoped assignment. Never disable last active Manager.
+- Seed permissions and default role mapping are enumerated in detailed_design.md §A.2; dynamic role/permission editing is P1. Every API route must map to one concrete catalog permission; no wildcard runtime grant. MANAGER TENANT, TEACHER CLASS assigned, STUDENT self, PARENT verified linked STUDENT, ACCOUNTANT/ACADEMIC_STAFF scoped assignment. Never disable last active Manager.
 - API routes for financial decisions still require operation-specific approval, scope and audit; approval.decide does not imply any financial action permission. All P1 routes unmounted in P0.
 
 ### A.5. P0 invoices

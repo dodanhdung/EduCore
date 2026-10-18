@@ -3,8 +3,10 @@
 > **Document ID:** EC-DD-001  
 > **Phiên bản tài liệu:** 1.1-approved-group-A · **Ngày:** 17/10/2026 · **Trạng thái:** Approved nhóm A, pending per-slice review  
 > **Phạm vi:** P0 có thể triển khai thành vertical slices; P1 chỉ thiết kế điểm mở rộng, **không tự đưa vào MVP**.  
-> **Vị trí đề xuất trong repository:** `docs/design/detailed_des.md`  
-> **Quan hệ tài liệu:** đọc cùng `docs/requirements/requirements_analysis.md`, `docs/requirements/usecase/specification.md`, `docs/architectural/architectural_design.md`, `docs/design/database_design.md`, `docs/design/class design/README.md` và `docs/design/api_spec.md`.
+> **Vị trí thực tế trong repository:** `docs/design/detailed_design.md`
+> **Quan hệ tài liệu:** đọc cùng `docs/requirements/requirements_analysis.md`, `docs/requirements/usecase/specification.md`, `docs/architectural/architectural_design.md`, `docs/design/database_design.md`, `docs/design/class design/README.md` và `docs/design/api_specification.md`.
+
+**Changelog — v1.1 + O-12 amendment, 18/10/2026 (`Asia/Ho_Chi_Minh`):** business A=A, B=B1, C=C1, D=D được chủ dự án phê duyệt trực tiếp; §5.7 giữ session-date pricing và bổ sung generation contract. [Decision Register](../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Pseudocode/DTO/locks/persistence vẫn PROPOSED, không code/schema/migration approval.
 
 ## 0. Tình trạng nguồn và quy tắc ưu tiên
 
@@ -12,7 +14,7 @@
 - **[Đã kiểm tra repo 17/10/2026]** `dodanhdung/EduCore`, nhánh `main`: `docs/requirements/requirements_analysis.md` **đã được đồng bộ mục lịch sử v5 trên nhánh tài liệu**; repo có cấu trúc monorepo pnpm, app NestJS và Vite scaffold, chưa có Prisma schema/migrations và API nghiệp vụ. Vì vậy **không được xem một hành vi được mô tả ở đây là đã code hoặc đã test**. Trước khi code, merge nhánh tài liệu và đối chiếu Use Case/Architecture.
 - **[Kiến trúc — ACCEPTED]** Modular Monolith; TypeScript, React/Vite, NestJS, PostgreSQL, Prisma, REST/OpenAPI, pnpm; Vercel web, Railway API/PostgreSQL + private Volume; PostgreSQL transactional outbox và internal worker; OTP email là tích hợp nghiệp vụ bên ngoài duy nhất P0.
 - **[Database/Class design — PROPOSED]** `database_design.md` v1.1 Approved nhóm A cùng 14 tài liệu class design còn review theo slice. Các tên table/entity/module được tham chiếu để tạo tính liên tục, **chưa đồng nghĩa schema đã duyệt/migrate**.
-- **[Chi tiết trong tài liệu này — PROPOSED]** Tên file, folder, DTO, permission key cụ thể, exception code, application coordinator, HTTP endpoint, state transition implementation và transaction isolation là phương án kỹ thuật cần review; không giả định là quyết định nghiệp vụ mới. API hợp đồng cụ thể nằm ở `api_spec.md`.
+- **[Chi tiết trong tài liệu này — PROPOSED]** Tên file, folder, DTO, permission key cụ thể, exception code, application coordinator, HTTP endpoint, state transition implementation và transaction isolation là phương án kỹ thuật cần review; không giả định là quyết định nghiệp vụ mới. API hợp đồng cụ thể nằm ở `api_specification.md`.
 - **Quy tắc xử lý xung đột:** (1) FR/BR/Q v5 và UC v1.3; (2) quyết định Accepted trong Architecture; (3) DB/Class Design đề xuất; (4) đề xuất ở đây. Nếu có hai nguồn cùng cấp mâu thuẫn, tạo issue/ADR và **không triển khai tự suy đoán**.
 
 ## 1. Phạm vi và nguyên tắc bất biến
@@ -71,7 +73,7 @@ EduCore/
 ├── docs/
 │   ├── requirements/
 │   ├── architectural/
-│   └── design/{database_design.md,detailed_des.md,api_spec.md,class design/}
+│   └── design/{database_design.md,detailed_design.md,api_specification.md,class design/}
 └── pnpm-workspace.yaml
 ```
 
@@ -226,6 +228,60 @@ sequenceDiagram
 **Tạo draft kỳ tháng:** đầu tháng N+1 cho tháng N sau khi đủ điểm danh confirmed; một operation key per tenant/student/period; load dữ liệu committed + policy pinned → xác định `unitPrice` tại ngày buổi theo ưu tiên SESSION>CLASS>COURSE → line chargeUnits 1/0 → gross = Σ unit*price → sibling discount 10% **nếu có record verified/eligible cùng tenant** → `totalVnd=ROUND_HALF_UP(gross×0.90)` hoặc gross; tạo DRAFT + source snapshot/hash; không auto issue. Nếu thiếu attendance hoặc đơn giá → NEEDS_INFORMATION và alert, không phát hành giả.
 
 **Issue:** người có `invoice.issue`, recheck completeness, idempotency, unique claim nguồn tham gia để chống tính 2 lần; DRAFT→ISSUED, freeze lines/discount/snapshot, due = issuedAt + 7 ngày, audit; invoice là bảng kê nội bộ, không phải hóa đơn điện tử hợp pháp.
+
+#### O-12 algorithm contract — business approved; implementation proposed
+
+**Inputs:** server principal/tenant/student/month, typed operation key/request hash; recompute thêm reason + expected base/applied generation; committed session/participant/finalized-attendance/absence/verified-sibling revisions và historical session/class/course lineage. Client không được truyền clock/timezone/pricing-date override hoặc arbitrary price/result snapshot. **Output:** durable generation receipt/result + same logical DRAFT invoice, per-line evidence hoặc NEEDS_INFORMATION/stale/conflict; không issue tự động.
+
+```text
+admit(command):                              // PROPOSED transaction boundary, not code
+  acquire reviewed tenant gate before source reads; check current permission/scope
+  if typed key exists: assert same requestHash; return authorized historical receipt/result
+  lock canonical run(student,month); check expected base/current on recompute
+  reject issued/cancelled-after-issue, concurrent pending generation, period not closed
+  c = server DB instant sampled once at durable admission
+  V = pin calculation policy effective at c (BR-14); z = frozen tenant timezone
+  capture source set + revisions + sibling evidence under same transaction protocol
+  for source in sources:
+    assert tenant/student/session/finalization and original class/course lineage
+    d = local_date(source.session.startsAt,z) // NEVER local_date(c,z) for pricing
+    assert period.monthStart <= d < period.monthEnd
+    eligible = rules(correct tenant/target, effectiveFrom <= d,
+                     effectiveTo is NULL or d < effectiveTo)
+    chosen = first nonempty tier SESSION > CLASS > COURSE
+    if absent/ambiguous price or missing confirmed attendance (except CANCELLED):
+      persist immutable NEEDS_INFORMATION G/receipt with captured evidence + missing reasons
+      commit receipt; return NEEDS_INFORMATION // stop; no completed draft or fall-through
+    units = 1 for ATTENDED/UNEXCUSED; 0 for approved EXCUSED/CANCELLED
+    capture d as sourceBusinessDate AND pricingLocalDate, z, chosen ID/window/unit/tier,
+            selection proof, source revisions/lineage and separate policy provenance IDs
+  persist immutable G payload/key/hash/c/V/z + job enqueue atomically, commit
+
+apply(G):
+  acquire same ordered locks; check current permission and current base/pending CAS
+  re-read source set/revisions/lineage/eligibility and pinned-date pricing facts
+  if relevant change: mark stale/block, no refresh of G, no partial invoice writes
+  gross = SUM(units * snapshot.unitPriceVnd)  // BigInt/Decimal exact arithmetic
+  net = HALF_UP(gross * (verifiedSibling ? 0.90 : 1)) // once at final invoice
+  atomically apply to same logical draft, lines/discounts/current G/policy/hash/result/audit
+  force reviewed deferred final-state checks; commit; retain G1 payload/result history
+
+issue(currentDraft):
+  acquire same lock protocol; verify rights, current applied G, source completeness/revisions,
+    snapshot/selection facts and absence of pending recompute/stale state
+  do not resolve current tariff or repin policy; claim all participations incl. units 0
+  atomically number + ISSUED + frozen snapshots/claims/audit; commit
+```
+
+**Ba mốc độc lập:** session local-start date chọn PriceRule và billing month; generation admission time `chargeCreatedAt/generationCreatedAt` chỉ audit/idempotency/request-policy pin (PolicyVersion TIMESTAMPTZ `[from,to)`); issue time cấp số, phát hành/dueAt, không chọn lại giá. PriceRule `effectiveFrom/effectiveTo` là local DATE `[from,to)`; không parse thành UTC để đổi ngày, không dùng một pricing date chung cho G có nhiều buổi. Policy của tariff/scheduling là provenance riêng, không phải calculation-policy ID bắt buộc bằng nhau.
+
+**Retry / recompute / source correction:** cùng key/hash trả G1 và kết quả cũ, không đọc tariff mới để reprice; source đổi trước apply thì stale, cần command mới. Recompute mới key/reason/base/current CAS tạo G2, pin policy request mới và đọc nguồn hợp lệ; từng giá vẫn theo ngày session. Attendance correction có thể đổi units/eligibility; policy mới có thể đổi net nếu được duyệt, nhưng G2 muộn không tự nâng unitPrice của buổi cũ. Giữ G1/diff/reason/audit; new pending G chặn issue current G1. Hai recomputes cùng expected generation tối đa một thắng, replay G1 sau G2 không write-back. Invoice chưa có sau NEEDS_INFORMATION được tiếp nhận G2, không cần tạo invoice giả. ISSUED không recompute/reprice/repin; correction UC-26 append-only theo issued basis có quyền/duyệt, không lấy tariff hiện hành để tự sửa.
+
+**Price writes / timezone / scheduling:** ordinary tariff mutation không backdate hoặc sửa amount/target/override làm đổi giá buổi đã bắt đầu, ngay cả chưa có invoice; publish local future-date (DATE không intraday). Future end-bound thay đổi chỉ hợp lệ khi không phá selection tại source dates/captured snapshots; semantic recheck thay vì updatedAt-only. Missing past tariff vẫn NEEDS_INFORMATION, sửa dữ liệu lịch sử cần task/approval riêng. C1 freeze ở first ScheduleSeries/ClassSession (kể cả DRAFT), BillingPeriod hoặc BillingRun/generation, sticky dù cancel/delete; marker/source atomic; Ops chỉ đổi trước đó với audit/CAS. Lưu z và derived dates; kiểm tzdata. Reschedule future-only cung cấp startsAt/revision/lineage đáng tin qua Scheduling port, invalidate affected drafts trong transaction, không âm thầm chuyển invoice period hoặc sửa issued sources.
+
+**Errors / rollback / locks:** no price hoặc ambiguous/missing confirmed source → NEEDS_INFORMATION, không implicit zero (cancelled vẫn cần giá, không attendance giả); tenant/student/period/lineage mismatch hoặc key/hash conflict → reject; permission failure không thành needs-info. Source đổi → stale/block issue. O-01 tenant-gate/order/privileges vẫn cần technical review: auth/key → period/run/G → course/class/price/resources/session sorted → participants/attendance → invoices/lines/claims → counter/audit/outbox, tenant gate trước tất cả. Child và inverse-parent period guards, immediate issued immutability và deferred draft final-state checks theo DB §3.6. Deadlock/serialization timeout rollback toàn phase, bounded retry cùng key/pin; commit unknown tra receipt trước, không lấy clock/policy mới hoặc nhân claim. Không external I/O trong lock; chưa chứng minh PostgreSQL concurrency bằng pseudocode/Prisma validation.
+
+**Acceptance:** [O12-AC-01–27, addendum N](../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa); required PostgreSQL two-connection source/price/reschedule/line/issue races, raw DML privilege and rollback tests còn NOT RUN. Technical/schema/PG/runtime gates tách biệt; business approval không mở implementation R1b/R2.
 
 **Payment:** CASH/BANK_TRANSFER nhân sự tự đối soát bên ngoài; `0 < amount <= outstanding`; một invoice/payment P0; row lock balance, allocate + append payment/audit trong transaction; retry same key không cộng tiền lần hai. Sai payment → reversal mới có quyền/lý do và audit. Issued invoice adjustment/cancellation → workflow **manual approval** luôn, kiểm tra số tiền/ledger, append-only adjustment/reversal; tiền dư sau giảm nợ được đánh dấu chờ xử lý có duyệt (không auto-refund, auto-credit P0).
 
