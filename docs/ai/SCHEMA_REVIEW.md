@@ -1,0 +1,129 @@
+# EduCore Prisma Schema Review — draft, giai đoạn 2A–2E
+
+Ngày kiểm tra: 2026-10-18. Phạm vi tích lũy: Tenant + Identity & Access (2A), Academic Management cùng hai quan hệ học sinh (2B), Scheduling & Resources (2C), Attendance & Leave (2D), Billing & Receivables (2E). Đây là schema-first draft để review; chưa tạo database, migration, seed hay backend service. Dừng trước 2F.
+
+## Nguồn và quyết định phiên bản
+
+Áp dụng `AGENTS.md`, `docs/design/database_design.md` v1.1 §3.1–3.6/§4.1/§9, quyết định nhóm A, `docs/design/detailed_design.md` §5.1–5.7/A.3, class design liên quan, `docs/ai/DECISION_REGISTER.md`, Requirements v5 cùng UC-21–26 và Q-08–10 cho 2E. Không dùng UI làm nguồn để tạo cột. Theo Database Design v1.1, `policy_versions` là P0 để giữ snapshot policy bất biến; giao diện sửa policy là P1.
+
+Repo là pnpm workspace; `apps/api` dùng NestJS 12, TypeScript 6.0.3, ESM/NodeNext. Máy đang dùng Node 24.12.0 và pnpm 12.11.2. Ghim chính xác `prisma` và `@prisma/client` 7.10.1; [Prisma 7 hỗ trợ Node 24 và TypeScript từ 5.4](https://www.prisma.io/docs/orm/v7/reference/system-requirements), phù hợp với môi trường hiện có. Cấu hình Prisma 7 đặt URL trong `prisma.config.ts`; URL chỉ là biến môi trường, không kết nối DB khi format/validate. Chưa thêm PostgreSQL driver adapter vì chưa có runtime service.
+
+## Mapping Database Design → Prisma
+
+| Nhóm | Bảng thiết kế → model | Trạng thái |
+|---|---|---|
+| Tenant/policy | `tenants` → `Tenant`; `policy_versions` → `PolicyVersion` | Hoàn thành schema P0 |
+| Identity/auth | `users` → `User`; `credentials` → `Credential`; `auth_sessions` → `AuthSession`; `password_reset_otps` → `PasswordResetOtp` | Hoàn thành schema P0 |
+| Membership/RBAC | `tenant_memberships` → `TenantMembership`; `roles` → `Role`; `permissions` → `Permission`; `role_permissions` → `RolePermission`; `membership_roles` → `MembershipRole`; `access_scopes` → `AccessScope` | Hoàn thành schema P0 trong phạm vi model hiện có |
+| Profile/catalog (2B) | `teacher_profiles` → `TeacherProfile`; `student_profiles` → `StudentProfile`; `subjects` → `Subject`; `levels` → `Level`; `courses` → `Course`; `classes` → `Class` | Hoàn thành schema P0 |
+| Academic history (2B) | `teacher_competencies` → `TeacherCompetency`; `class_teacher_assignments` → `ClassTeacherAssignment`; `enrollments` → `Enrollment`; `enrollment_transfers` → `EnrollmentTransfer` | Hoàn thành schema P0 |
+| Quan hệ học sinh (2B) | `parent_student_links` → `ParentStudentLink`; `verified_sibling_relationships` → `VerifiedSiblingRelationship` | Hoàn thành schema P0 |
+| Scheduling & Resources (2C) | `rooms` → `Room`; `schedulable_resources` → `SchedulableResource`; `resource_unavailability` → `ResourceUnavailability`; `schedule_series` → `ScheduleSeries`; `class_sessions` → `ClassSession`; `session_participants` → `SessionParticipant`; `resource_bookings` → `ResourceBooking` | Hoàn thành schema P0, chờ PostgreSQL constraints |
+| Attendance & Leave (2D) | `absence_requests` → `AbsenceRequest`; `attendance_finalizations` → `AttendanceFinalization`; `attendance_records` → `AttendanceRecord`; `attendance_corrections` → `AttendanceCorrection` | Hoàn thành schema P0, chờ PostgreSQL/service constraints |
+| Billing & Receivables (2E) | `price_rules` → `PriceRule`; `billing_periods` → `BillingPeriod`; `billing_runs` → `BillingRun`; `invoices` → `Invoice`; `invoice_lines` → `InvoiceLine`; `invoice_discounts` → `InvoiceDiscount`; `invoiced_participation_claims` → `InvoicedParticipationClaim`; `invoice_adjustments` → `InvoiceAdjustment`; `payments` → `Payment`; `payment_reversals` → `PaymentReversal`; `receivable_allocations` → `ReceivableAllocation`; `payment_excess_resolutions` → `PaymentExcessResolution` | Hoàn thành 12 model P0; chưa có `BillingSourceSnapshot` hoặc invoice counter vì chưa chốt cấu trúc |
+
+Tổng cộng 47 model và 18 enum. `User` và `Permission` là toàn cục; `Credential`, `AuthSession`, `PasswordResetOtp` gắn với user toàn cục. `TenantMembership` là cầu nối identity–tenant. Các model tenant-scoped đều có `tenantId`, UUID PK và `@@unique([tenantId,id])`; FK giữa chúng dùng cặp `(tenantId, targetId)`, ngăn tham chiếu chéo tenant. `Tenant.code`, `User.emailNormalized`, `Permission.code`, `(tenantId,userId)`, `(tenantId,role.code)`, `(tenantId,policy.versionCode)` và `(tenantId,roleId,permissionId)` là unique theo thiết kế. Không dùng cascade delete; thời điểm lưu `TIMESTAMPTZ(6)` và xử lý hiển thị qua `Tenant.timezone` mặc định `Asia/Ho_Chi_Minh`; ngày thuần dùng PostgreSQL `DATE`.
+
+Ở 2B, Teacher/Student có `membershipId` nullable, FK kép cùng tenant và unique theo từng loại hồ sơ: không bắt buộc tài khoản đăng nhập. Subject/Level/Course/Class, competency và assignment đều dùng FK kép. Enrollment giữ `effectiveFrom/effectiveTo`, `priorEnrollmentId` và trạng thái `TRANSFERRED` thay vì xóa bản cũ; FK lineage còn buộc enrollment trước thuộc cùng student. Transfer có `operationKey` unique theo tenant, nguồn/đích cùng tenant, FK target enrollment buộc đúng target class và actor request/confirm. Parent link có `verifiedAt/verifiedBy/revokedAt`; sibling pair có hai Student FK cùng tenant, người/thời điểm xác minh và `evidenceNote` theo thiết kế. `AccessScope.classId/studentId` đã được nối FK kép tới Class/StudentProfile trong 2B.
+
+`MembershipRole` giữ các bản gán đã thu hồi bằng `revokedAt`; không đặt unique vô điều kiện trên `(tenantId,membershipId,roleId)` vì như vậy sẽ chặn cấp lại role sau khi thu hồi. `PolicyVersion` giữ `configSnapshot` JSONB và `contentHash`; `createdByMembershipId` nullable để vận hành seed ban đầu. `User.status` dùng các giá trị đã duyệt `PENDING_ACTIVATION/ACTIVE/DISABLED`; OTP dùng `ACTIVATION/PASSWORD_RESET`. `Tenant.status` và `TenantMembership.status` giữ dạng text vì nguồn chưa chốt đầy đủ tập giá trị P0/điều kiện chuyển trạng thái; đây không phải tập giá trị mới do schema tự đặt ra.
+
+## Quan hệ và ràng buộc phải hoàn thiện sau 2E
+
+- `AccessScope.classId/studentId` đã có FK kép cùng tenant. Quy tắc đúng một ID theo `scopeKind` vẫn cần PostgreSQL CHECK; membership/role/parent link hợp lệ vẫn cần authorization service.
+- `AuthSession.activeTenantId` theo Database Design FK đến `Tenant`; DB chưa chứng minh user có membership **ACTIVE** tại tenant đó. Auth service phải kiểm tra lại khi phát/refresh token và mọi request. Tương tự, quyền hiệu lực phải xét membership, role chưa revoked, scope và permission hiện hành.
+- `EnrollmentTransfer.approvalRequestId` hiện là UUID nullable, chưa có FK vì `ApprovalRequest` thuộc module chưa triển khai. `PolicyVersion` sẽ được tham chiếu bởi operation/audit/job của các giai đoạn sau. Không thêm quan hệ đến model chưa tồn tại; platform staff, audit/idempotency/outbox và các domain khác vẫn ngoài 2B.
+
+## SQL bổ sung cần review ở giai đoạn migration — chưa tạo/chạy
+
+1. Partial unique index đã nêu trong Database Design: `membership_roles(tenant_id,membership_id,role_id) WHERE revoked_at IS NULL`; cân nhắc partial lookup index cho role đang hiệu lực. Prisma schema không biểu đạt trực tiếp điều kiện index này.
+2. `CHECK` cho `access_scopes`: `TENANT` yêu cầu cả hai ID null; `CLASS` chỉ `class_id` khác null; `STUDENT` chỉ `student_id` khác null. FK kép đến Class/StudentProfile đã có trong schema 2B.
+3. `CHECK` cho OTP (`expires_at > requested_at`, `0 <= attempt_count <= max_attempts`, `max_attempts > 0`), session (`expires_at > issued_at`) và policy interval (`effective_to IS NULL OR effective_to > effective_from`). Thời hạn OTP 15 phút, refresh tối đa 7 ngày và access JWT tối đa 15 phút cần được service thực thi/test; xem xét DB check bổ sung nếu phù hợp.
+4. Bảo vệ bất biến của `policy_versions` (cấm UPDATE/DELETE sau tạo) bằng quyền DB/trigger hoặc cơ chế tương đương đã review; nghiệp vụ dùng snapshot đã pin khi retry. Việc chặn xóa/sửa lịch sử grant cần quy định cùng audit ở giai đoạn sau.
+5. Kiểm tra email lưu lowercase/trim ở DB hoặc dùng normalized functional constraint; hiện unique chỉ bảo vệ giá trị đã chuẩn hóa. Rà soát chính sách case/Unicode trước khi chốt SQL.
+6. Quy tắc tenant ACTIVE phải có ít nhất một Manager active, và không gỡ Manager hợp lệ cuối, cần transaction/locking cùng kiểm tra quyền; không thể suy ra chỉ từ FK/unique.
+7. Academic: `CHECK (capacity > 0)` cho `classes`; `end_date >= start_date` nếu cả hai có giá trị; `valid_to > valid_from` cho assignment và `effective_to > effective_from` cho enrollment, theo khoảng `[start,end)`. Kiểm tra/khóa sức chứa lớp và lịch trùng khi ghi danh/chuyển lớp trong transaction.
+8. Parent link và sibling pair: partial unique index trên `(tenant_id,parent_membership_id,student_id) WHERE revoked_at IS NULL` và `(tenant_id,student_a_id,student_b_id) WHERE revoked_at IS NULL`; CHECK thứ tự UUID `student_a_id < student_b_id` để tránh cặp đảo chiều/trùng chính mình. CHECK trạng thái xác minh parent link (`verified_at`/`verified_by_membership_id` cùng có hoặc cùng null) cần review.
+9. Enrollment ACTIVE của cùng student/class không được overlap khoảng hiệu lực; cần thiết kế PostgreSQL EXCLUDE/partial constraint và transaction test, không được coi các index Prisma hiện tại là đủ. FK hiện đã buộc `priorEnrollment` cùng student và `targetEnrollment` đúng target class; transfer vẫn phải kiểm tra source/target enrollment cùng student và chỉ hiệu lực tương lai trong transaction.
+10. `verified_sibling_relationships.evidence_note` nullable đúng Database Design; service phải yêu cầu căn cứ xác minh trước khi tạo bản ghi đã verified và audit người/nguồn chứng cứ. Không suy ra quan hệ từ trùng tên hoặc cùng phụ huynh; khi áp dụng giảm giá còn phải kiểm tra hai enrollment hợp lệ cùng tenant.
+
+## Scheduling & Resources 2C — ràng buộc và giới hạn
+
+Prisma đã biểu đạt UUID/composite FK cùng tenant, unique mã phòng, một registry row cho mỗi Teacher/Student/Room, series cùng class với session, participant cùng student với enrollment, booking cùng resource với unavailability, và `UQ(tenant_id,session_id,student_id)` kể cả participant đã removed. `ClassSession.seriesId` nullable hỗ trợ buổi đơn; series lưu weekday, giờ local, thời lượng, ngày đầu/cuối và timezone để expand từng buổi UTC. `ClassSession` giữ teacher/room thực tế, policy version và revision. `SessionParticipantKind.MAKEUP` xuất hiện theo enum thiết kế nhưng **không kích hoạt workflow học bù P1**.
+
+Các SQL/transaction cần review sau, **chưa viết migration**:
+
+1. `CHECK` `room.capacity > 0`; `schedulable_resources` phải có **đúng một** `teacher_id/student_id/room_id` phù hợp `resource_kind`. Unique nullable cho mỗi target đã nằm trong Prisma.
+2. `CHECK` `ends_at > starts_at` cho unavailability, session và booking; `booking` phải có **đúng một** `session_id/unavailability_id`. `schedule_series`: weekday 1–7, duration > 0, valid_to >= valid_from và tối đa sáu tháng theo lịch tenant; việc expand timezone/local time cần service test. `ONSITE` phải có room; `revision` hợp lệ theo optimistic concurrency.
+3. Bật `btree_gist` và `EXCLUDE USING gist (tenant_id WITH =, resource_id WITH =, tstzrange(starts_at,ends_at,'[)') WITH &&) WHERE status='ACTIVE'`, đúng mẫu Database Design. Biên `[)` cho phép 08:00–09:00 kề 09:00–10:00. `CANCELLED`/`RELEASED` không giữ booking ACTIVE. Cân nhắc partial unique cho booking ACTIVE của cùng `(tenant_id,resource_id,session_id)` hoặc `(tenant_id,resource_id,unavailability_id)` để vẫn giữ lịch sử RELEASED.
+4. Trước khi xác nhận phải có registry resource cho **mọi** teacher, student participant và room ONSITE; tạo booking ACTIVE cho từng resource. Xác nhận unavailability tạo booking ACTIVE cùng transaction. Hủy/đổi phải release booking cũ và rebook nếu cần trong transaction. GiST không phát hiện nguồn bị bỏ quên booking hoặc booking có interval/nguồn sai; cần service check/constraint bổ trợ và integration test. REGULAR participant phải có enrollment hợp lệ đúng class/tại thời điểm buổi; teacher phải có phân công hợp lệ và permission/scope, không suy quyền từ profile. Participant snapshot không đồng nhất với enrollment hiện tại.
+5. Trước xác nhận, recheck capacity **của cả Class và Room**, lịch bận, quyền hiện hành và mọi resource theo từng buổi. Toàn chuỗi tuần (tối đa 6 tháng) xác nhận hoặc rollback trọn vẹn; preview chỉ có tính tư vấn. Retry phải idempotent theo module jobs/idempotency về sau; audit/outbox cùng transaction khi model tương ứng được triển khai. Không tự mở thuật toán gợi ý lịch, học bù hay dạy thay P1.
+
+**Locking còn mở:** Nguồn đã duyệt yêu cầu khóa các resource theo thứ tự ổn định và dùng GiST làm phòng vệ cuối, nhưng chưa chốt cơ chế cụ thể. Các lựa chọn cần review: `SELECT ... FOR UPDATE` trên các row `schedulable_resources` (khóa theo resource tồn tại nhưng mọi writer phải dùng cùng thứ tự); advisory transaction locks theo tenant/resource (cần key ổn định và mọi writer hợp tác). `SERIALIZABLE` với retry có thể bổ trợ, nhưng dùng một mình thay yêu cầu khóa resource sẽ là thay đổi thiết kế cần phê duyệt và có thể tăng abort/retry. Capacity lớp/phòng và thay đổi participant/unavailability cũng phải được đồng bộ phù hợp; không chọn thuật toán hay isolation level ở 2C.
+
+## Attendance & Leave 2D — ràng buộc và giới hạn
+
+Prisma đã có `AttendanceStatus=ATTENDED/EXCUSED/UNEXCUSED`, FK kép cùng tenant tới participant, session và membership, `UQ(tenant_id,session_id)` cho finalization và `UQ(tenant_id,participant_id)` cho record. `AttendanceRecord.finalizationId` nullable phân biệt bản nháp với kết quả đã xác nhận; finalization lưu `confirmedBy/confirmedAt/lockedAt/revision`. Correction giữ old/new status, reason, requester, approver tùy trường hợp và `correctedAt`; không có `updatedAt` để giữ lịch sử append-only. `AbsenceRequest` lưu submittedAt, isLateNotice, status và quyết định; đơn đúng hạn **vẫn phải được duyệt** trước khi có EXCUSED.
+
+Các việc cần review cho PostgreSQL/service, **chưa viết migration**:
+
+1. Partial unique index để chỉ có một absence request còn active trên mỗi participant; tập status active chưa khóa chi tiết nên chưa tự viết điều kiện SQL. `CHECK`/transaction cho cặp decision status–`decided_at`–`approved_by_membership_id`; `is_late_notice` phải được tính từ `submitted_at > session.starts_at - 24h`, không tự suy ra quyền EXCUSED.
+2. `EXCUSED` chỉ khi có absence cùng participant đã được người có quyền phê duyệt; đơn muộn cần duyệt ngoại lệ. Học sinh thực tế dự học luôn `ATTENDED` dù có đơn duyệt. `UNEXCUSED` là vắng không phép; buổi trung tâm `CANCELLED` có thể không có record, Billing phải tính 0 thay vì tự gán UNEXCUSED.
+3. Finalization phải kiểm tra toàn bộ participant active của session có record hợp lệ trong một transaction, người xác nhận có permission/scope và là teacher phù hợp. `AttendanceRecord.finalizationId` hiện chỉ FK cùng tenant, **chưa bảo đảm cùng session** với participant bằng FK; cần kiểm tra transaction hoặc SQL trigger sau review, không thêm cột ngoài thiết kế chỉ để né lỗi validation. Billing chỉ đọc record thuộc finalization hợp lệ; thiếu finalization ⇒ `NEEDS_INFORMATION`, không coi là 0 hay UNEXCUSED.
+4. Khóa sửa thường ở mốc sớm hơn giữa `session.endsAt + 48h` và lần phát hành Invoice có dùng dữ liệu đó. `lockedAt` lưu dấu mốc đã xác định, nhưng service phải tính/kiểm tra mốc hiệu lực ngay cả khi job cập nhật `lockedAt` chưa chạy. Billing/Invoice chưa có model nên **không có FK giả**; khi triển khai Billing cần nối `invoice_lines.attendance_id` tới AttendanceRecord cùng tenant, kiểm tra finalization và cập nhật khóa/điều chỉnh tài chính trong giao dịch phù hợp.
+5. Correction sau khóa cần permission riêng, lý do, actor và audit bất biến; cập nhật record cùng append correction trong transaction, kiểm tra old/new status và revision. Nếu Invoice đã phát hành thì tạo yêu cầu điều chỉnh riêng, không sửa snapshot Invoice. `approval_request_id` trên AbsenceRequest/AttendanceCorrection chờ model ApprovalRequest; audit log và actor thực thi chi tiết chờ module audit, không tạo placeholder.
+
+## Billing & Receivables 2E — ràng buộc và điểm cần phê duyệt
+
+Schema dùng `BigInt`/PostgreSQL `BIGINT` cho mọi VND, `Decimal(6,5)` cho rate và `Decimal(20,6)` cho raw discount; JSON/API sau này phải serialize BigInt thành chuỗi. `UQ(tenant_id,period_id,student_id)` trên BillingRun **và** Invoice bảo đảm một run/invoice logic mỗi học sinh/tháng; FK nhiều cột buộc Invoice khớp student/period của run. InvoiceLine buộc participant thuộc đúng session và attendance (nếu có) thuộc đúng participant. Allocation FK nhiều cột buộc payment cùng invoice; ExcessResolution FK nhiều cột buộc adjustment cùng invoice. Claim unique theo participant và line, giữ lại sau hủy. `invoice_number` nullable/unique theo tenant cho phép nhiều draft chưa cấp số, nhưng chưa cấp số tự động.
+
+**SQL/transaction cần review, chưa viết migration:**
+
+1. PriceRule: `CHECK` đúng một target theo `scope_kind`, giá >=0, khoảng DATE `[effective_from,effective_to)` hợp lệ; `EXCLUDE GiST` chặn overlap cùng tenant+target, kể cả write đồng thời, `effective_to NULL` là vô hạn. Service chọn giá `SESSION → CLASS → COURSE` tại ngày buổi theo timezone tenant; không sửa giá đã dùng làm mất lịch sử.
+2. BillingPeriod: `month_start` là ngày 1 và `month_end` là đầu tháng sau. Invoice: `gross/discount/total >=0`, `discount_vnd = gross_vnd - total_vnd`; trạng thái ISSUED phải có number/issuedAt/issuer/dueAt và đủ source confirmed. InvoiceLine: `charge_units IN (0,1)`, unit/base amount >=0, base = units×price; source ATTENDED/UNEXCUSED tính 1, EXCUSED/CANCELLED tính 0. Attendance phải thuộc finalization đúng session; line participant phải là student của Invoice — composite FK hiện chưa chứng minh điều này. `snapshot_json`/`source_snapshot_json` cần schema/validation và đóng băng khi ISSUE.
+3. Discount P0 chỉ `SIBLING` đủ chứng cứ, rate 0.10 theo policy snapshot; `CHECK 0<=rate<=1`, raw discount >=0. Tính `ROUND_HALF_UP` **một lần cuối**, không dùng Float hoặc làm tròn trung gian. Invoice ISSUED/lines/discounts/snapshot/claims cần quyền DB/trigger hoặc cơ chế tương đương để ngăn UPDATE/DELETE âm thầm; adjustment/reversal là bản ghi mới.
+4. ISSUE: khóa run/invoice/nguồn, recheck attendance/price/policy và student/period, cấp số, insert claim, chuyển ISSUED, audit trong **một transaction**. Claim chỉ được tạo khi ISSUE; unique participant ngăn nguồn đi vào hai invoice ISSUED, kể cả invoice cũ bị hủy. Retry dùng operation/idempotency đúng nguồn; không phát hành tự động P0.
+5. Payment P0: `amount_vnd > 0`, chỉ CASH/BANK_TRANSFER nhập thủ công; khóa invoice, tính outstanding từ **issued total + APPLIED adjustments − allocations của payments chưa đảo**, chặn `amount > outstanding`, và insert payment+allocation+audit cùng transaction. Allocation dương, duy nhất/payment và cùng invoice; P0 payment phân bổ một lần, không có `tuition_credit_id` hay prepaid. Reversal dương, duy nhất/payment, bằng toàn bộ payment amount và làm allocation không còn hiệu lực tính nợ; giữ payment gốc và audit.
+6. Adjustment ISSUE/CANCELLATION chỉ APPLIED sau manual approval, kiểm tra quyền hiện hành, lý do và adjusted total hợp lệ; không ghi đè Invoice ISSUED. Khi giảm sau thu tạo `PaymentExcessResolution` amount dương, status `PENDING_RESOLUTION` cùng transaction với adjustment; outstanding hiển thị `MAX(0,...)`, excess riêng, không tự refund/credit. Kiểm tra trigger adjustment đã APPLIED và phép tính excess; không cộng các ledger 1–n bằng JOIN trực tiếp gây nhân tiền. Sau APPLIED, adjustment/reversal/allocation/claim phải append-only hoặc chỉ thay trạng thái theo workflow được duyệt.
+
+**Blocker cần phê duyệt trước migration/service:** Group A yêu cầu counter theo tenant/năm nhưng chưa có cấu trúc. Phương án là bảng counter `(tenant_id,year,next_sequence)` khóa row lúc ISSUE, hoặc PostgreSQL sequence riêng từng tenant/năm (khó quản lý vòng đời); cách đọc `MAX(invoice_number)+1` cần lock/advisory và dễ lỗi dưới đồng thời. Chưa chọn hay thêm model. Cần chốt năm theo timezone tenant và format: §3.6 nêu `INV-{YEAR}-{SEQUENCE}` nhưng §9 gọi format này là đề xuất. `dueAt` 7 ngày cần chốt 7×24 giờ UTC hay ngày lịch địa phương. `resolution_kind`/quy trình RESOLVED, cancellation sau thu và approval sync/async vẫn mở; không tự thêm refund/credit P1.
+
+`billing_source_snapshots` trong DB Design là **đề xuất**, chưa tạo. Các trường đã duyệt `BillingRun.inputSnapshotHash`, `Invoice.snapshotJson`, `InvoiceLine.sourceSnapshotJson`, `attendanceId`, `priceRuleId`, giá và policy version có thể giải thích invoice đã phát hành **nếu** service ghi đầy đủ revision/source hash, recheck dưới lock và đóng băng snapshot cùng transaction ISSUE. Cách này không tự lưu từng lần đọc nguồn của draft trước khi phát hành; nếu cần chứng minh lịch sử draft/recompute, phải chốt bảng riêng hoặc chuẩn snapshot cụ thể. `approval_request_id` trên Adjustment/Reversal/Excess hiện là UUID scalar; FK cùng tenant chờ ApprovalRequest giai đoạn sau, không tạo placeholder.
+
+## Vấn đề mở và phân loại
+
+**Không có lỗi Prisma schema được phát hiện bởi `validate`.** Các mục dưới đây là giới hạn của phạm vi hoặc quyết định chưa chốt, không phải validation đã thành công ở cấp PostgreSQL.
+
+- **Quyết định nghiệp vụ:** Chưa có enum/status transition đầy đủ cho `Tenant.status` và `TenantMembership.status` trong nguồn P0. Không tự thêm trạng thái. Cần chốt trước SQL CHECK, seed và endpoint thay đổi trạng thái.
+- **Quyết định nghiệp vụ/bootstrap:** `membership_roles.assigned_by_membership_id` bắt buộc theo Database Design, nhưng grant Manager đầu tiên do Ops CLI tạo khi chưa có người gán đủ quyền trong tenant. Cần chốt cách ghi actor bootstrap có truy vết (ví dụ quy tắc self-reference được duyệt hoặc thay đổi thiết kế có phê duyệt); schema hiện cho phép tham chiếu membership đã tạo, không giải quyết ý nghĩa actor.
+- **Đề xuất kỹ thuật:** Cần review overlap/effective-window của `policy_versions`; unique version code chưa bảo đảm chỉ một policy hiệu lực tại mỗi thời điểm. Không tự thêm EXCLUDE/index vì nguồn chưa duyệt quy tắc đó.
+- **Giới hạn giai đoạn:** FK `AccessScope` tới Class/StudentProfile đã hoàn thành; `EnrollmentTransfer.approvalRequestId` còn chờ model ApprovalRequest. Các SQL constraints ở trên cần migration test sau khi cài PostgreSQL. Chưa có adapter/runtime, client generation, seed hay integration test.
+- **Giới hạn 2C:** Prisma `validate` không kiểm tra overlap, `[start,end)`, sáu tháng, capacity hay tính đầy đủ booking; tất cả đang chờ SQL/transaction tests. `ScheduleSeries.status` giữ text do nguồn chưa khóa enum chi tiết.
+- **Giới hạn 2D:** `AbsenceRequest.status` giữ text vì trạng thái active/decision chưa khóa enum trong Database Design. Prisma `validate` không chứng minh duyệt đơn, finalization đầy đủ, khóa 48h/Invoice hay correction audit; cần SQL và transaction tests sau này.
+- **Giới hạn 2E:** Prisma `validate` không chứng minh số tiền, snapshot, issuer approval, chống overpayment/race, price overlap, tính excess hay tính bất biến ledger. Invoice counter và quy trình resolution còn chờ quyết định; không coi schema hiện tại là migration-ready.
+- **Quyết định nghiệp vụ:** Tập trạng thái/transition chi tiết của Profile, Course, Class, Transfer và semantics của Enrollment `PENDING`/`SUSPENDED` chưa được khóa hoàn toàn; schema giữ text cho trạng thái chưa chốt và chỉ dùng enum cho Enrollment baseline. `SUSPENDED` là giá trị baseline trong Database Design, không triển khai quy trình bảo lưu P1.
+- **Quyết định nghiệp vụ:** Database Design cho phép `evidence_note?` nhưng yêu cầu 2B đòi căn cứ xác minh. Schema giữ tính nullable đã duyệt; cần chốt cách bắt buộc/định danh chứng cứ trong workflow hoặc sửa nguồn có phê duyệt trước khi dùng cho ưu đãi.
+- **Dependency:** `pnpm peers check --filter api...` báo peer `tsconfck@3.1.6` yêu cầu TypeScript `^5.0.0` trong khi repo có 6.0.3. Đây là peer của dependency hiện có, không phải lỗi Prisma; `tsc --noEmit` hiện đạt. Theo dõi khi nâng cấp toolchain.
+
+## Kiểm tra đã thực hiện
+
+| Kiểm tra | Kết quả thực tế |
+|---|---|
+| `pnpm.cmd install --offline --filter api...` | Thành công sau khi cho phép build scripts của riêng `prisma` và `@prisma/engines` trong `pnpm-workspace.yaml`; lần đầu trả `ERR_PNPM_IGNORED_BUILDS`, đã xử lý. |
+| `prisma --version` | CLI/client đều 7.10.1; báo Node 24.12.0, TypeScript 6.0.3 và schema engine Windows. |
+| `prisma format` | Thành công trên schema 2E tích lũy, 47 model. |
+| `prisma validate` | Thành công trên schema 2E tích lũy với `DATABASE_URL` placeholder chỉ trong process; không kết nối PostgreSQL. |
+| `pnpm.cmd --filter api exec tsc --noEmit` | Thành công. |
+| PostgreSQL, migration, seed, client generation, backend tests | Không thực hiện theo phạm vi 2E. |
+
+## File được tạo/sửa và bước tiếp theo
+
+- Tạo `apps/api/prisma/schema.prisma`, `apps/api/prisma.config.ts`, `docs/ai/SCHEMA_REVIEW.md`.
+- Sửa `apps/api/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` để ghim/cài Prisma 7.10.1 và cho phép đúng hai build scripts cần thiết.
+- Riêng 2B chỉ sửa `apps/api/prisma/schema.prisma` và báo cáo này; không sửa cấu hình hoặc dependency.
+- Riêng 2C cũng chỉ sửa `apps/api/prisma/schema.prisma` và báo cáo này; không sửa Attendance, Billing, cấu hình hoặc dependency.
+- Riêng 2D chỉ sửa `apps/api/prisma/schema.prisma` và báo cáo này; không sửa Billing, cấu hình hoặc dependency.
+- Riêng 2E chỉ sửa `apps/api/prisma/schema.prisma` và báo cáo này; không thêm `BillingSourceSnapshot`, invoice counter, prepaid, gateway hoặc P1 combo.
+- Hai file `docs/ai/DESIGN_TOKENS.md` và `docs/ai/UI_GUIDELINES.md` đã có thay đổi trong working tree trước 2A; không chạm vào.
+
+Sau khi user review và cho phép giai đoạn tiếp theo mới tiếp tục 2F. Trước migration tài chính cần phê duyệt counter, dueAt, resolution workflow và snapshot contract; sau khi cài PostgreSQL mới kiểm thử FK kép/CHECK/GiST/concurrency, invoice issue/payment/adjustment song song, ROUND_HALF_UP, reversal, excess và claim chống trùng. Không xem `prisma validate` là bằng chứng các constraint DB hoặc nghiệp vụ đã được thực thi.

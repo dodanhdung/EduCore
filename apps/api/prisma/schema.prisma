@@ -1,0 +1,1336 @@
+// EduCore P0 — phases 2A–2E. Times are UTC instants; tenant-local display uses Tenant.timezone.
+// SQL-only constraints and deferred cross-module relations are tracked in docs/ai/SCHEMA_REVIEW.md.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+  DISABLED
+}
+
+enum OtpPurpose {
+  ACTIVATION
+  PASSWORD_RESET
+}
+
+enum AccessScopeKind {
+  TENANT
+  CLASS
+  STUDENT
+}
+
+enum EnrollmentStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  COMPLETED
+  WITHDRAWN
+  TRANSFERRED
+}
+
+enum ResourceKind {
+  TEACHER
+  STUDENT
+  ROOM
+}
+
+enum ResourceUnavailabilityStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+enum DeliveryMode {
+  ONSITE
+  ONLINE
+}
+
+enum ClassSessionStatus {
+  DRAFT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum SessionParticipantKind {
+  REGULAR
+  MAKEUP
+}
+
+enum ResourceBookingStatus {
+  ACTIVE
+  RELEASED
+}
+
+enum AttendanceStatus {
+  ATTENDED
+  EXCUSED
+  UNEXCUSED
+}
+
+enum PriceScopeKind {
+  COURSE
+  CLASS
+  SESSION
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+}
+
+enum InvoiceDiscountKind {
+  SIBLING
+}
+
+enum InvoiceAdjustmentKind {
+  AMOUNT
+  CANCELLATION
+}
+
+enum InvoiceAdjustmentStatus {
+  PROPOSED
+  APPLIED
+  REJECTED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+}
+
+enum PaymentExcessResolutionStatus {
+  PENDING_RESOLUTION
+  RESOLVED
+}
+
+model Tenant {
+  id          String    @id @default(uuid()) @db.Uuid
+  code        String    @unique @db.Text
+  name        String    @db.Text
+  timezone    String    @default("Asia/Ho_Chi_Minh") @db.Text
+  status      String    @db.Text
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  policyVersions               PolicyVersion[]
+  authSessions                 AuthSession[]
+  memberships                  TenantMembership[]
+  roles                        Role[]
+  rolePermissions              RolePermission[]
+  membershipRoles              MembershipRole[]
+  accessScopes                 AccessScope[]
+  teacherProfiles              TeacherProfile[]
+  studentProfiles              StudentProfile[]
+  subjects                     Subject[]
+  levels                       Level[]
+  courses                      Course[]
+  classes                      Class[]
+  teacherCompetencies          TeacherCompetency[]
+  classTeacherAssignments      ClassTeacherAssignment[]
+  enrollments                  Enrollment[]
+  enrollmentTransfers          EnrollmentTransfer[]
+  parentStudentLinks           ParentStudentLink[]
+  verifiedSiblingRelationships VerifiedSiblingRelationship[]
+  rooms                        Room[]
+  schedulableResources         SchedulableResource[]
+  resourceUnavailability       ResourceUnavailability[]
+  scheduleSeries               ScheduleSeries[]
+  classSessions                ClassSession[]
+  sessionParticipants          SessionParticipant[]
+  resourceBookings             ResourceBooking[]
+  absenceRequests              AbsenceRequest[]
+  attendanceFinalizations      AttendanceFinalization[]
+  attendanceRecords            AttendanceRecord[]
+  attendanceCorrections        AttendanceCorrection[]
+  priceRules                   PriceRule[]
+  billingPeriods               BillingPeriod[]
+  billingRuns                  BillingRun[]
+  invoices                     Invoice[]
+  invoiceLines                 InvoiceLine[]
+  invoiceDiscounts             InvoiceDiscount[]
+  invoicedParticipationClaims  InvoicedParticipationClaim[]
+  invoiceAdjustments           InvoiceAdjustment[]
+  payments                     Payment[]
+  paymentReversals             PaymentReversal[]
+  receivableAllocations        ReceivableAllocation[]
+  paymentExcessResolutions     PaymentExcessResolution[]
+
+  @@map("tenants")
+}
+
+// Approved P0 immutable policy snapshots; policy-management UI remains P1.
+model PolicyVersion {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @map("tenant_id") @db.Uuid
+  versionCode           String    @map("version_code") @db.Text
+  effectiveFrom         DateTime  @map("effective_from") @db.Timestamptz(6)
+  effectiveTo           DateTime? @map("effective_to") @db.Timestamptz(6)
+  configSnapshot        Json      @map("config_snapshot") @db.JsonB
+  contentHash           String    @map("content_hash") @db.Text
+  createdByMembershipId String?   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy     TenantMembership? @relation("PolicyVersionCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  classSessions ClassSession[]
+  priceRules    PriceRule[]
+  billingRuns   BillingRun[]
+  invoices      Invoice[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, versionCode])
+  @@index([tenantId, effectiveFrom])
+  @@map("policy_versions")
+}
+
+// Global identity: a user can have separate memberships in multiple tenants.
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  emailNormalized String     @unique @map("email_normalized") @db.Text
+  displayName     String     @map("display_name") @db.Text
+  status          UserStatus @default(PENDING_ACTIVATION)
+  activatedAt     DateTime?  @map("activated_at") @db.Timestamptz(6)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  credential  Credential?
+  sessions    AuthSession[]
+  otps        PasswordResetOtp[]
+  memberships TenantMembership[]
+
+  @@map("users")
+}
+
+model Credential {
+  userId            String    @id @map("user_id") @db.Uuid
+  passwordHash      String    @map("password_hash") @db.Text
+  passwordChangedAt DateTime  @map("password_changed_at") @db.Timestamptz(6)
+  failedAttempts    Int       @default(0) @map("failed_attempts")
+  lockedUntil       DateTime? @map("locked_until") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("credentials")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  activeTenantId   String?   @map("active_tenant_id") @db.Uuid
+  refreshTokenHash String    @map("refresh_token_hash") @db.Text
+  issuedAt         DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  user         User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  activeTenant Tenant? @relation(fields: [activeTenantId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([activeTenantId])
+  @@map("auth_sessions")
+}
+
+// Historical table name is retained for activation and password-reset OTPs.
+model PasswordResetOtp {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  purpose      OtpPurpose
+  otpHash      String     @map("otp_hash") @db.Text
+  requestedAt  DateTime   @default(now()) @map("requested_at") @db.Timestamptz(6)
+  expiresAt    DateTime   @map("expires_at") @db.Timestamptz(6)
+  consumedAt   DateTime?  @map("consumed_at") @db.Timestamptz(6)
+  attemptCount Int        @default(0) @map("attempt_count")
+  maxAttempts  Int        @map("max_attempts")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, purpose, consumedAt, expiresAt])
+  @@map("password_reset_otps")
+}
+
+model TenantMembership {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  status    String    @db.Text
+  joinedAt  DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  leftAt    DateTime? @map("left_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                         Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user                           User                          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  policyVersionsCreated          PolicyVersion[]               @relation("PolicyVersionCreator")
+  roleAssignments                MembershipRole[]              @relation("MembershipRoleSubject")
+  rolesAssigned                  MembershipRole[]              @relation("MembershipRoleAssigner")
+  teacherProfile                 TeacherProfile?               @relation("TeacherMembership")
+  studentProfile                 StudentProfile?               @relation("StudentMembership")
+  classTeacherAssignments        ClassTeacherAssignment[]      @relation("ClassTeacherAssigner")
+  enrollmentsCreated             Enrollment[]                  @relation("EnrollmentCreator")
+  transfersRequested             EnrollmentTransfer[]          @relation("TransferRequester")
+  transfersConfirmed             EnrollmentTransfer[]          @relation("TransferConfirmer")
+  parentLinks                    ParentStudentLink[]           @relation("ParentLinkParent")
+  parentLinksVerified            ParentStudentLink[]           @relation("ParentLinkVerifier")
+  siblingRelationshipsVerified   VerifiedSiblingRelationship[] @relation("SiblingVerifier")
+  resourceUnavailabilityCreated  ResourceUnavailability[]
+  absenceRequestsSubmitted       AbsenceRequest[]              @relation("AbsenceRequester")
+  absenceRequestsApproved        AbsenceRequest[]              @relation("AbsenceApprover")
+  attendanceFinalizations        AttendanceFinalization[]
+  attendanceRecordsEntered       AttendanceRecord[]
+  attendanceCorrectionsRequested AttendanceCorrection[]        @relation("AttendanceCorrectionRequester")
+  attendanceCorrectionsApproved  AttendanceCorrection[]        @relation("AttendanceCorrectionApprover")
+  priceRulesCreated              PriceRule[]                   @relation("PriceRuleCreator")
+  billingRunsRequested           BillingRun[]                  @relation("BillingRunRequester")
+  invoicesIssued                 Invoice[]                     @relation("InvoiceIssuer")
+  invoiceAdjustmentsApplied      InvoiceAdjustment[]           @relation("AdjustmentApplier")
+  paymentsRecorded               Payment[]                     @relation("PaymentRecorder")
+  paymentReversalsPerformed      PaymentReversal[]             @relation("PaymentReverser")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@map("tenant_memberships")
+}
+
+model Role {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  code           String   @db.Text
+  name           String   @db.Text
+  isSystemSeeded Boolean  @default(false) @map("is_system_seeded")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rolePermissions RolePermission[]
+  membershipRoles MembershipRole[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique @db.Text
+  description String  @db.Text
+  isSensitive Boolean @default(false) @map("is_sensitive")
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  role       Role       @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// Keep revoked grants for history; active-grant uniqueness requires a partial SQL index.
+model MembershipRole {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  membershipId           String    @map("membership_id") @db.Uuid
+  roleId                 String    @map("role_id") @db.Uuid
+  assignedByMembershipId String    @map("assigned_by_membership_id") @db.Uuid
+  assignedAt             DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  revokedAt              DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membership   TenantMembership @relation("MembershipRoleSubject", fields: [tenantId, membershipId], references: [tenantId, id], onDelete: Restrict)
+  role         Role             @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+  assignedBy   TenantMembership @relation("MembershipRoleAssigner", fields: [tenantId, assignedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  accessScopes AccessScope[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, membershipId, revokedAt])
+  @@index([tenantId, roleId])
+  @@index([tenantId, assignedByMembershipId])
+  @@map("membership_roles")
+}
+
+model AccessScope {
+  id               String          @id @default(uuid()) @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  membershipRoleId String          @map("membership_role_id") @db.Uuid
+  scopeKind        AccessScopeKind @map("scope_kind")
+  classId          String?         @map("class_id") @db.Uuid
+  studentId        String?         @map("student_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membershipRole MembershipRole  @relation(fields: [tenantId, membershipRoleId], references: [tenantId, id], onDelete: Restrict)
+  class          Class?          @relation("ClassAccessScope", fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  student        StudentProfile? @relation("StudentAccessScope", fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, membershipRoleId, scopeKind])
+  @@index([tenantId, classId])
+  @@index([tenantId, studentId])
+  @@map("access_scopes")
+}
+
+// Academic profiles can exist without a login; a linked membership must share the tenant.
+model TeacherProfile {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  membershipId String?  @map("membership_id") @db.Uuid
+  teacherCode  String   @map("teacher_code") @db.Text
+  fullName     String   @map("full_name") @db.Text
+  contact      String?  @db.Text
+  status       String   @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membership              TenantMembership?        @relation("TeacherMembership", fields: [tenantId, membershipId], references: [tenantId, id], onDelete: Restrict)
+  competencies            TeacherCompetency[]
+  classTeacherAssignments ClassTeacherAssignment[]
+  schedulableResource     SchedulableResource?
+  classSessions           ClassSession[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, teacherCode])
+  @@unique([tenantId, membershipId])
+  @@map("teacher_profiles")
+}
+
+model StudentProfile {
+  id           String    @id @default(uuid()) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  membershipId String?   @map("membership_id") @db.Uuid
+  studentCode  String    @map("student_code") @db.Text
+  fullName     String    @map("full_name") @db.Text
+  dateOfBirth  DateTime? @map("date_of_birth") @db.Date
+  status       String    @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membership            TenantMembership?             @relation("StudentMembership", fields: [tenantId, membershipId], references: [tenantId, id], onDelete: Restrict)
+  enrollments           Enrollment[]
+  parentLinks           ParentStudentLink[]
+  siblingRelationshipsA VerifiedSiblingRelationship[] @relation("SiblingStudentA")
+  siblingRelationshipsB VerifiedSiblingRelationship[] @relation("SiblingStudentB")
+  accessScopes          AccessScope[]                 @relation("StudentAccessScope")
+  schedulableResource   SchedulableResource?
+  sessionParticipants   SessionParticipant[]
+  billingRuns           BillingRun[]
+  invoices              Invoice[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, studentCode])
+  @@unique([tenantId, membershipId])
+  @@map("student_profiles")
+}
+
+model Subject {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String   @db.Text
+  name      String   @db.Text
+  active    Boolean
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  courses             Course[]
+  teacherCompetencies TeacherCompetency[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("subjects")
+}
+
+model Level {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String   @db.Text
+  name      String   @db.Text
+  sortOrder Int      @map("sort_order")
+  active    Boolean
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant              Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  courses             Course[]
+  teacherCompetencies TeacherCompetency[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("levels")
+}
+
+model Course {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  code        String   @db.Text
+  name        String   @db.Text
+  subjectId   String   @map("subject_id") @db.Uuid
+  levelId     String   @map("level_id") @db.Uuid
+  status      String   @db.Text
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  subject    Subject     @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Restrict)
+  level      Level       @relation(fields: [tenantId, levelId], references: [tenantId, id], onDelete: Restrict)
+  classes    Class[]
+  priceRules PriceRule[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, subjectId, levelId])
+  @@map("courses")
+}
+
+model Class {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  code      String    @db.Text
+  name      String    @db.Text
+  courseId  String    @map("course_id") @db.Uuid
+  capacity  Int
+  status    String    @db.Text
+  startDate DateTime? @map("start_date") @db.Date
+  endDate   DateTime? @map("end_date") @db.Date
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant             Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  course             Course                   @relation(fields: [tenantId, courseId], references: [tenantId, id], onDelete: Restrict)
+  teacherAssignments ClassTeacherAssignment[]
+  enrollments        Enrollment[]
+  targetTransfers    EnrollmentTransfer[]
+  accessScopes       AccessScope[]            @relation("ClassAccessScope")
+  scheduleSeries     ScheduleSeries[]
+  classSessions      ClassSession[]
+  priceRules         PriceRule[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@index([tenantId, courseId])
+  @@map("classes")
+}
+
+model TeacherCompetency {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  teacherId  String    @map("teacher_id") @db.Uuid
+  subjectId  String    @map("subject_id") @db.Uuid
+  levelId    String    @map("level_id") @db.Uuid
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  teacher TeacherProfile @relation(fields: [tenantId, teacherId], references: [tenantId, id], onDelete: Restrict)
+  subject Subject        @relation(fields: [tenantId, subjectId], references: [tenantId, id], onDelete: Restrict)
+  level   Level          @relation(fields: [tenantId, levelId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, teacherId, subjectId, levelId])
+  @@index([tenantId, subjectId, levelId])
+  @@map("teacher_competencies")
+}
+
+model ClassTeacherAssignment {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  classId                String    @map("class_id") @db.Uuid
+  teacherId              String    @map("teacher_id") @db.Uuid
+  roleKind               String    @map("role_kind") @db.Text
+  validFrom              DateTime  @map("valid_from") @db.Timestamptz(6)
+  validTo                DateTime? @map("valid_to") @db.Timestamptz(6)
+  assignedByMembershipId String    @map("assigned_by_membership_id") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  class      Class            @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  teacher    TeacherProfile   @relation(fields: [tenantId, teacherId], references: [tenantId, id], onDelete: Restrict)
+  assignedBy TenantMembership @relation("ClassTeacherAssigner", fields: [tenantId, assignedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, classId, validFrom])
+  @@index([tenantId, teacherId, validFrom])
+  @@index([tenantId, assignedByMembershipId])
+  @@map("class_teacher_assignments")
+}
+
+// Each transfer creates a new enrollment; the prior enrollment remains for history.
+model Enrollment {
+  id                    String           @id @default(uuid()) @db.Uuid
+  tenantId              String           @map("tenant_id") @db.Uuid
+  studentId             String           @map("student_id") @db.Uuid
+  classId               String           @map("class_id") @db.Uuid
+  status                EnrollmentStatus
+  effectiveFrom         DateTime         @map("effective_from") @db.Timestamptz(6)
+  effectiveTo           DateTime?        @map("effective_to") @db.Timestamptz(6)
+  priorEnrollmentId     String?          @map("prior_enrollment_id") @db.Uuid
+  createdByMembershipId String           @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  student             StudentProfile       @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  class               Class                @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  priorEnrollment     Enrollment?          @relation("EnrollmentLineage", fields: [tenantId, studentId, priorEnrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
+  nextEnrollments     Enrollment[]         @relation("EnrollmentLineage")
+  createdBy           TenantMembership     @relation("EnrollmentCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  sourceTransfers     EnrollmentTransfer[] @relation("TransferSource")
+  targetTransfers     EnrollmentTransfer[] @relation("TransferTarget")
+  sessionParticipants SessionParticipant[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, studentId, id])
+  @@unique([tenantId, classId, id])
+  @@index([tenantId, classId, status, effectiveFrom])
+  @@index([tenantId, studentId, status])
+  @@index([tenantId, priorEnrollmentId])
+  @@index([tenantId, createdByMembershipId])
+  @@map("enrollments")
+}
+
+model EnrollmentTransfer {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tenantId                String   @map("tenant_id") @db.Uuid
+  sourceEnrollmentId      String   @map("source_enrollment_id") @db.Uuid
+  targetClassId           String   @map("target_class_id") @db.Uuid
+  effectiveAt             DateTime @map("effective_at") @db.Timestamptz(6)
+  status                  String   @db.Text
+  targetEnrollmentId      String?  @map("target_enrollment_id") @db.Uuid
+  requestedByMembershipId String   @map("requested_by_membership_id") @db.Uuid
+  confirmedByMembershipId String?  @map("confirmed_by_membership_id") @db.Uuid
+  // ApprovalRequest is outside phase 2B; its same-tenant FK is deferred.
+  approvalRequestId       String?  @map("approval_request_id") @db.Uuid
+  reason                  String   @db.Text
+  operationKey            String   @map("operation_key") @db.Text
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sourceEnrollment Enrollment        @relation("TransferSource", fields: [tenantId, sourceEnrollmentId], references: [tenantId, id], onDelete: Restrict)
+  targetClass      Class             @relation(fields: [tenantId, targetClassId], references: [tenantId, id], onDelete: Restrict)
+  targetEnrollment Enrollment?       @relation("TransferTarget", fields: [tenantId, targetClassId, targetEnrollmentId], references: [tenantId, classId, id], onDelete: Restrict)
+  requestedBy      TenantMembership  @relation("TransferRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  confirmedBy      TenantMembership? @relation("TransferConfirmer", fields: [tenantId, confirmedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, sourceEnrollmentId, status])
+  @@index([tenantId, targetClassId, status])
+  @@index([tenantId, targetEnrollmentId])
+  @@index([tenantId, approvalRequestId])
+  @@map("enrollment_transfers")
+}
+
+model ParentStudentLink {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  parentMembershipId     String    @map("parent_membership_id") @db.Uuid
+  studentId              String    @map("student_id") @db.Uuid
+  relationship           String    @db.Text
+  verifiedAt             DateTime? @map("verified_at") @db.Timestamptz(6)
+  verifiedByMembershipId String?   @map("verified_by_membership_id") @db.Uuid
+  revokedAt              DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  parent     TenantMembership  @relation("ParentLinkParent", fields: [tenantId, parentMembershipId], references: [tenantId, id], onDelete: Restrict)
+  student    StudentProfile    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  verifiedBy TenantMembership? @relation("ParentLinkVerifier", fields: [tenantId, verifiedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, parentMembershipId, revokedAt])
+  @@index([tenantId, studentId, revokedAt])
+  @@index([tenantId, verifiedByMembershipId])
+  @@map("parent_student_links")
+}
+
+// A verified sibling pair is explicit evidence, never inferred from shared names or parents.
+model VerifiedSiblingRelationship {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  studentAId             String    @map("student_a_id") @db.Uuid
+  studentBId             String    @map("student_b_id") @db.Uuid
+  verifiedByMembershipId String    @map("verified_by_membership_id") @db.Uuid
+  verifiedAt             DateTime  @map("verified_at") @db.Timestamptz(6)
+  revokedAt              DateTime? @map("revoked_at") @db.Timestamptz(6)
+  evidenceNote           String?   @map("evidence_note") @db.Text
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  studentA   StudentProfile   @relation("SiblingStudentA", fields: [tenantId, studentAId], references: [tenantId, id], onDelete: Restrict)
+  studentB   StudentProfile   @relation("SiblingStudentB", fields: [tenantId, studentBId], references: [tenantId, id], onDelete: Restrict)
+  verifiedBy TenantMembership @relation("SiblingVerifier", fields: [tenantId, verifiedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, studentAId, revokedAt])
+  @@index([tenantId, studentBId, revokedAt])
+  @@index([tenantId, verifiedByMembershipId])
+  @@map("verified_sibling_relationships")
+}
+
+model Room {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String   @db.Text
+  name      String   @db.Text
+  capacity  Int
+  active    Boolean
+  location  String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  schedulableResource SchedulableResource?
+  classSessions       ClassSession[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@map("rooms")
+}
+
+// Each teacher, student, or room has at most one resource registry row.
+model SchedulableResource {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  resourceKind ResourceKind @map("resource_kind")
+  teacherId    String?      @map("teacher_id") @db.Uuid
+  studentId    String?      @map("student_id") @db.Uuid
+  roomId       String?      @map("room_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  teacher        TeacherProfile?          @relation(fields: [tenantId, teacherId], references: [tenantId, id], onDelete: Restrict)
+  student        StudentProfile?          @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  room           Room?                    @relation(fields: [tenantId, roomId], references: [tenantId, id], onDelete: Restrict)
+  unavailability ResourceUnavailability[]
+  bookings       ResourceBooking[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, teacherId])
+  @@unique([tenantId, studentId])
+  @@unique([tenantId, roomId])
+  @@map("schedulable_resources")
+}
+
+model ResourceUnavailability {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  tenantId              String                       @map("tenant_id") @db.Uuid
+  resourceId            String                       @map("resource_id") @db.Uuid
+  startsAt              DateTime                     @map("starts_at") @db.Timestamptz(6)
+  endsAt                DateTime                     @map("ends_at") @db.Timestamptz(6)
+  status                ResourceUnavailabilityStatus
+  reason                String                       @db.Text
+  createdByMembershipId String                       @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  resource  SchedulableResource @relation(fields: [tenantId, resourceId], references: [tenantId, id], onDelete: Restrict)
+  createdBy TenantMembership    @relation(fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  bookings  ResourceBooking[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, resourceId, id])
+  @@index([tenantId, resourceId, status, startsAt])
+  @@index([tenantId, createdByMembershipId])
+  @@map("resource_unavailability")
+}
+
+// A single session leaves seriesId null; weekly series expand to individual sessions.
+model ScheduleSeries {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  classId         String   @map("class_id") @db.Uuid
+  weekday         Int      @db.SmallInt
+  localStartTime  DateTime @map("local_start_time") @db.Time(0)
+  durationMinutes Int      @map("duration_minutes")
+  validFrom       DateTime @map("valid_from") @db.Date
+  validTo         DateTime @map("valid_to") @db.Date
+  timezone        String   @db.Text
+  status          String   @db.Text
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  class    Class          @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  sessions ClassSession[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, classId, id])
+  @@index([tenantId, classId, validFrom])
+  @@map("schedule_series")
+}
+
+model ClassSession {
+  id              String             @id @default(uuid()) @db.Uuid
+  tenantId        String             @map("tenant_id") @db.Uuid
+  classId         String             @map("class_id") @db.Uuid
+  seriesId        String?            @map("series_id") @db.Uuid
+  teacherId       String             @map("teacher_id") @db.Uuid
+  roomId          String?            @map("room_id") @db.Uuid
+  deliveryMode    DeliveryMode       @map("delivery_mode")
+  startsAt        DateTime           @map("starts_at") @db.Timestamptz(6)
+  endsAt          DateTime           @map("ends_at") @db.Timestamptz(6)
+  status          ClassSessionStatus
+  cancelReason    String?            @map("cancel_reason") @db.Text
+  revision        Int
+  policyVersionId String             @map("policy_version_id") @db.Uuid
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  class                  Class                   @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  series                 ScheduleSeries?         @relation(fields: [tenantId, classId, seriesId], references: [tenantId, classId, id], onDelete: Restrict)
+  teacher                TeacherProfile          @relation(fields: [tenantId, teacherId], references: [tenantId, id], onDelete: Restrict)
+  room                   Room?                   @relation(fields: [tenantId, roomId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion          PolicyVersion           @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  participants           SessionParticipant[]
+  bookings               ResourceBooking[]
+  attendanceFinalization AttendanceFinalization?
+  priceRules             PriceRule[]
+  invoiceLines           InvoiceLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, classId, startsAt])
+  @@index([tenantId, teacherId, startsAt])
+  @@index([tenantId, roomId, startsAt])
+  @@index([tenantId, seriesId, startsAt])
+  @@index([tenantId, policyVersionId])
+  @@map("class_sessions")
+}
+
+// Participant identity is unique per session even after removal.
+model SessionParticipant {
+  id              String                 @id @default(uuid()) @db.Uuid
+  tenantId        String                 @map("tenant_id") @db.Uuid
+  sessionId       String                 @map("session_id") @db.Uuid
+  studentId       String                 @map("student_id") @db.Uuid
+  enrollmentId    String?                @map("enrollment_id") @db.Uuid
+  participantKind SessionParticipantKind @map("participant_kind")
+  addedAt         DateTime               @default(now()) @map("added_at") @db.Timestamptz(6)
+  removedAt       DateTime?              @map("removed_at") @db.Timestamptz(6)
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant           Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session          ClassSession                @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
+  student          StudentProfile              @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  enrollment       Enrollment?                 @relation(fields: [tenantId, studentId, enrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
+  absenceRequests  AbsenceRequest[]
+  attendanceRecord AttendanceRecord?
+  invoiceLines     InvoiceLine[]
+  invoicedClaim    InvoicedParticipationClaim?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sessionId, id])
+  @@unique([tenantId, sessionId, studentId])
+  @@index([tenantId, studentId, sessionId])
+  @@index([tenantId, enrollmentId])
+  @@map("session_participants")
+}
+
+// PostgreSQL GiST exclusion on ACTIVE half-open intervals is required for safety.
+model ResourceBooking {
+  id               String                @id @default(uuid()) @db.Uuid
+  tenantId         String                @map("tenant_id") @db.Uuid
+  resourceId       String                @map("resource_id") @db.Uuid
+  sessionId        String?               @map("session_id") @db.Uuid
+  unavailabilityId String?               @map("unavailability_id") @db.Uuid
+  startsAt         DateTime              @map("starts_at") @db.Timestamptz(6)
+  endsAt           DateTime              @map("ends_at") @db.Timestamptz(6)
+  status           ResourceBookingStatus
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant         Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  resource       SchedulableResource     @relation(fields: [tenantId, resourceId], references: [tenantId, id], onDelete: Restrict)
+  session        ClassSession?           @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
+  unavailability ResourceUnavailability? @relation(fields: [tenantId, resourceId, unavailabilityId], references: [tenantId, resourceId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, resourceId, status, startsAt])
+  @@index([tenantId, sessionId])
+  @@index([tenantId, unavailabilityId])
+  @@map("resource_bookings")
+}
+
+// Submission timing alone never grants EXCUSED; an authorized decision is required.
+model AbsenceRequest {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @map("tenant_id") @db.Uuid
+  participantId          String    @map("participant_id") @db.Uuid
+  requesterMembershipId  String    @map("requester_membership_id") @db.Uuid
+  submittedAt            DateTime  @map("submitted_at") @db.Timestamptz(6)
+  reason                 String    @db.Text
+  isLateNotice           Boolean   @map("is_late_notice")
+  status                 String    @db.Text
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  decidedAt              DateTime? @map("decided_at") @db.Timestamptz(6)
+  // ApprovalRequest belongs to a later module; do not fabricate a relation.
+  approvalRequestId      String?   @map("approval_request_id") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  participant SessionParticipant @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
+  requester   TenantMembership   @relation("AbsenceRequester", fields: [tenantId, requesterMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvedBy  TenantMembership?  @relation("AbsenceApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, participantId, status])
+  @@index([tenantId, requesterMembershipId])
+  @@index([tenantId, approvedByMembershipId])
+  @@index([tenantId, approvalRequestId])
+  @@map("absence_requests")
+}
+
+// A finalization row exists only after authorized confirmation of the whole session.
+model AttendanceFinalization {
+  id                      String    @id @default(uuid()) @db.Uuid
+  tenantId                String    @map("tenant_id") @db.Uuid
+  sessionId               String    @map("session_id") @db.Uuid
+  confirmedByMembershipId String    @map("confirmed_by_membership_id") @db.Uuid
+  confirmedAt             DateTime  @map("confirmed_at") @db.Timestamptz(6)
+  lockedAt                DateTime? @map("locked_at") @db.Timestamptz(6)
+  revision                Int
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  session     ClassSession       @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
+  confirmedBy TenantMembership   @relation(fields: [tenantId, confirmedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  records     AttendanceRecord[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sessionId])
+  @@index([tenantId, confirmedByMembershipId])
+  @@map("attendance_finalizations")
+}
+
+// finalizationId null means draft; billing must only read confirmed records.
+model AttendanceRecord {
+  id                     String           @id @default(uuid()) @db.Uuid
+  tenantId               String           @map("tenant_id") @db.Uuid
+  participantId          String           @map("participant_id") @db.Uuid
+  finalizationId         String?          @map("finalization_id") @db.Uuid
+  attendanceStatus       AttendanceStatus @map("attendance_status")
+  recordedByMembershipId String           @map("recorded_by_membership_id") @db.Uuid
+  recordedAt             DateTime         @map("recorded_at") @db.Timestamptz(6)
+  revision               Int
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  participant  SessionParticipant      @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
+  finalization AttendanceFinalization? @relation(fields: [tenantId, finalizationId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy   TenantMembership        @relation(fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  corrections  AttendanceCorrection[]
+  invoiceLines InvoiceLine[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, participantId, id])
+  @@unique([tenantId, participantId])
+  @@index([tenantId, finalizationId])
+  @@index([tenantId, recordedByMembershipId])
+  @@map("attendance_records")
+}
+
+// Append-only correction history; privileged after-lock changes need audit and billing follow-up.
+model AttendanceCorrection {
+  id                      String           @id @default(uuid()) @db.Uuid
+  tenantId                String           @map("tenant_id") @db.Uuid
+  attendanceId            String           @map("attendance_id") @db.Uuid
+  oldStatus               AttendanceStatus @map("old_status")
+  newStatus               AttendanceStatus @map("new_status")
+  reason                  String           @db.Text
+  requestedByMembershipId String           @map("requested_by_membership_id") @db.Uuid
+  approvedByMembershipId  String?          @map("approved_by_membership_id") @db.Uuid
+  correctedAt             DateTime         @map("corrected_at") @db.Timestamptz(6)
+  // ApprovalRequest belongs to a later module; Invoice is not linked in phase 2D.
+  approvalRequestId       String?          @map("approval_request_id") @db.Uuid
+  createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  attendance  AttendanceRecord  @relation(fields: [tenantId, attendanceId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy TenantMembership  @relation("AttendanceCorrectionRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  approvedBy  TenantMembership? @relation("AttendanceCorrectionApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, attendanceId, correctedAt])
+  @@index([tenantId, requestedByMembershipId])
+  @@index([tenantId, approvedByMembershipId])
+  @@index([tenantId, approvalRequestId])
+  @@map("attendance_corrections")
+}
+
+// Effective prices are tenant-local calendar dates; overlap requires PostgreSQL EXCLUDE.
+model PriceRule {
+  id                    String         @id @default(uuid()) @db.Uuid
+  tenantId              String         @map("tenant_id") @db.Uuid
+  scopeKind             PriceScopeKind @map("scope_kind")
+  courseId              String?        @map("course_id") @db.Uuid
+  classId               String?        @map("class_id") @db.Uuid
+  sessionId             String?        @map("session_id") @db.Uuid
+  unitPriceVnd          BigInt         @map("unit_price_vnd") @db.BigInt
+  effectiveFrom         DateTime       @map("effective_from") @db.Date
+  effectiveTo           DateTime?      @map("effective_to") @db.Date
+  policyVersionId       String         @map("policy_version_id") @db.Uuid
+  createdByMembershipId String         @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  course        Course?          @relation(fields: [tenantId, courseId], references: [tenantId, id], onDelete: Restrict)
+  class         Class?           @relation(fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict)
+  session       ClassSession?    @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion PolicyVersion    @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  createdBy     TenantMembership @relation("PriceRuleCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  invoiceLines  InvoiceLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, courseId, effectiveFrom])
+  @@index([tenantId, classId, effectiveFrom])
+  @@index([tenantId, sessionId, effectiveFrom])
+  @@index([tenantId, policyVersionId])
+  @@map("price_rules")
+}
+
+model BillingPeriod {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  monthStart DateTime @map("month_start") @db.Date
+  monthEnd   DateTime @map("month_end") @db.Date
+  status     String   @db.Text
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  billingRuns BillingRun[]
+  invoices    Invoice[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, monthStart])
+  @@map("billing_periods")
+}
+
+// One logical run per student and monthly period, even when a draft is recomputed.
+model BillingRun {
+  id                      String    @id @default(uuid()) @db.Uuid
+  tenantId                String    @map("tenant_id") @db.Uuid
+  periodId                String    @map("period_id") @db.Uuid
+  studentId               String    @map("student_id") @db.Uuid
+  operationKey            String    @map("operation_key") @db.Text
+  state                   String    @db.Text
+  policyVersionId         String    @map("policy_version_id") @db.Uuid
+  inputSnapshotHash       String    @map("input_snapshot_hash") @db.Text
+  computedAt              DateTime? @map("computed_at") @db.Timestamptz(6)
+  requestedByMembershipId String?   @map("requested_by_membership_id") @db.Uuid
+  errorReason             String?   @map("error_reason") @db.Text
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  period        BillingPeriod     @relation(fields: [tenantId, periodId], references: [tenantId, id], onDelete: Restrict)
+  student       StudentProfile    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion PolicyVersion     @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy   TenantMembership? @relation("BillingRunRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  invoice       Invoice?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, studentId, periodId])
+  @@unique([tenantId, periodId, studentId])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, studentId, state])
+  @@index([tenantId, policyVersionId])
+  @@map("billing_runs")
+}
+
+// The issued header, lines, discounts, and snapshots must be frozen by service/DB policy.
+model Invoice {
+  id                   String        @id @default(uuid()) @db.Uuid
+  tenantId             String        @map("tenant_id") @db.Uuid
+  billingRunId         String        @map("billing_run_id") @db.Uuid
+  studentId            String        @map("student_id") @db.Uuid
+  periodId             String        @map("period_id") @db.Uuid
+  invoiceNumber        String?       @map("invoice_number") @db.Text
+  status               InvoiceStatus
+  grossVnd             BigInt        @map("gross_vnd") @db.BigInt
+  discountVnd          BigInt        @map("discount_vnd") @db.BigInt
+  totalVnd             BigInt        @map("total_vnd") @db.BigInt
+  issuedAt             DateTime?     @map("issued_at") @db.Timestamptz(6)
+  issuedByMembershipId String?       @map("issued_by_membership_id") @db.Uuid
+  dueAt                DateTime?     @map("due_at") @db.Timestamptz(6)
+  policyVersionId      String        @map("policy_version_id") @db.Uuid
+  snapshotJson         Json          @map("snapshot_json") @db.JsonB
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  billingRun        BillingRun                @relation(fields: [tenantId, billingRunId, studentId, periodId], references: [tenantId, id, studentId, periodId], onDelete: Restrict)
+  student           StudentProfile            @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  period            BillingPeriod             @relation(fields: [tenantId, periodId], references: [tenantId, id], onDelete: Restrict)
+  issuedBy          TenantMembership?         @relation("InvoiceIssuer", fields: [tenantId, issuedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion     PolicyVersion             @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  lines             InvoiceLine[]
+  discounts         InvoiceDiscount[]
+  adjustments       InvoiceAdjustment[]
+  payments          Payment[]
+  allocations       ReceivableAllocation[]
+  excessResolutions PaymentExcessResolution[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, billingRunId])
+  @@unique([tenantId, billingRunId, studentId, periodId])
+  @@unique([tenantId, periodId, studentId])
+  // PostgreSQL unique permits multiple NULL draft numbers, but no duplicate issued number.
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, status, issuedAt])
+  @@index([tenantId, studentId, periodId])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  invoiceId          String   @map("invoice_id") @db.Uuid
+  participantId      String   @map("participant_id") @db.Uuid
+  sessionId          String   @map("session_id") @db.Uuid
+  attendanceId       String?  @map("attendance_id") @db.Uuid
+  priceRuleId        String?  @map("price_rule_id") @db.Uuid
+  sourceStatus       String   @map("source_status") @db.Text
+  chargeUnits        Int      @map("charge_units") @db.SmallInt
+  unitPriceVnd       BigInt   @map("unit_price_vnd") @db.BigInt
+  baseAmountVnd      BigInt   @map("base_amount_vnd") @db.BigInt
+  reasonCode         String   @map("reason_code") @db.Text
+  sourceSnapshotJson Json     @map("source_snapshot_json") @db.JsonB
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant      Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice     Invoice                     @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  participant SessionParticipant          @relation(fields: [tenantId, sessionId, participantId], references: [tenantId, sessionId, id], onDelete: Restrict)
+  session     ClassSession                @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Restrict)
+  attendance  AttendanceRecord?           @relation(fields: [tenantId, participantId, attendanceId], references: [tenantId, participantId, id], onDelete: Restrict)
+  priceRule   PriceRule?                  @relation(fields: [tenantId, priceRuleId], references: [tenantId, id], onDelete: Restrict)
+  claim       InvoicedParticipationClaim?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, participantId, id])
+  @@unique([tenantId, invoiceId, participantId])
+  @@index([tenantId, sessionId])
+  @@index([tenantId, attendanceId])
+  @@index([tenantId, priceRuleId])
+  @@map("invoice_lines")
+}
+
+// P0 permits only the verified sibling discount; COMBO remains outside this schema.
+model InvoiceDiscount {
+  id                   String              @id @default(uuid()) @db.Uuid
+  tenantId             String              @map("tenant_id") @db.Uuid
+  invoiceId            String              @map("invoice_id") @db.Uuid
+  kind                 InvoiceDiscountKind
+  sequenceNo           Int                 @map("sequence_no")
+  rate                 Decimal             @db.Decimal(6, 5)
+  rawDiscountDecimal   Decimal             @map("raw_discount_decimal") @db.Decimal(20, 6)
+  evidenceSnapshotJson Json                @map("evidence_snapshot_json") @db.JsonB
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, invoiceId, sequenceNo])
+  @@map("invoice_discounts")
+}
+
+// An issued participant is claimed once and never silently released after cancellation.
+model InvoicedParticipationClaim {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  participantId String   @map("participant_id") @db.Uuid
+  invoiceLineId String   @map("invoice_line_id") @db.Uuid
+  claimedAt     DateTime @map("claimed_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  participant SessionParticipant @relation(fields: [tenantId, participantId], references: [tenantId, id], onDelete: Restrict)
+  invoiceLine InvoiceLine        @relation(fields: [tenantId, participantId, invoiceLineId], references: [tenantId, participantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, participantId])
+  @@unique([tenantId, invoiceLineId])
+  @@unique([tenantId, participantId, invoiceLineId])
+  @@map("invoiced_participation_claims")
+}
+
+// Applied adjustments never rewrite the issued invoice amount or lines.
+model InvoiceAdjustment {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  tenantId              String                  @map("tenant_id") @db.Uuid
+  invoiceId             String                  @map("invoice_id") @db.Uuid
+  // ApprovalRequest is introduced in a later phase; this required ID is not a fake FK.
+  approvalRequestId     String                  @map("approval_request_id") @db.Uuid
+  adjustmentKind        InvoiceAdjustmentKind   @map("adjustment_kind")
+  deltaVnd              BigInt                  @map("delta_vnd") @db.BigInt
+  reason                String                  @db.Text
+  status                InvoiceAdjustmentStatus
+  appliedAt             DateTime?               @map("applied_at") @db.Timestamptz(6)
+  appliedByMembershipId String?                 @map("applied_by_membership_id") @db.Uuid
+  operationKey          String                  @map("operation_key") @db.Text
+  createdAt             DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice           Invoice                   @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  appliedBy         TenantMembership?         @relation("AdjustmentApplier", fields: [tenantId, appliedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  excessResolutions PaymentExcessResolution[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, invoiceId, id])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, invoiceId, status])
+  @@index([tenantId, approvalRequestId])
+  @@index([tenantId, appliedByMembershipId])
+  @@map("invoice_adjustments")
+}
+
+// Manually verified payment for exactly one issued invoice; append-only history.
+model Payment {
+  id                     String        @id @default(uuid()) @db.Uuid
+  tenantId               String        @map("tenant_id") @db.Uuid
+  invoiceId              String        @map("invoice_id") @db.Uuid
+  amountVnd              BigInt        @map("amount_vnd") @db.BigInt
+  method                 PaymentMethod
+  externalReference      String?       @map("external_reference") @db.Text
+  paidAt                 DateTime      @map("paid_at") @db.Timestamptz(6)
+  recordedByMembershipId String        @map("recorded_by_membership_id") @db.Uuid
+  evidenceNote           String?       @map("evidence_note") @db.Text
+  idempotencyKey         String        @map("idempotency_key") @db.Text
+  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice    Invoice               @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy TenantMembership      @relation("PaymentRecorder", fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  reversal   PaymentReversal?
+  allocation ReceivableAllocation?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, id, invoiceId])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, invoiceId, paidAt])
+  @@index([tenantId, recordedByMembershipId])
+  @@map("payments")
+}
+
+// P0 reversal is full and at most once per payment; no update/delete of Payment.
+model PaymentReversal {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  paymentId              String   @map("payment_id") @db.Uuid
+  amountVnd              BigInt   @map("amount_vnd") @db.BigInt
+  reason                 String   @db.Text
+  reversedByMembershipId String   @map("reversed_by_membership_id") @db.Uuid
+  reversedAt             DateTime @map("reversed_at") @db.Timestamptz(6)
+  approvalRequestId      String?  @map("approval_request_id") @db.Uuid
+  operationKey           String   @map("operation_key") @db.Text
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  payment    Payment          @relation(fields: [tenantId, paymentId], references: [tenantId, id], onDelete: Restrict)
+  reversedBy TenantMembership @relation("PaymentReverser", fields: [tenantId, reversedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentId])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, approvalRequestId])
+  @@index([tenantId, reversedByMembershipId])
+  @@map("payment_reversals")
+}
+
+// P0 allocations have one mandatory payment source; tuition credits remain P1.
+model ReceivableAllocation {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  invoiceId    String   @map("invoice_id") @db.Uuid
+  paymentId    String   @map("payment_id") @db.Uuid
+  amountVnd    BigInt   @map("amount_vnd") @db.BigInt
+  allocatedAt  DateTime @map("allocated_at") @db.Timestamptz(6)
+  operationKey String   @map("operation_key") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  payment Payment @relation(fields: [tenantId, paymentId, invoiceId], references: [tenantId, id, invoiceId], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, paymentId])
+  @@unique([tenantId, paymentId, invoiceId])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, invoiceId, allocatedAt])
+  @@map("receivable_allocations")
+}
+
+// Downward adjustments after payment create a separate pending excess, never auto-credit/refund.
+model PaymentExcessResolution {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  tenantId            String                        @map("tenant_id") @db.Uuid
+  invoiceId           String                        @map("invoice_id") @db.Uuid
+  triggerAdjustmentId String                        @map("trigger_adjustment_id") @db.Uuid
+  amountVnd           BigInt                        @map("amount_vnd") @db.BigInt
+  status              PaymentExcessResolutionStatus
+  resolutionKind      String?                       @map("resolution_kind") @db.Text
+  approvalRequestId   String?                       @map("approval_request_id") @db.Uuid
+  reason              String                        @db.Text
+  resolvedAt          DateTime?                     @map("resolved_at") @db.Timestamptz(6)
+  operationKey        String                        @map("operation_key") @db.Text
+  createdAt           DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime                      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice           Invoice           @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  triggerAdjustment InvoiceAdjustment @relation(fields: [tenantId, invoiceId, triggerAdjustmentId], references: [tenantId, invoiceId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, operationKey])
+  @@index([tenantId, invoiceId, status])
+  @@index([tenantId, triggerAdjustmentId])
+  @@index([tenantId, approvalRequestId])
+  @@map("payment_excess_resolutions")
+}
