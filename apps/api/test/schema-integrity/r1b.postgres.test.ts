@@ -1126,7 +1126,7 @@ describe('R1b independent-connection protocols', () => {
         };
         const move: Action = (q) =>
           q.unsafe(
-            "UPDATE public.class_sessions SET starts_at='2099-10-01T16:30Z' WHERE id=$1",
+            "UPDATE public.class_sessions SET starts_at='2099-10-01T16:30Z',ends_at='2099-10-01T17:30Z' WHERE id=$1",
             [f.session],
           );
         const result = await race(

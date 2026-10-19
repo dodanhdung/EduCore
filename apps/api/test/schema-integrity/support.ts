@@ -174,9 +174,11 @@ export async function seed(
   q: Query,
   opts: {
     start?: string;
+    end?: string;
     zone?: string;
     firstSource?: 'series' | 'session' | 'period';
     sessionStatus?: 'DRAFT' | 'CANCELLED';
+    enrollmentFrom?: string;
   } = {},
 ): Promise<Fixture> {
   const start = opts.start ?? '2099-09-30T16:30:00.000000Z';
@@ -292,7 +294,7 @@ export async function seed(
     student_id: student,
     class_id: classId,
     status: 'ACTIVE',
-    effective_from: '2099-01-01T00:00:00Z',
+    effective_from: opts.enrollmentFrom ?? '2099-01-01T00:00:00Z',
     created_by_membership_id: member,
   });
   const policy = await put(q, 'policy_versions', {
@@ -329,7 +331,8 @@ export async function seed(
     teacher_id: teacher,
     delivery_mode: 'ONLINE',
     starts_at: start,
-    ends_at: new Date(new Date(start).getTime() + 3600000).toISOString(),
+    ends_at:
+      opts.end ?? new Date(new Date(start).getTime() + 3600000).toISOString(),
     status: opts.sessionStatus ?? 'DRAFT',
     revision: 1,
     policy_version_id: policy,
