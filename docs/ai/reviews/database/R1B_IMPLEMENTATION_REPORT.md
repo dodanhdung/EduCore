@@ -257,3 +257,303 @@ Review exact [schema diff](../../../../apps/api/prisma/schema.prisma), [R1b SQL]
 **R1B IMPLEMENTED — VERIFICATION INCOMPLETE**
 
 Local implementation delivered for review; native server/P2/nested-query gates remain unverified. Stop after WP4/report. No automatic R2, deployment, Git operation or H-04 closure.
+
+## Native PostgreSQL Verification — 2026-10-19
+
+**Current verdict: R1B NATIVE VERIFICATION INCOMPLETE. Environment: NATIVE ENVIRONMENT BLOCKED.** Owner subsequently instructed to finish with available tools, report missing installations and stop. Historical sections A–Q above are preserved; their test counts describe the previous run.
+
+### A. Environment
+
+- Windows PowerShell; Node `v24.12.0`, pnpm `12.11.2`, Prisma/client `7.10.1`; current Vitest runner reports `4.1.11`.
+- Windows command/service/common-install-path checks found no available Docker CLI/engine or PostgreSQL tools (`psql`, `pg_ctl`, `initdb`). The WSL Ubuntu metadata probe also found no Docker/PostgreSQL tools. No system software was installed.
+- Classification: **Option C — prepare setup, run available checks, native environment blocked**. No PostgreSQL server version, target database, cluster role privileges or migration history could be inspected. No port/cluster/database was allocated. No unknown `DATABASE_URL`, production, Railway, shared or development database was used.
+- Added test-only [PowerShell setup](../../../../apps/api/test/schema-integrity/start-r1b-native.ps1) and [usage instructions](../../../../apps/api/test/schema-integrity/README.md). They prepare a new local `postgres:16` container, random private credential, new anonymous storage and loopback-only dynamic port; validate fresh catalog/cluster ownership; then invoke the existing harness. No automatic resource deletion or manual pre-deploy.
+- Setup verification here: PowerShell AST parser **PASS**, actual missing-Docker invocation exits `1` with the expected environment error **before** resource creation/admission. Successful Docker provisioning and its positive-path admission are **NOT RUN**; script readiness is not PostgreSQL evidence.
+- To continue later, install/start **one** environment: Docker Desktop with a local Linux-container engine (the script then supplies PostgreSQL 16), **or** native PostgreSQL 16 tools plus a dedicated disposable cluster. Both installations are unnecessary. No additional project dependency is currently needed for the offline checks.
+
+### B. Migrations
+
+**No native migration was applied in this run.** Native `test:schema-integrity` and `test:r1b:concurrency` were not invoked because no verified disposable target exists. The harness must own `prisma migrate deploy`; do not deploy manually before it.
+
+| Artifact | Actual evidence this run | Native result |
+|---|---|---|
+| `202610190001_r1a_baseline` | Original SHA256 `c134fc7e71cc102236ee2c7c8e386f17467ef65d6050e3c7e75147413de37b20` unchanged; applied by WASM suite | NOT RUN |
+| `202610190002_r1b_integrity` | Original SHA256 `028fb6ffe8c05aed978a44da980df764020be94b7c20a296dff69a91f440bb76` unchanged; applied by WASM suite | NOT RUN |
+| SQL shape | Source retains `bp_month_shape_ck`, eight functions and 13 trigger attachments; supplemental WASM assertions pass | Server catalog NOT RUN |
+| Security companion | Original file unchanged; executed in WASM suite | Server role/ACL verification NOT RUN |
+| R1a keys/indexes | Original schema/baseline unchanged; offline regression assertions pass | Native Prisma/catalog NOT RUN |
+| Migration history, deploy/redeploy and failed native DDL recovery | No native target; no history edits or fabricated adoption | NOT RUN |
+
+WASM applies real SQL in a single-process engine; it does not exercise Prisma Migrate history or independent server connections. Schema remains 62 models/28 enums with the existing `Tenant.timezoneFrozenAt` R1b field; this run changes neither schema nor migration SQL.
+
+### C. Test Results
+
+| Command/check actually executed | Result |
+|---|---|
+| `pnpm.cmd install --frozen-lockfile --offline --ignore-scripts` | PASS after sandbox permission escalation for pnpm store lock; cached packages only, repository package/lock files unchanged |
+| `pnpm.cmd --dir apps/api exec prisma validate` | PASS |
+| `pnpm.cmd --dir apps/api exec prisma generate` | PASS; ignored generated output only |
+| `pnpm.cmd --dir apps/api exec tsc --noEmit` | PASS, including strengthened native test source |
+| `pnpm.cmd --dir apps/api build` | PASS |
+| `pnpm.cmd --dir apps/api test:r1b:offline` | **14 PASS, 0 FAIL** |
+| `pnpm.cmd --dir apps/api test:r1b:wasm` | **15 PASS, 0 FAIL** |
+| `pnpm.cmd --dir apps/api exec vitest run src/app.controller.spec.ts` | **1 PASS, 0 FAIL** |
+| `pnpm.cmd --dir apps/api exec oxlint --type-aware test/schema-integrity/` | PASS |
+| Prettier on the two changed TypeScript test files | PASS |
+| PowerShell AST parse; setup `-RunTests` with Docker absent | Syntax PASS; expected setup rejection with exit 1, native runner never started |
+| `git diff --check` | PASS; Git reports expected LF/CRLF conversion notices |
+
+**30 available tests PASS, 0 FAIL**, across three separately invoked suites. This is **not** 30 native test passes. Vite emits an informational `vite-tsconfig-paths` deprecation/redundancy message; unrelated configuration was left unchanged.
+
+Native matrix below records availability, not failures of unexecuted assertions. **0 PASS, 0 assertion FAIL, 40 NOT RUN, 1 BLOCKED, 1 DEFERRED TO RUNTIME.**
+
+| Native test | Scope | Status / evidence gap |
+|---|---|---|
+| R1B-T01 | Source/student ownership | NOT RUN — no native target |
+| R1B-T02 | Source identity | NOT RUN — no native target |
+| R1B-T03 | Period containment | NOT RUN — no native target |
+| R1B-T04 | Local start/month boundary | NOT RUN — no native target |
+| R1B-T05 | Cross-midnight attribution | NOT RUN — no native target |
+| R1B-T06 | UTC/local and SQL timezone | NOT RUN — no native target |
+| R1B-T07 | Cancelled/zero source | NOT RUN — no native target |
+| R1B-T08 | Real Prisma nested relations/R1a FK | NOT RUN — type/WASM evidence cannot substitute |
+| R1B-T09 | Source immutability/DRAFT metadata | NOT RUN — added protected-row assertion is compiled only |
+| R1B-T10 | Billed rescheduling | NOT RUN — no native target |
+| R1B-T11 | Unused/past source edits | NOT RUN — no native target |
+| R1B-T12 | Invoice/Run identity | NOT RUN — no native target |
+| R1B-T13 | Month CHECK/bounds | NOT RUN — no native target |
+| R1B-T14 | Participant inverse guards | NOT RUN — no native target |
+| R1B-T15 | Enrollment inverse guards | NOT RUN — no native target |
+| R1B-T16 | Class/course inverse guards | NOT RUN — no native target |
+| R1B-T17 | Issued header/line/claim freeze | NOT RUN — new cancellation/reason checks are compiled only |
+| R1B-T18 | First-source sticky freeze/rollback | NOT RUN — no native target |
+| R1B-T19 | Zone validity/provenance | NOT RUN — no native target |
+| R1B-T20 | Permanent freeze/deletion | NOT RUN — no native target |
+| R1B-T21 | Attendance/finalization lineage | NOT RUN — no native target |
+| R1B-T22 | Line vs reschedule race | NOT RUN — no independent backend evidence |
+| R1B-T23 | Child vs parent ownership race | NOT RUN — no independent backend evidence |
+| R1B-T24 | First source vs timezone race | NOT RUN — no independent backend evidence |
+| R1B-T25 | Revoke vs authorized mutation | NOT RUN — no independent backend evidence |
+| R1B-T26 | Disable/membership/last-Manager races | NOT RUN — no independent backend evidence |
+| R1B-T27 | Independent tenants/actors | NOT RUN — no independent backend evidence |
+| R1B-T28 | Deadlock/timeout/bounded retry | NOT RUN — no SQLSTATE/wait evidence |
+| R1B-T29 | Current authorization reads | NOT RUN — no native target |
+| R1B-T30 | Cross-tenant denial | NOT RUN — no native target |
+| R1B-T31 | Ordinary runtime role boundary | NOT RUN — no native target |
+| R1B-T32 | Definer/owner/ACL/search_path | NOT RUN — no native catalog |
+| R1B-T33 | Trusted immutable JSON evidence | NOT RUN — no native target |
+| R1B-T34 | Command/audit atomic rollback | NOT RUN — no native target |
+| R1B-T35 | Lost COMMIT reply/recovery | NOT RUN — no native target |
+| R1B-T36 | Real Prisma migrate history | NOT RUN — no native target |
+| R1B-T37 | Populated legacy adoption | **BLOCKED — requires reviewed legacy adoption**; compatibility deferred for a future populated deployment |
+| R1B-T38 | Invalid legacy upgrade rejection | NOT RUN — no native target |
+| R1B-T39 | Native DDL rollback/redeploy | NOT RUN — no native target |
+| R1B-T40 | Native FK/index/trigger catalog | NOT RUN — no native catalog |
+| R1B-T41 | Authenticated NestJS mutation paths | **DEFERRED TO RUNTIME** |
+| R1B-T42 | Independent restore/tzdata upgrade | NOT RUN — no native restore/tzdata environment |
+
+T01–T42 remain the existing suite; no replacement concurrency suite, mock-based acceptance or lowered expected business behavior was introduced.
+
+### D. Concurrency Evidence
+
+**Zero native test connections were opened.** No observed `pg_blocking_pids`, acquired-lock barrier, server lock wait, COMMIT/ROLLBACK race or deadlock SQLSTATE exists from this run. Existing T22–T28 still require separate transaction clients plus the observer. Their correctness cannot be inferred from Prisma validation, build, AST parsing or WASM PASS. Locking order and bounded retry remain written protocols awaiting native execution.
+
+### E. Errors & Fixes
+
+1. **Missing native tools:** prepared the minimal PowerShell setup and README instead of installing system software or selecting an unknown database. Positive provisioning remains unverified.
+2. **pnpm store access:** the permitted elevated frozen/offline install reconciled cached `node_modules`; no dependency/version/schema/SQL change resulted. This is not a database defect.
+3. **Cluster roles:** the migration creates `educore_r1b_guard_owner`; fresh test cluster setup deliberately requires an administrator. Native role/security behavior remains unknown. Managed deployment may require an operator with role-creation/ownership/grant privileges to run reviewed setup; do not grant application users those privileges. No production credential or role was changed.
+4. **ISSUED → CANCELLED:** existing R1b guards reject it. Added a WASM rejection assertion (PASS) and a native T17 assertion (NOT RUN). Controlled cancellation/adjustment is an explicit R2-B/R2-C dependency, not enabled here.
+5. **`InvoiceLine.reason_code`:** retained as DRAFT explanatory metadata. Database Design InvoiceLine/zero-line explanation and Billing class design determine eligibility/amount from attendance, charge units and price evidence, not from this label. Added a WASM test proving metadata edits preserve every other line field except `updated_at`, then reject reason edits after issue; PASS. T09 now compares the protected native row before/after the same edit; T17 rejects post-issue reason edits; both native assertions are NOT RUN. R2 services must validate reason/source consistency and must never derive amount, eligibility, period or repricing authorization solely from a mutable label. No SQL relaxation or audit framework was added.
+
+No actual native SQL failure was observed because native execution was unavailable. The assertions above clarify existing behavior; they do not claim native-discovered bug fixes.
+
+### F. Remaining Blockers
+
+- **Immediate blocker:** no available local Docker engine or native PostgreSQL 16 disposable cluster. Install/start one option, then run the documented setup/full suite. Review actual mandatory native results before changing the gate.
+- T37 remains a reviewed-evidence requirement for a **populated** deployment. It is not an extra blocker to fresh development. This task does not establish whether any real EduCore deployment has business data, and does not fabricate historical timezone provenance.
+- T41 belongs to authenticated runtime implementation. T42 needs a safe restore/tzdata environment. Neither is converted into a false prerequisite that every R1b native test must PASS.
+- Native server compatibility, catalog privileges, migration history, actual Prisma nested behavior and concurrency remain unverified. The Docker setup positive path itself also awaits available tooling.
+
+### G. R1b Gate Decision
+
+| Gate | Result after this run |
+|---|---|
+| Approved minimal R1b design | Existing owner authorization retained; no new business approval claimed |
+| Schema implemented and validated | **PASS** — original schema unchanged; validate/generate/typecheck/build succeed |
+| Supplemental offline/WASM checks | **PASS** — 14 static + 15 WASM; separate scaffold 1 PASS |
+| PostgreSQL migrations applied and tested | **NOT RUN / INCOMPLETE** |
+| Native concurrency/privileges/real Prisma integration | **NOT RUN / INCOMPLETE** |
+| Runtime feature ready | **DEFERRED TO RUNTIME** |
+
+**R1B NATIVE VERIFICATION INCOMPLETE.** H-04 remains **OPEN**. No native gate, runtime readiness or R2 financial completeness is inferred from the available checks.
+
+### H. R2-A Readiness
+
+Design preparation/review can use the existing R1b implementation, preserved source evidence and passing offline checks. **R2-A implementation is not unlocked by this verification run:** mandatory native migrations, R1a regression, period/timezone/parent guards, Prisma integration, privilege and multi-connection evidence remain missing. T37 is target-specific deferred compatibility; T41/T42 retain their phase/environment boundaries. No R2-A/B/C/D work was started.
+
+### I. Git Preservation
+
+- Initial snapshot: HEAD `703cdd4efecf6ffb4c2400f513dddfcf4648f2c0`, branch `feat/prisma-p0-schema`, SHA256 inventory of 101 existing files, staged/unstaged patches and original report saved in OS temp directory `C:/Users/Admin/AppData/Local/Temp/educore-r1b-native-verification-PAWmro/`.
+- During the turn, an external Git update was observed: current HEAD `91f7f1a9b2e576aadcd746856ef15a00cfb14872` (`feat(db): implement R1b integrity guards, migrations and test harness`). The agent performed no Git write and did not undo that update. The original four modified tracked files and previous implementation artifacts are now represented in current HEAD; filesystem hashes confirm their contents were preserved outside the explicit test/report changes.
+- This verification changes four existing files only: this report (append only), test README, WASM smoke test, and native T09/T17 assertions. One new file: `apps/api/test/schema-integrity/start-r1b-native.ps1`. **97 of the 101 snapshotted existing files remain byte-identical**, with no missing file; the four differences are the allowed changes just listed. Historical report content before this dated section remains byte-identical.
+- Schema SHA256 remains `a21a016a08a527c156805f1da98aca64d9f1645521fd01f5c4cb0949636ee565`; both migrations and security scripts are unchanged. Requirements/design/API/register/R1a report untouched. Generated client/build files remain ignored outputs.
+- Index remains empty; no add/commit/push/reset/checkout/branch/PR/deploy by the agent. New setup file remains for owner review before Git. Sanitized preservation/check evidence is stored in the temporary snapshot directory; no credential file, URL or secret is added to the repository.
+
+Stop here. Owner next action: install/start one local PostgreSQL environment when convenient; the README provides the command for a fresh Docker-backed run. No software installation or database write was performed by this verification task.
+
+## Native PostgreSQL Verification — 2026-10-19 (Docker follow-up)
+
+**Latest verdict: R1B POSTGRESQL VERIFIED — READY FOR R2-A REVIEW**, for the approved fresh-cluster R1b subset and the Prisma compatibility restriction below. This follow-up supersedes the earlier environment-blocked gate result; all preceding evidence remains historical and unchanged. The owner installed Docker Desktop on D: and reported completion; verification resumed under the existing native-verification authorization. No R2 implementation, runtime readiness or H-04 closure is claimed.
+
+### A. Environment
+
+| Item | Observed value / evidence |
+|---|---|
+| Docker | CLI `D:/Docker/Desktop/resources/bin/docker.exe`; local named-pipe context; engine `29.8.2`. Desktop was initially stopped and was started; no software installation by the agent |
+| PostgreSQL | **16.15**, Debian `16.15-1.pgdg13+2`, x86_64 Linux, official `postgres:16` image |
+| Image ID | `sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d` |
+| Final container | `educore-r1b-native-052c311d47c84abf8bcd698c362af060`, ID `936a002ad6bc595751d4f11b538b0f33da93d1b48125b5736c78854a44315117` |
+| Final target | New database `educore_r1b_native_052c311d47c84abf8bcd698c362af060`, published only at `127.0.0.1:60012` |
+| Storage | New anonymous volume `3bd4fe55e7ca1f14593c2f28d149b4fab9685ad40739cd8dfdfc5b503eacdc50`, container path `/var/lib/postgresql/data`; no supplied existing mount |
+| Admission before writes | Label/container identity and loopback binding matched; server version `160015`; public tables `0`, migration tables `0`, conflicting R1b roles `0`, unrelated non-template/non-postgres databases `0`; dedicated-cluster superuser verified |
+| Final setup result | `nativeTestExitCode: 0`, `SUITE_FINISHED_REVIEW_REQUIRED`; test/gate evidence reviewed separately below |
+
+The setup generated a private random test credential and used only its validated disposable URL; it did not read or connect to a real application `DATABASE_URL`. No password, connection URL or full Docker `Config.Env` was logged/saved. Containers/volumes from failed and final test runs are retained for inspection; no reset/drop/cleanup or production/shared/Railway database operation occurred.
+
+Evidence paths (local temporary files, not repository artifacts):
+
+- Final sanitized environment: `C:/Users/Admin/AppData/Local/Temp/educore-r1b-native-052c311d47c84abf8bcd698c362af060/environment.json`.
+- Final native assertions/races: `C:/Users/Admin/AppData/Local/Temp/educore-r1b-pg-evidence-XIKs6J/evidence.json`.
+- Earlier failing-run evidence: `educore-r1b-pg-evidence-FyuUpZ/evidence.json` and `educore-r1b-pg-evidence-wkgJZp/evidence.json`, under the same OS temp root. They remain preserved; neither is presented as the final result.
+- Resume snapshot/consolidated preservation evidence: `C:/Users/Admin/AppData/Local/Temp/educore-r1b-native-resume-5UtyYC/`.
+
+### B. Migrations
+
+The existing harness actually ran **Prisma `migrate deploy`** on each admitted fresh cluster, after its rollback/preflight tests. No manual pre-deploy or migration-history edits were used.
+
+| Verification | Final native result |
+|---|---|
+| `202610190001_r1a_baseline` | **PASS** — history row finished, `rolled_back_at = NULL` |
+| `202610190002_r1b_integrity` | **PASS** — history row finished, `rolled_back_at = NULL` |
+| History/catalog | **PASS T36/T40** — two completed migrations; 62 domain tables + history; `timezone_frozen_at`; monthly `bp_month_shape_ck`; 13 enabled trigger attachments |
+| Function/security catalog | **PASS T31/T32** — eight functions, correct definer/invoker attributes, VOLATILE/search_path/owner, no PUBLIC EXECUTE; guard owner NOLOGIN/non-superuser/non-CREATEROLE/non-BYPASSRLS; no InvoiceLine UPDATE privilege |
+| Security companion | Applied successfully; ordinary API/worker identities denied protected raw writes, DDL, TRUNCATE, private helpers and guard-owner SET ROLE |
+| R1a regressions | **PASS T02/T08/T40** — mapped composite FKs, Restrict actions, MATCH SIMPLE, candidate keys/indexes and optional finalization behavior tested |
+| Legacy/failure recovery | **PASS T38/T39** — invalid legacy adoption refused; exact baseline/R1b DDL with injected failure rolled back, then fresh deploy succeeded; immutable evidence preserved |
+
+Original migration SHA256 values remain unchanged: baseline `c134fc7e71cc102236ee2c7c8e386f17467ef65d6050e3c7e75147413de37b20`; R1b `028fb6ffe8c05aed978a44da980df764020be94b7c20a296dff69a91f440bb76`. T39 verifies injected transactional DDL rollback followed by successful Prisma deployment, not every failed-Prisma-history repair scenario on an existing database. Populated valid adoption remains T37, not implied by fresh deployment.
+
+### C. Test Results
+
+Final native invocation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/schema-integrity/start-r1b-native.ps1 -RunTests`, which calls the existing `pnpm.cmd --dir apps/api test:schema-integrity`. **39 PASS, 0 FAIL, 3 skipped by the runner**, classified explicitly below. No mandatory DB test was skipped.
+
+| Test | Final status | Actual coverage / limitation |
+|---|---|---|
+| R1B-T01 | PASS | Correct ownership and DB-derived source evidence |
+| R1B-T02 | PASS | Wrong-student mapped composite FK rejections |
+| R1B-T03 | PASS | Forged JSON cannot admit a wrong-month source |
+| R1B-T04 | PASS | Six-digit microsecond source; exclusive next-month boundary |
+| R1B-T05 | PASS | Overnight session belongs to local start month only |
+| R1B-T06 | PASS | Tenant-local attribution despite UTC/SQL timezone differences |
+| R1B-T07 | PASS | Cancelled zero line without fabricated attendance |
+| R1B-T08 | PASS | Real Prisma nested create/connect, unsafe disconnect rejection/rollback, safe scalar unlink and InvoiceLine nested connects; restriction in E |
+| R1B-T09 | PASS | Reconnect/source overwrite rejected; DRAFT label preserves protected row |
+| R1B-T10 | PASS | Same/cross-month billed reschedule rejected |
+| R1B-T11 | PASS | Allowed unused future edit; ordinary past edit rejected |
+| R1B-T12 | PASS | Invoice/Run identity and used input immutable |
+| R1B-T13 | PASS | Month shape/infinity/inverse bounds checks |
+| R1B-T14 | PASS | Used participant identity/enrollment/removal/delete guards |
+| R1B-T15 | PASS | Enrollment child and inverse guards |
+| R1B-T16 | PASS | Class/course source lineage guards |
+| R1B-T17 | PASS | Issued header/line/claim immutable, including cancellation/reason rejection |
+| R1B-T18 | PASS | Four first-source boundaries and rollback |
+| R1B-T19 | PASS | Invalid zone/Series mismatch/manual marker denied |
+| R1B-T20 | PASS | Sticky marker after last-source deletion; no Ops bypass |
+| R1B-T21 | PASS | Billed attendance/finalization facts frozen; allowed metadata edits |
+| R1B-T22 | PASS | Line/reschedule race, both winners and commit/rollback |
+| R1B-T23 | PASS | Child/parent owner race, both orders and rollback |
+| R1B-T24 | PASS | First-source/timezone race, both winners and rollback |
+| R1B-T25 | PASS | Permission/scope revoke vs authorized audited effect |
+| R1B-T26 | PASS | Global disable, membership attach, last-Manager races |
+| R1B-T27 | PASS | Independent tenants proceed without global serialization |
+| R1B-T28 | PASS | Observed deadlock, lock timeout, rollback, bounded retry, unsupported isolation rejection |
+| R1B-T29 | PASS | Fresh actual permission/session/scope rows, not an authorization boolean mock |
+| R1B-T30 | PASS | Cross-tenant command/composite source denial |
+| R1B-T31 | PASS | Ordinary runtime-role privilege boundary |
+| R1B-T32 | PASS | Function/owner/ACL/search_path and temporary-table shadow checks |
+| R1B-T33 | PASS | DB namespace replaces forgery; non-object JSON rejected |
+| R1B-T34 | PASS | Effect/audit/source failure atomic rollback |
+| R1B-T35 | PASS | Withheld COMMIT reply, durable lookup and single effect; not every TCP failure window |
+| R1B-T36 | PASS | Actual Prisma migration history/catalog |
+| R1B-T37 | BLOCKED — requires reviewed legacy adoption | Valid populated-target adoption compatibility deferred; no fabricated backfill |
+| R1B-T38 | PASS | Legacy rejection/precheck preserves immutable evidence |
+| R1B-T39 | PASS | Injected DDL rollback then successful deploy |
+| R1B-T40 | PASS | R1a keys/actions/indexes, CHECK and 13 enabled guards |
+| R1B-T41 | DEFERRED TO RUNTIME | Authenticated NestJS domain mutations not implemented here |
+| R1B-T42 | NOT RUN | Independent restore/tzdata upgrade not exercised |
+
+Available checks were also executed: Prisma validate/generate **PASS**; TypeScript `tsc --noEmit` and Nest build **PASS**; offline **14 PASS**, final WASM **15 PASS**, scaffold **1 PASS**; targeted oxlint/type-aware and Prettier **PASS**. Final logical inventory across those suites: **69 PASS, 0 FAIL, 1 BLOCKED, 1 NOT RUN, 1 DEFERRED TO RUNTIME**. Repeated earlier runs are not added to this count. The offline suite was rerun after the initial transport fixes; final timestamp transport was then covered by native T04 and the rerun WASM suite. Informational Vite plugin notices remain unrelated.
+
+### D. Concurrency Evidence
+
+- Final `evidence.json` records **32 race entries**, all with `observedWait: true`, using **64 distinct participant backend PIDs**. Each race uses two independent max-one-connection clients plus a separate observer querying `pg_blocking_pids`; these are actual backend waits, not a delay/mock.
+- Example line-first race: PIDs `120/121`, commit winner ⇒ first succeeds, second rejected `23514`; rollback counterpart `122/123` ⇒ both allowed after rollback. Reverse-winner cases and parent/source/zone/revoke variants also pass final-state assertions.
+- Entries include four membership-attach races and four last-Manager races, varying first actor/commit/rollback. Current authorization is read after User/Tenant locks; denial `42501` occurs where the committed revoke requires it. Different tenants proceed independently in T27.
+- T28 additionally observes a real deadlock wait edge and exactly one `40P01` victim, verifies `55P03` lock timeout/rollback, rejects unsupported isolation with `25000`, and completes the bounded retry with exactly one resulting line. These assertions passed; individual T28 SQLSTATE events are asserted by the test rather than stored as separate race entries.
+- This proves the authored R1b protocols on PostgreSQL 16.15 in the disposable environment. It is not a throughput benchmark, production lock-budget validation or evidence that future runtime commands already follow the protocol.
+
+### E. Errors & Fixes
+
+| Observed failure | Root cause and minimal correction | Final evidence |
+|---|---|---|
+| Docker first pull interrupted by `NativeCommandError` | Windows PowerShell `Stop` treated native stderr progress as failure. Setup locally captures stderr and judges the actual exit code, restoring the prior error preference | Fresh container provisioning/admission and complete suite exit 0 |
+| First native run: 22 failures, 17 passes | Most line fixtures reached JSONB as a JSON string: postgres.js serialized the already serialized fixture again. Test-only `put` now uses explicit `text::jsonb` transport and serializes object inputs once | Valid object and rejected array/forged-evidence cases pass; SQL guard unchanged |
+| T13 `RangeError: Invalid time value` | Driver attempted JS Date serialization of PostgreSQL date `infinity`; fixture now sends text cast to date so the real DB CHECK rejects it | T13 PASS with original expected SQLSTATE/constraint |
+| Second run: T04 only failure, `.999999` became `.999000` | Driver converted timestamp strings through millisecond JS Date. Fixture now sends timestamp text cast by PostgreSQL, retaining all six digits; Date objects explicitly use ISO text | Final T04 PASS with original exact microsecond expectation; no weakened boundary |
+| T08 nested `disconnect` rejected with `23514: Attendance identity is immutable` | Prisma 7.10.1 attempts to clear shared required FK identity fields. R1a report §5 already marked this query-engine behavior unproven; the old harness assumed success. Native test now proves rejection/transaction rollback and verifies the required columns/old finalization remain, then clears **only** nullable `finalizationId` in a fresh current-auth command transaction | T08 PASS; safe optional unlink succeeds and tenant/session remain; billed unlink still rejected in T21 |
+
+**Compatibility restriction:** direct `AttendanceRecord.finalization.disconnect` is **not supported** with the current generated client/composite relation. A trusted authorized command must use the verified scalar-only unlink for an unused record; never expose unchecked update DTOs or make required tenant/session nullable. T08 passing is not a claim that the convenience nested disconnect succeeded. The corrected test enforces the unchanged identity/optional-unlink business contract; no trigger/FK was disabled, expected data-integrity rejection removed or new business transition approved. This runtime integration restriction is documented in the test README and must carry into the future Attendance implementation/review.
+
+Known integration risks remain bounded:
+
+- **Cluster roles:** creation/ownership/ACL passed with a dedicated cluster administrator. Managed deployment still needs a reviewed privileged migrator/operator capable of role setup; application login must not receive those rights. No dynamic role framework or production account change.
+- **ISSUED → CANCELLED:** remains rejected and tested. Controlled R2-B/R2-C correction/cancellation must be implemented separately; no opening of issued edits here.
+- **`reason_code`:** DRAFT metadata change preserves every other protected line field except `updated_at`; issued reason edits fail. Pricing/eligibility/month must not depend on this mutable label. No audit framework added.
+
+All fixes are confined to setup/test transport and the verified client usage restriction. **No schema, migration, security SQL or backend business implementation was changed in this follow-up.**
+
+### F. Remaining Blockers / Limits
+
+- Native tooling blocker is resolved; no additional PostgreSQL installation is needed while this Docker engine is available.
+- T37 remains blocked for **valid populated-target adoption** until reviewed evidence/migration exists. This does not block fresh-database R1b development, and does not establish whether any real deployment contains business data.
+- T41 remains deferred until authenticated NestJS domain mutations exist. Test-only current-auth adapters/NOLOGIN profiles are not runtime login mapping or an implemented HTTP authorization gateway.
+- T42 remains NOT RUN: the fresh migration suite does not perform an independent backup restore or tzdata upgrade. The Docker image provides PostgreSQL utilities, but their presence does not establish restore/upgrade correctness; no production backup action or package/tzdata transition was attempted.
+- Safe scalar-only unlink is mandatory for the current Prisma relation; nested disconnect remains intentionally rejected. Managed-host permissions, populated rollout/adoption, production performance, real runtime writers and complete network-failure recovery require their own evidence.
+
+### G. R1b Gate Decision
+
+| Gate | Latest result |
+|---|---|
+| Minimal R1b design | Existing explicit owner authorization; no new APPROVED decision/register edits |
+| Schema implemented/validated | **PASS**, preserved 62 models/28 enums and original schema hash |
+| PostgreSQL migrations applied/tested | **PASS on fresh PostgreSQL 16.15 cluster** |
+| Mandatory R1b integrity/timezone/Prisma/privilege/concurrency | **PASS 39/39**, with explicit nested-disconnect restriction and verified scalar unlink |
+| Valid populated adoption / independent restore/tzdata | Target-specific BLOCKED / NOT RUN; not fresh-gate passes |
+| Runtime feature ready | **DEFERRED TO RUNTIME** |
+
+**R1B POSTGRESQL VERIFIED — READY FOR R2-A REVIEW.** This closes the native verification blocker for the approved fresh-cluster R1b subset. **H-04 remains OPEN** for broader pricing/eligibility/confirmed-source/completeness and ISSUE/recompute lifecycle work; runtime is not READY.
+
+### H. R2-A Readiness
+
+The R1b database prerequisite is now supported by actual native migration/catalog/R1a regression/period/timezone/parent/security/concurrency evidence. **R2-A may proceed to owner technical review**, carrying the scalar-unlink integration restriction, current-auth/lock protocol, managed-role deployment limit and immutable issued/cancellation boundary. Existing G/recompute/source projection/CAS/pricing/completeness decisions still require their own sign-off and implementation authorization. T37 is relevant only to a populated target. No R2-A/B/C/D code, schema or migration was started automatically.
+
+### I. Git Preservation
+
+- Resume baseline HEAD/branch: `91f7f1a9b2e576aadcd746856ef15a00cfb14872`, `feat/prisma-p0-schema`; existing index empty. Snapshot includes **102 existing files**, the pre-existing unstaged patch, staged patch and full report before this follow-up.
+- Only five files differ from that resume snapshot: setup PowerShell, README, native test T08, test `support.ts`, and this append-only report. **97/102 existing files remain byte-identical**, no file removed/new file added during the follow-up. Earlier WASM/T09/T17 changes are preserved; their files are not reset to HEAD.
+- Relative to current Git HEAD, five tracked files are modified (README, WASM smoke test, native test, support, report) and the already-untracked setup script remains untracked. New script still needs owner review before Git.
+- Schema SHA256 remains `a21a016a08a527c156805f1da98aca64d9f1645521fd01f5c4cb0949636ee565`; migrations/security scripts/package/lockfiles and Requirements/design/API/register/R1a report unchanged. Historical report prefix before this follow-up is byte-identical. Generated outputs remain ignored.
+- HEAD/branch/index unchanged during the follow-up; no stage/commit/push/reset/branch/PR/deploy. PostgreSQL writes were limited to the admitted task-owned disposable clusters. Failed/final containers and sanitized evidence remain available for review; no automatic deletion.
+
+Stop after this report and preservation checks. No further software installation is required for this verified Docker-backed path; no automatic R2 continuation.

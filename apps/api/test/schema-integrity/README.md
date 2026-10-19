@@ -37,4 +37,20 @@ Two-connection tests use an acquired-lock barrier and a third observer reading `
 
 Evidence is written to a new OS temporary directory. Native T08 uses the real generated Prisma client with PrismaPg, runs nested create/connect/disconnect and InvoiceLine nested connects inside User-before-Tenant transactions, and reads current authorization after locks. This test still requires the disposable server; TS compatibility and WASM SQL behavior alone do not prove it passed. T37 reviewed legacy upgrade, T41 real runtime, and T42 backup/tzdata upgrade are explicitly not claimed by this harness. No P-gate PASS may be inferred from skipped or missing mandatory evidence.
 
+Prisma 7.10.1 compatibility restriction, verified by native T08: `AttendanceRecord.finalization.disconnect` attempts to clear shared required identity columns and is rejected (`23514`); the transaction retains the original finalization/tenant/session. A trusted authorized command must unlink an unused finalization with `data: { finalizationId: null }`, inside the same User-before-Tenant transaction, preserving required tenant/session fields. The existing history guard still rejects this unlink for billed attendance. Do not expose generic nested disconnect or unchecked update payloads in an API, and do not make shared identity columns nullable to accommodate the client. T08 proves rejection/rollback plus this safe scalar unlink, not successful generic nested disconnect.
+
 After review, cleanup is the owner's explicit disposal of the dedicated test cluster. No cleanup command against an existing data directory is provided here.
+
+## Windows: prepare a fresh Docker test cluster
+
+Install/start **Docker Desktop with a local Linux-container engine** separately if it is unavailable. This route does not require a separate Windows PostgreSQL installation. Alternatively, provision a dedicated native PostgreSQL 16 cluster and follow the safety admission above; Docker is then unnecessary.
+
+From repository root, once Docker is available:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/schema-integrity/start-r1b-native.ps1 -RunTests
+```
+
+The execution-policy option applies only to this child process. The script does not install software or change machine policy. It pins a local Docker context, starts a uniquely named `postgres:16` container with fresh storage and a dynamically selected loopback-only port, verifies ownership and an empty PostgreSQL 16 catalog, then passes a private random credential to the existing harness. First use may download the official image. It never reads `DATABASE_URL`, reuses a cluster, or runs manual migrations before the harness.
+
+Each full run creates a new cluster. Containers/anonymous volumes are deliberately retained for inspection; the script does not reset or delete resources. Sanitized `environment.json` is saved in a new OS temporary directory; native test evidence is saved by the existing harness. No password/connection URL is written by the setup script. Review the actual test statuses and evidence before declaring the native gate passed. Without Docker the script fails before creating resources or setting admission flags.

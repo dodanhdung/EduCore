@@ -64,6 +64,37 @@ afterAll(async () => {
 });
 
 describe('R1b PostgreSQL WASM smoke ONLY (no independent backends)', () => {
+  it('treats draft reason_code as metadata while preserving evidence and freezing it after issue', async () => {
+    const f = await seed(q);
+    const l = await line(q, f);
+    const protectedRow = () =>
+      db.query(
+        "SELECT to_jsonb(l)-ARRAY['updated_at','reason_code'] AS evidence FROM invoice_lines l WHERE id=$1",
+        [l],
+      );
+    const before = (await protectedRow()).rows;
+    await db.query(
+      "UPDATE invoice_lines SET reason_code='DRAFT_NOTE',updated_at=clock_timestamp() WHERE id=$1",
+      [l],
+    );
+    expect((await protectedRow()).rows).toEqual(before);
+    await db.query(
+      "UPDATE invoices SET status='ISSUED',issued_at=clock_timestamp(),invoice_number='REASON-TEST' WHERE id=$1",
+      [f.invoice],
+    );
+    await rejected(() =>
+      db.query(
+        "UPDATE invoice_lines SET reason_code='AFTER_ISSUE' WHERE id=$1",
+        [l],
+      ),
+    );
+    await rejected(() =>
+      db.query("UPDATE invoices SET status='CANCELLED' WHERE id=$1", [
+        f.invoice,
+      ]),
+    );
+    expect((await protectedRow()).rows).toEqual(before);
+  });
   it('executes current-auth SQL with stored grants/scopes and rejects revoked/cross-tenant access', async () => {
     const f = await seed(q),
       g = await seed(q);

@@ -483,15 +483,39 @@ describe('R1b integrity on actual disposable PostgreSQL', () => {
           },
         }),
       );
+      // R1a explicitly left this shared-required-column query-engine behavior
+      // unproven. Prisma 7.10.1 nulls tenant_id too: the existing guard must
+      // reject it. Never relax identities to make this convenience API work.
+      await expect(
+        prismaCommand((tx) =>
+          tx.attendanceRecord.update({
+            where: { id: record.id },
+            data: { finalization: { disconnect: true } },
+          }),
+        ),
+      ).rejects.toThrow(/23514[\s\S]*Attendance identity is immutable/);
+      const retained = await prisma.attendanceRecord.findUniqueOrThrow({
+        where: { id: record.id },
+      });
+      expect(retained.finalizationId).toBe(own);
+      expect(retained.tenantId).toBe(f.tenant);
+      expect(retained.sessionId).toBe(f.session);
+      // Trusted command clears only the nullable FK scalar, inside the same
+      // current-auth/lock transaction. This is not exposed as an HTTP DTO.
       const disconnected = await prismaCommand((tx) =>
         tx.attendanceRecord.update({
           where: { id: record.id },
-          data: { finalization: { disconnect: true } },
+          data: { finalizationId: null },
         }),
       );
       expect(disconnected.finalizationId).toBeNull();
       expect(disconnected.sessionId).toBe(f.session);
       expect(disconnected.tenantId).toBe(f.tenant);
+      evidence.prismaDisconnect = {
+        nestedDisconnect: 'REJECTED 23514; required identity retained',
+        scalarUnlink: 'PASS; only finalizationId cleared under command locks',
+        runtimeRestriction: 'Do not expose nested disconnect for this relation',
+      };
       await observer.unsafe(
         "UPDATE class_sessions SET status='CANCELLED' WHERE id=$1",
         [f.session],
@@ -561,10 +585,17 @@ describe('R1b integrity on actual disposable PostgreSQL', () => {
         "UPDATE public.invoice_lines SET source_snapshot_json='{}' WHERE id=$1",
         [l],
       );
+      const protectedRow = () =>
+        q.unsafe(
+          "SELECT to_jsonb(l)-ARRAY['updated_at','reason_code'] AS evidence FROM public.invoice_lines l WHERE id=$1",
+          [l],
+        );
+      const before = await protectedRow();
       await q.unsafe(
         "UPDATE public.invoice_lines SET reason_code='METADATA',updated_at=clock_timestamp() WHERE id=$1",
         [l],
       );
+      expect(await protectedRow()).toEqual(before);
     },
   );
   testCase(
@@ -738,6 +769,16 @@ describe('R1b integrity on actual disposable PostgreSQL', () => {
       const f = await seed(q);
       const l = await line(q, f);
       const claim = await issued(q, f, l);
+      await rejected(
+        q,
+        "UPDATE public.invoices SET status='CANCELLED' WHERE id=$1",
+        [f.invoice],
+      );
+      await rejected(
+        q,
+        "UPDATE public.invoice_lines SET reason_code='AFTER_ISSUE' WHERE id=$1",
+        [l],
+      );
       await rejected(
         q,
         "UPDATE public.invoices SET status='DRAFT',issued_at=NULL,invoice_number=NULL WHERE id=$1",

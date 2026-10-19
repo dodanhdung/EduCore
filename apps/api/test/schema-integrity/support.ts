@@ -111,15 +111,36 @@ export async function put(
     throw new Error('Fixture identifier');
   const row: Record<string, unknown> = { id: id(), ...values };
   const cols = await q.unsafe(
-    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1",
+    "SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1",
     [table],
   );
   if (cols.some((c) => c.column_name === 'updated_at'))
     row.updated_at ??= new Date('2090-01-01T00:00:00Z');
   const keys = Object.keys(row);
+  // Force textual transport for serialized JSON and date edge cases. Otherwise
+  // postgres.js JSON-stringifies an already serialized fixture again, tries
+  // to turn date 'infinity' into a JS Date, and truncates timestamp microseconds.
+  const typeOf = (key: string) =>
+    cols.find((c) => c.column_name === key)?.data_type;
+  const placeholder = (key: string, index: number) => {
+    const parameter = '$' + (index + 1);
+    if (typeOf(key) === 'jsonb') return parameter + '::text::jsonb';
+    if (typeOf(key) === 'date') return parameter + '::text::date';
+    if (typeOf(key) === 'timestamp with time zone')
+      return parameter + '::text::timestamptz';
+    if (typeOf(key) === 'timestamp without time zone')
+      return parameter + '::text::timestamp';
+    return parameter;
+  };
+  const parameters = keys.map((key) => {
+    const value = row[key];
+    if (typeOf(key) === 'jsonb' && value !== null && typeof value !== 'string')
+      return JSON.stringify(value);
+    return value instanceof Date ? value.toISOString() : value;
+  });
   await q.unsafe(
-    `INSERT INTO public."${table}" (${keys.map((k) => '"' + k + '"').join(',')}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')})`,
-    Object.values(row) as postgres.ParameterOrJSON<never>[],
+    `INSERT INTO public."${table}" (${keys.map((k) => '"' + k + '"').join(',')}) VALUES (${keys.map(placeholder).join(',')})`,
+    parameters as postgres.ParameterOrJSON<never>[],
   );
   return row.id as string;
 }
