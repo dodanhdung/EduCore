@@ -262,13 +262,10 @@ async function fixture(
     start: options.start ?? '2025-09-20T10:00:00Z',
     zone: options.zone,
     sessionStatus: options.cancelled ? 'CANCELLED' : 'DRAFT',
+    enrollmentFrom: '2020-01-01T00:00:00Z',
   });
   // Synthetic original enrollment/price evidence precedes the old test session.
   // This is a fresh test dataset, never a historical production backfill.
-  await admin.unsafe(
-    "UPDATE enrollments SET effective_from='2020-01-01' WHERE id=$1",
-    [f.enrollment],
-  );
   const policy = await put(admin as unknown as Query, 'policy_versions', {
     tenant_id: f.tenant,
     version_code: 'R2_CURRENT',
@@ -1226,7 +1223,8 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
   native(
     'G14 two students share session, distinct invoice identities',
     async () => {
-      const c = await fixture();
+      // Construct the complete original roster before sealing finalization.
+      const c = await fixture({ missing: true });
       await put(admin as unknown as Query, 'session_participants', {
         tenant_id: c.f.tenant,
         session_id: c.f.session,
@@ -1247,12 +1245,27 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
           [c.f.session, c.f.student2],
         )
       )[0].id as string;
-      const af = (
-        await admin.unsafe(
-          'SELECT id FROM attendance_finalizations WHERE session_id=$1',
-          [c.f.session],
-        )
-      )[0].id as string;
+      const af = await put(
+        admin as unknown as Query,
+        'attendance_finalizations',
+        {
+          tenant_id: c.f.tenant,
+          session_id: c.f.session,
+          confirmed_by_membership_id: c.f.member,
+          confirmed_at: '2025-10-01',
+          revision: 1,
+        },
+      );
+      await put(admin as unknown as Query, 'attendance_records', {
+        tenant_id: c.f.tenant,
+        session_id: c.f.session,
+        participant_id: c.f.participant,
+        finalization_id: af,
+        attendance_status: 'ATTENDED',
+        recorded_by_membership_id: c.f.member,
+        recorded_at: '2025-10-01',
+        revision: 1,
+      });
       await put(admin as unknown as Query, 'attendance_records', {
         tenant_id: c.f.tenant,
         session_id: c.f.session,
@@ -1263,6 +1276,10 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
         recorded_at: '2025-10-01',
         revision: 1,
       });
+      await admin.unsafe(
+        "UPDATE class_sessions SET status='COMPLETED' WHERE id=$1",
+        [c.f.session],
+      );
       const a = await draft(c),
         b = await c.generation.initial(
           c.f.tenant,
@@ -2330,7 +2347,15 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
       const migrations = await admin.unsafe(
         'SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL',
       );
-      expect(migrations.length).toBe(4);
+      expect(
+        migrations
+          .map((m) => m.migration_name)
+          .sort((a, b) => String(a).localeCompare(String(b))),
+      ).toEqual(
+        readdirSync(resolve('prisma/migrations'))
+          .filter((n) => /^\d{12}_/.test(n))
+          .sort((a, b) => a.localeCompare(b)),
+      );
       const invalid = await admin.unsafe(
         'SELECT w.id FROM wallet_accounts w WHERE balance_vnd<>(SELECT COALESCE(sum(amount_vnd),0) FROM wallet_transactions x WHERE x.tenant_id=w.tenant_id AND x.wallet_id=w.id)',
       );

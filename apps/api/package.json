@@ -25,7 +25,8 @@
     "test:schema-integrity": "vitest run --config ./vitest.config.r1b.ts",
     "test:r1b:concurrency": "vitest run --config ./vitest.config.r1b.ts -t \"R1b independent-connection protocols\"",
     "test:r2:native": "vitest run --config ./vitest.config.r2.ts",
-    "test:r2:unit": "vitest run test/r2/calculator.spec.ts"
+    "test:r2:unit": "vitest run test/r2/calculator.spec.ts",
+    "test:r3:native": "vitest run --config ./vitest.config.r3.ts"
   },
   "dependencies": {
     "@prisma/client": "7.10.1",

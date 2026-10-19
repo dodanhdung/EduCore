@@ -276,6 +276,7 @@ model PolicyVersion {
   automationJobs   AutomationJob[]
   auditLogs        AuditLog[]
   generations      BillingRunGeneration[]
+  absenceRequests  AbsenceRequest[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, versionCode])
@@ -1011,6 +1012,8 @@ model AbsenceRequest {
   approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
   decidedAt              DateTime? @map("decided_at") @db.Timestamptz(6)
   approvalRequestId      String?   @map("approval_request_id") @db.Uuid
+  policyVersionId        String?   @map("policy_version_id") @db.Uuid
+  decisionReason         String?   @map("decision_reason") @db.Text
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1019,6 +1022,7 @@ model AbsenceRequest {
   requester       TenantMembership   @relation("AbsenceRequester", fields: [tenantId, requesterMembershipId], references: [tenantId, id], onDelete: Restrict)
   approvedBy      TenantMembership?  @relation("AbsenceApprover", fields: [tenantId, approvedByMembershipId], references: [tenantId, id], onDelete: Restrict)
   approvalRequest ApprovalRequest?   @relation("AbsenceApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion   PolicyVersion?     @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict, map: "r3_absence_policy_fk")
 
   @@unique([tenantId, id])
   @@index([tenantId, participantId, status])
@@ -1090,6 +1094,9 @@ model AttendanceCorrection {
   attendanceId            String           @map("attendance_id") @db.Uuid
   oldStatus               AttendanceStatus @map("old_status")
   newStatus               AttendanceStatus @map("new_status")
+  oldRevision             Int              @map("old_revision")
+  newRevision             Int              @map("new_revision")
+  previousRecordSnapshot  Json             @map("previous_record_snapshot") @db.JsonB
   reason                  String           @db.Text
   requestedByMembershipId String           @map("requested_by_membership_id") @db.Uuid
   approvedByMembershipId  String?          @map("approved_by_membership_id") @db.Uuid
@@ -1104,6 +1111,7 @@ model AttendanceCorrection {
   approvalRequest ApprovalRequest?  @relation("AttendanceCorrectionApproval", fields: [tenantId, approvalRequestId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
+  @@unique([tenantId, attendanceId, newRevision], map: "r3_correction_revision_uq")
   @@index([tenantId, attendanceId, correctedAt])
   @@index([tenantId, requestedByMembershipId])
   @@index([tenantId, approvedByMembershipId])
