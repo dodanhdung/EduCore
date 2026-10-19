@@ -176,6 +176,7 @@ export async function seed(
     start?: string;
     zone?: string;
     firstSource?: 'series' | 'session' | 'period';
+    sessionStatus?: 'DRAFT' | 'CANCELLED';
   } = {},
 ): Promise<Fixture> {
   const start = opts.start ?? '2099-09-30T16:30:00.000000Z';
@@ -329,7 +330,7 @@ export async function seed(
     delivery_mode: 'ONLINE',
     starts_at: start,
     ends_at: new Date(new Date(start).getTime() + 3600000).toISOString(),
-    status: 'DRAFT',
+    status: opts.sessionStatus ?? 'DRAFT',
     revision: 1,
     policy_version_id: policy,
   });

@@ -105,6 +105,7 @@ enum InvoiceAdjustmentStatus {
 enum PaymentMethod {
   CASH
   BANK_TRANSFER
+  WALLET
 }
 
 enum PaymentExcessResolutionStatus {
@@ -245,6 +246,10 @@ model Tenant {
   outboxEvents                 OutboxEvent[]
   notifications                Notification[]
   auditLogs                    AuditLog[]
+  billingGenerations           BillingRunGeneration[]
+  walletAccounts               WalletAccount[]
+  walletTransactions           WalletTransaction[]
+  invoiceCounters              InvoiceNumberCounter[]
 
   @@map("tenants")
 }
@@ -261,8 +266,8 @@ model PolicyVersion {
   createdByMembershipId String?   @map("created_by_membership_id") @db.Uuid
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdBy        TenantMembership? @relation("PolicyVersionCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy        TenantMembership?      @relation("PolicyVersionCreator", fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
   classSessions    ClassSession[]
   priceRules       PriceRule[]
   billingRuns      BillingRun[]
@@ -270,6 +275,7 @@ model PolicyVersion {
   approvalRequests ApprovalRequest[]
   automationJobs   AutomationJob[]
   auditLogs        AuditLog[]
+  generations      BillingRunGeneration[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, versionCode])
@@ -318,8 +324,9 @@ model AuthSession {
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
   lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
 
-  user         User    @relation(fields: [userId], references: [id], onDelete: Restrict)
-  activeTenant Tenant? @relation(fields: [activeTenantId], references: [id], onDelete: Restrict)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  activeTenant        Tenant?              @relation(fields: [activeTenantId], references: [id], onDelete: Restrict)
+  r2PrincipalBindings R2PrincipalBinding[]
 
   @@index([userId, revokedAt, expiresAt])
   @@index([activeTenantId])
@@ -387,6 +394,8 @@ model TenantMembership {
   automationJobsActed            AutomationJob[]               @relation("JobActor")
   notificationsReceived          Notification[]                @relation("NotificationRecipient")
   auditLogsActed                 AuditLog[]                    @relation("AuditMembershipActor")
+  generations                    BillingRunGeneration[]
+  walletTransactions             WalletTransaction[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, userId])
@@ -538,6 +547,8 @@ model StudentProfile {
   billingRuns           BillingRun[]
   invoices              Invoice[]
   assignmentRecipients  AssignmentRecipient[]
+  billingGenerations    BillingRunGeneration[]
+  walletAccount         WalletAccount?
 
   @@unique([tenantId, id])
   @@unique([tenantId, studentCode])
@@ -1141,9 +1152,10 @@ model BillingPeriod {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   billingRuns BillingRun[]
   invoices    Invoice[]
+  generations BillingRunGeneration[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, monthStart])
@@ -1163,15 +1175,18 @@ model BillingRun {
   computedAt              DateTime? @map("computed_at") @db.Timestamptz(6)
   requestedByMembershipId String?   @map("requested_by_membership_id") @db.Uuid
   errorReason             String?   @map("error_reason") @db.Text
+  currentGenerationId     String?   @map("current_generation_id") @db.Uuid
   createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  period        BillingPeriod     @relation(fields: [tenantId, periodId], references: [tenantId, id], onDelete: Restrict)
-  student       StudentProfile    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
-  policyVersion PolicyVersion     @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
-  requestedBy   TenantMembership? @relation("BillingRunRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
-  invoice       Invoice?
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  period            BillingPeriod          @relation(fields: [tenantId, periodId], references: [tenantId, id], onDelete: Restrict)
+  student           StudentProfile         @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  policyVersion     PolicyVersion          @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  requestedBy       TenantMembership?      @relation("BillingRunRequester", fields: [tenantId, requestedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  invoice           Invoice?
+  generations       BillingRunGeneration[] @relation("RunGenerations")
+  currentGeneration BillingRunGeneration?  @relation("AppliedGeneration", fields: [tenantId, id, studentId, periodId, currentGenerationId], references: [tenantId, runId, studentId, periodId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, studentId, periodId])
@@ -1191,6 +1206,7 @@ model Invoice {
   periodId             String        @map("period_id") @db.Uuid
   invoiceNumber        String?       @map("invoice_number") @db.Text
   status               InvoiceStatus
+  financialRevision    BigInt        @default(0) @map("financial_revision") @db.BigInt
   grossVnd             BigInt        @map("gross_vnd") @db.BigInt
   discountVnd          BigInt        @map("discount_vnd") @db.BigInt
   totalVnd             BigInt        @map("total_vnd") @db.BigInt
@@ -1270,7 +1286,7 @@ model InvoiceDiscount {
   kind                 InvoiceDiscountKind
   sequenceNo           Int                 @map("sequence_no")
   rate                 Decimal             @db.Decimal(6, 5)
-  rawDiscountDecimal   Decimal             @map("raw_discount_decimal") @db.Decimal(20, 6)
+  rawDiscountDecimal   Decimal             @map("raw_discount_decimal") @db.Decimal(24, 6)
   evidenceSnapshotJson Json                @map("evidence_snapshot_json") @db.JsonB
   createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1328,6 +1344,7 @@ model InvoiceAdjustment {
   @@unique([tenantId, id])
   @@unique([tenantId, invoiceId, id])
   @@unique([tenantId, operationKey])
+  @@unique([tenantId, approvalRequestId], map: "r2_one_adjustment_root")
   @@index([tenantId, invoiceId, status])
   @@index([tenantId, approvalRequestId])
   @@index([tenantId, appliedByMembershipId])
@@ -1348,11 +1365,12 @@ model Payment {
   idempotencyKey         String        @map("idempotency_key") @db.Text
   createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  invoice    Invoice               @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
-  recordedBy TenantMembership      @relation("PaymentRecorder", fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
-  reversal   PaymentReversal?
-  allocation ReceivableAllocation?
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoice            Invoice                @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy         TenantMembership       @relation("PaymentRecorder", fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  reversal           PaymentReversal?
+  allocations        ReceivableAllocation[]
+  walletTransactions WalletTransaction[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, id, invoiceId])
@@ -1390,23 +1408,25 @@ model PaymentReversal {
 
 // P0 allocations have one mandatory payment source; tuition credits remain P1.
 model ReceivableAllocation {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
-  invoiceId    String   @map("invoice_id") @db.Uuid
-  paymentId    String   @map("payment_id") @db.Uuid
-  amountVnd    BigInt   @map("amount_vnd") @db.BigInt
-  allocatedAt  DateTime @map("allocated_at") @db.Timestamptz(6)
-  operationKey String   @map("operation_key") @db.Text
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                  String             @id @default(uuid()) @db.Uuid
+  tenantId            String             @map("tenant_id") @db.Uuid
+  invoiceId           String             @map("invoice_id") @db.Uuid
+  paymentId           String             @map("payment_id") @db.Uuid
+  amountVnd           BigInt             @map("amount_vnd") @db.BigInt
+  kind                String             @default("PAYMENT") @db.Text
+  walletTransactionId String?            @unique @map("wallet_transaction_id") @db.Uuid
+  walletTransaction   WalletTransaction? @relation(fields: [tenantId, walletTransactionId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  allocatedAt         DateTime           @map("allocated_at") @db.Timestamptz(6)
+  operationKey        String             @map("operation_key") @db.Text
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   invoice Invoice @relation(fields: [tenantId, invoiceId], references: [tenantId, id], onDelete: Restrict)
   payment Payment @relation(fields: [tenantId, paymentId, invoiceId], references: [tenantId, id, invoiceId], onDelete: Restrict)
 
   @@unique([tenantId, id])
-  @@unique([tenantId, paymentId])
-  @@unique([tenantId, paymentId, invoiceId])
   @@unique([tenantId, operationKey])
+  @@unique([tenantId, walletTransactionId])
   @@index([tenantId, invoiceId, allocatedAt])
   @@map("receivable_allocations")
 }
@@ -1665,6 +1685,7 @@ model ApprovalDecision {
   decidedBy       TenantMembership @relation("ApprovalDecider", fields: [tenantId, decidedByMembershipId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
+  @@unique([tenantId, approvalRequestId], map: "r2_one_approval_decision")
   @@index([tenantId, approvalRequestId, decidedAt])
   @@index([tenantId, decidedByMembershipId, decidedAt])
   @@map("approval_decisions")
@@ -1737,6 +1758,7 @@ model IdempotencyRecord {
   status         String    @db.Text
   resultRefType  String?   @map("result_ref_type") @db.Text
   resultRefId    String?   @map("result_ref_id") @db.Uuid
+  resultSnapshot Json?     @map("result_snapshot") @db.JsonB
   expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1835,4 +1857,108 @@ model AuditLog {
   @@index([tenantId, actorMembershipId, createdAt])
   @@index([tenantId, actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+// R2 immutable calculation generations; applied pointer is scoped to the same run.
+model BillingRunGeneration {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  tenantId              String                 @map("tenant_id") @db.Uuid
+  runId                 String                 @map("run_id") @db.Uuid
+  studentId             String                 @map("student_id") @db.Uuid
+  periodId              String                 @map("period_id") @db.Uuid
+  policyVersionId       String                 @map("policy_version_id") @db.Uuid
+  generationNo          Int                    @map("generation_no")
+  baseGenerationId      String?                @map("base_generation_id") @db.Uuid
+  operationKey          String                 @map("operation_key") @db.Text
+  requestHash           String                 @map("request_hash") @db.Text
+  inputHash             String                 @map("input_hash") @db.Text
+  status                String                 @db.Text
+  inputSnapshot         Json                   @map("input_snapshot") @db.JsonB
+  resultSnapshot        Json                   @map("result_snapshot") @db.JsonB
+  reason                String                 @db.Text
+  createdByMembershipId String                 @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  run                   BillingRun             @relation("RunGenerations", map: "r2_generation_run_fk", fields: [tenantId, runId, studentId, periodId], references: [tenantId, id, studentId, periodId], onDelete: Restrict, onUpdate: Restrict)
+  appliedTo             BillingRun[]           @relation("AppliedGeneration")
+  student               StudentProfile         @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  period                BillingPeriod          @relation(fields: [tenantId, periodId], references: [tenantId, id], onDelete: Restrict)
+  policy                PolicyVersion          @relation(fields: [tenantId, policyVersionId], references: [tenantId, id], onDelete: Restrict)
+  createdBy             TenantMembership       @relation(fields: [tenantId, createdByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  base                  BillingRunGeneration?  @relation("GenerationBase", map: "r2_generation_base_fk", fields: [tenantId, runId, studentId, periodId, baseGenerationId], references: [tenantId, runId, studentId, periodId, id], onDelete: Restrict, onUpdate: Restrict)
+  subsequent            BillingRunGeneration[] @relation("GenerationBase")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, runId, studentId, periodId, id])
+  @@unique([tenantId, runId, generationNo])
+  @@unique([tenantId, operationKey])
+  @@map("billing_run_generations")
+}
+
+model WalletAccount {
+  id           String              @id @default(uuid()) @db.Uuid
+  tenantId     String              @map("tenant_id") @db.Uuid
+  studentId    String              @map("student_id") @db.Uuid
+  balanceVnd   BigInt              @default(0) @map("balance_vnd") @db.BigInt
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  student      StudentProfile      @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
+  transactions WalletTransaction[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, studentId])
+  @@map("wallet_accounts")
+}
+
+model WalletTransaction {
+  id                     String                @id @default(uuid()) @db.Uuid
+  tenantId               String                @map("tenant_id") @db.Uuid
+  walletId               String                @map("wallet_id") @db.Uuid
+  kind                   String                @db.Text
+  amountVnd              BigInt                @map("amount_vnd") @db.BigInt
+  sourceKey              String                @map("source_key") @db.Text
+  operationKey           String                @map("operation_key") @db.Text
+  fundingMethod          String?               @map("funding_method") @db.Text
+  receiptReference       String?               @map("receipt_reference") @db.Text
+  paymentId              String?               @map("payment_id") @db.Uuid
+  reversedTopUpId        String?               @map("reversed_top_up_id") @db.Uuid
+  reason                 String                @db.Text
+  evidence               String                @db.Text
+  recordedByMembershipId String                @map("recorded_by_membership_id") @db.Uuid
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  tenant                 Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  wallet                 WalletAccount         @relation(fields: [tenantId, walletId], references: [tenantId, id], onDelete: Restrict)
+  payment                Payment?              @relation(fields: [tenantId, paymentId], references: [tenantId, id], onDelete: Restrict)
+  recordedBy             TenantMembership      @relation(fields: [tenantId, recordedByMembershipId], references: [tenantId, id], onDelete: Restrict)
+  reversedTopUp          WalletTransaction?    @relation("TopUpReversal", fields: [tenantId, reversedTopUpId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversals              WalletTransaction[]   @relation("TopUpReversal")
+  allocation             ReceivableAllocation?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sourceKey])
+  @@unique([tenantId, fundingMethod, receiptReference])
+  @@unique([tenantId, reversedTopUpId])
+  @@index([tenantId, walletId, createdAt])
+  @@map("wallet_transactions")
+}
+
+model InvoiceNumberCounter {
+  tenantId  String @map("tenant_id") @db.Uuid
+  year      Int
+  nextValue BigInt @map("next_value") @db.BigInt
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@id([tenantId, year])
+  @@map("invoice_number_counters")
+}
+
+// Operator-provisioned binding of a dedicated command LOGIN to a verified session.
+// No API writer grants; pooled HTTP authentication integration remains R4.
+model R2PrincipalBinding {
+  databaseRole  String      @id @map("database_role") @db.Text
+  authSessionId String      @map("auth_session_id") @db.Uuid
+  authSession   AuthSession @relation(fields: [authSessionId], references: [id], onDelete: Restrict)
+
+  @@map("r2_principal_bindings")
 }
