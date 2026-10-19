@@ -38,7 +38,7 @@ Prefer `Be Vietnam Pro`; fallback `Inter, system-ui, sans-serif` with full Vietn
 - Content padding 24–32px desktop, 16px mobile; desktop 12-column responsive grid and max content width around 1480px.
 - Spacing scale: `4 / 8 / 12 / 16 / 24 / 32` px; follow 8pt rhythm.
 - Radius: `8px` form/buttons, `12px` cards, `16px` dialogs; borders subtle, shadows very light.
-- Buttons minimum desktop 36–40px high, mobile tap targets at least 44px. Page actions align right on desktop; sticky save/confirm bottom on task-heavy mobile flows.
+- Buttons minimum desktop 36–40px high, mobile tap targets at least 44px. Center every button label horizontally and vertically; center icon-and-label content as a unit. Page actions align right on desktop; sticky save/confirm bottom on task-heavy mobile flows.
 - Lists and tables compact but not cramped, strong column headers, readable row separation, searchable, filterable and paginated where relevant.
 
 ## Components

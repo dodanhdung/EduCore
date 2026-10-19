@@ -19,9 +19,14 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "test:r1b:offline": "vitest run test/schema-integrity/r1b-static.spec.ts",
+    "test:r1b:wasm": "vitest run test/schema-integrity/r1b-wasm-smoke.spec.ts",
+    "test:schema-integrity": "vitest run --config ./vitest.config.r1b.ts",
+    "test:r1b:concurrency": "vitest run --config ./vitest.config.r1b.ts -t \"R1b independent-connection protocols\""
   },
   "dependencies": {
+    "@prisma/client": "7.10.1",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",
@@ -29,6 +34,7 @@
     "rxjs": "^7.8.1"
   },
   "devDependencies": {
+    "prisma": "7.10.1",
     "@nestjs/cli": "^12.0.0",
     "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
@@ -44,6 +50,9 @@
     "supertest": "^7.0.0",
     "typescript": "6.0.3",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "postgres": "3.4.7",
+    "@electric-sql/pglite": "0.4.3",
+    "@prisma/adapter-pg": "7.10.1"
   }
 }

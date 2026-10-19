@@ -37,6 +37,7 @@ Spacing: 4/8/12/16/24/32px increments; body 14–16px; page title 24–30px; min
 |---|---|
 | `AppShell` + `TenantSwitcher` | membership-derived tenants, preserve scope, clear tenant cache on switch |
 | `PageHeader` | title, breadcrumbs, context and one main action |
+| `Button` | Center the visible label horizontally and vertically within every button, including icon-and-text, disabled, desktop and mobile variants. Keep the icon and label group centered as a unit. |
 | `PermissionGate` | hide unavailable action for usability but rely on API 403; show safe forbidden page |
 | `DataTable` | labeled search/filters, pagination, sorting if API supports, empty/loading/errors, keyboard alternatives |
 | `EntityForm` | typed inputs, inline validation, submit pending/disable, server validation messages |

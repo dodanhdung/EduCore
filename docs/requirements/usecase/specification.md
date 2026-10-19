@@ -1,4 +1,7 @@
 # EduCore — Use Case Specifications
+
+**Baseline v1.3 + O-12 amendment · 18/10/2026 · APPROVED business change.** Nguồn: chỉ đạo trực tiếp của chủ dự án ngày 18/10/2026 (`Asia/Ho_Chi_Minh`), Requirements v5 O-12 amendment và [Decision Register](../../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Đồng bộ UC-21/23/24 và AC theo A=A, B=B1, C=C1, D=D; giữ ID/ưu đãi/P0/P1. Không là phê duyệt code, schema hoặc migrations.
+
 ## 1. Mục đích và quy ước
 
 Tài liệu mô tả các tương tác để đạt mục tiêu nghiệp vụ của EduCore, phục vụ thiết kế, lập trình và xây dựng test case. Các ID `UC-01`–`UC-37` được tạo mới cho đặc tả này; không thay thế hoặc đánh số lại US/FR/BR trong nguồn.
@@ -900,12 +903,13 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 1. Người dùng chọn phạm vi áp dụng và nhập đơn giá.
 2. Hệ thống kiểm tra dữ liệu, tenant và thời điểm hiệu lực.
 3. Người có quyền xác nhận lưu; hệ thống ghi dấu vết cấu hình đã áp dụng.
-4. Các khoản tính phí mới sử dụng mức giá có hiệu lực tại thời điểm lập khoản tính phí.
+4. Với từng nguồn buổi học, Backend suy `sourceBusinessDate=local_date(ClassSession.startsAt,timezoneSnapshot)` và `pricingLocalDate=sourceBusinessDate`; chọn PriceRule DATE theo `[effectiveFrom,effectiveTo)` và precedence **SESSION > CLASS > COURSE**. Ngày tạo charge/draft/generation/issue không chọn giá. Lưu bằng chứng rule/target/window/unit price/ngày học/timezone và lineage session/class/course gốc.
 
 **Luồng thay thế và ngoại lệ**
 
 - 2a. Có nhiều mức giá có hiệu lực: chọn theo thứ tự **buổi học → lớp học → khóa học**, ghi căn cứ; nếu cùng mức ưu tiên còn mâu thuẫn thì cần bổ sung/sửa dữ liệu.
 - 4a. Giá mới khác giá hóa đơn đã phát hành: không tính lại hóa đơn cũ; điều chỉnh qua UC-26 nếu được ủy quyền.
+- 2b. Sửa giá lịch sử hoặc backdate làm đổi giá buổi đã bắt đầu: từ chối, giữ snapshot. Publish tariff cho buổi tương lai theo ngày local; DATE không hỗ trợ đổi giá giữa ngày. Thiếu tariff quá khứ không được lấp bằng giá hiện tại/giá 0 hoặc backdate qua luồng thông thường; cần đối soát và phạm vi sửa dữ liệu được duyệt riêng.
 
 **Hậu điều kiện:** Đơn giá có phạm vi và hiệu lực rõ ràng; lịch sử khoản tính phí được bảo toàn. Bảo đảm thất bại theo C-09.
 
@@ -913,6 +917,8 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 - AC-21-01: Không cập nhật hồi tố hóa đơn đã phát hành khi đổi giá.
 - AC-21-02 (P0): Khi đồng thời có giá buổi, lớp, khóa, hệ thống ưu tiên giá theo buổi; giá đã dùng được lưu với khoản tính phí.
+- AC-21-03 (O-12): Buổi 20/09 giá 100.000, tariff 150.000 từ 01/10, draft 02/10 vẫn 100.000; recompute tháng 11 không tự đổi đơn giá buổi đó.
+- AC-21-04 (O-12): Window DATE inclusive start/exclusive end; không dùng giờ client/charge/issue, không override giá; mutation hồi tố bị từ chối. Snapshot mỗi line chứa sourceBusinessDate/pricingLocalDate/timezone/rule/window/unitPrice/tier và source lineage.
 
 <a id="uc-22"></a>
 
@@ -970,11 +976,11 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 **Luồng chính**
 
-1. Hệ thống xác định phạm vi tính phí, mã chống lặp và phiên bản chính sách.
+1. Hệ thống xác định một logical run/invoice mỗi student/tenant/month theo tháng bắt đầu session tại timezone tenant đã freeze (C1). Initial monthly draft chỉ nhận sau kỳ đóng; pin generation G1, key/request hash, calculation policy theo BR-14 và thời điểm admission phục vụ audit.
 2. Hệ thống kiểm tra tính đầy đủ và trạng thái xác nhận điểm danh.
 3. Hệ thống phân loại từng buổi: ATTENDED/UNEXCUSED = 1; EXCUSED/trung tâm hủy = 0; áp dụng các quy tắc P1 nếu đã triển khai.
-4. Hệ thống áp dụng đơn giá và giảm giá hợp lệ; trình bày chi tiết số buổi, căn cứ, số tiền và điều chỉnh/tín dụng nếu có chính sách đã chốt.
-5. Hệ thống lưu dự thảo, phiên bản chính sách và dấu vết tính toán.
+4. Hệ thống resolve giá từng buổi theo local session-start date như UC-21, dùng session/class/course gốc kể cả đã chuyển lớp; áp dụng ưu đãi hợp lệ theo calculation policy đã pin. Một invoice có thể có nhiều mức giá trong tháng; trình bày căn cứ từng line và làm tròn HALF_UP một lần cuối, giữ phạm vi ưu đãi P0/P1.
+5. Hệ thống lưu snapshot nguồn/revisions, ngày học/ngày giá/timezone, PriceRule/window/unitPrice/tier, policy và kết quả bất biến của generation; apply vào cùng draft với current generation/history/audit atomic. Thiếu nguồn/giá không tạo draft hoàn tất.
 6. Hệ thống trả dự thảo để người có quyền kiểm tra; phát hành qua UC-24.
 
 **Luồng thay thế và ngoại lệ**
@@ -984,6 +990,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - 3b. P1: buổi trong khoảng bảo lưu không phát sinh số buổi tính phí.
 - 5a. Lỗi tạm thời: xử lý theo UC-37, retry cùng khóa không sinh thêm hóa đơn.
 - 5b. Đã có hóa đơn phát hành liên quan: không ghi đè; sai lệch phải qua UC-26.
+- 5c. Retry cùng key/hash giữ G1/captured inputs/policy/kết quả; không đọc tariff hiện hành để reprice. Cùng key khác hash bị conflict; replay G1 sau G2 không ghi G1 trở lại current invoice. Kiểm quyền hiện hành cả khi replay.
+- 5d. Recompute có chủ đích khi chưa có invoice hoặc invoice còn DRAFT: command/key mới + reason + expected base/applied generation; CAS chỉ cho một winner tạo/apply G2 theo contract D. Pin policy của request mới, đọc lại nguồn hợp lệ, vẫn chọn giá theo ngày session; giữ G1, before/after diff và audit, không invoice thứ hai. Nếu nguồn/tariff không đổi thì không tăng unit price do ngày tạo G2.
+- 5e. Nguồn thay đổi sau capture/apply: generation stale, chặn issue; không tự refresh G1. Cần rà soát và recompute command mới. Recompute đang pending cũng chặn issue draft cũ; không expose tổng G1 như đã kiểm chứng hiện hành.
+- 1a. Session qua tháng thuộc tháng bắt đầu, không split: 30/09 23:30–01/10 00:30 thuộc Sep; 01/10 00:00 thuộc Oct. Kiểm `[monthStart,nextMonthStart)` bằng tenant-local date; không đưa nguồn vào tháng tạo draft. Initial draft trước khi kỳ đóng bị từ chối.
 
 **Hậu điều kiện:** Có dự thảo có căn cứ hoặc yêu cầu bổ sung rõ lý do; P0 không tự phát hành. Bảo đảm thất bại theo C-09.
 
@@ -996,6 +1006,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - AC-23-01: Chưa xác nhận điểm danh thì không chốt bảng kê tự động.
 - AC-23-02: Retry cùng yêu cầu không tạo thêm hóa đơn.
 - AC-23-03: Dự thảo hiển thị số buổi tính phí và chính sách dùng để tính.
+- AC-23-04 (O-12): Draft tạo tháng sau vẫn giá/kỳ theo local session start, nhiều line có thể khác giá; two students cùng session có hai invoice identities đúng student, không trộn participation.
+- AC-23-05 (O-12): Retry giữ generation/result/policy; recompute key/reason/CAS hợp lệ tạo G2 giữ G1/history, cùng logical invoice; hai recomputes cùng base tối đa một thắng.
+- AC-23-06 (O-12): Missing price/confirmed attendance → NEEDS_INFORMATION, không implicit 0; CANCELLED units=0 không đòi attendance giả nhưng vẫn cần tariff. Source đổi → stale/block issue; transfer không đổi lineage lớp/khóa buổi cũ.
+- AC-23-07 (O-12): Thử đổi timezone sau first series/session (kể cả DRAFT)/period/run-generation bị từ chối; hủy/xóa nguồn không unfreeze. Test chi tiết [O12-AC-01–27](../../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa), chưa là kết quả thực thi.
 
 <a id="uc-24"></a>
 
@@ -1018,7 +1032,7 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 1. Người dùng xem dự thảo và các căn cứ tính phí.
 2. Hệ thống kiểm tra quyền tài chính hiện hành, tenant và các điều kiện phát hành.
 3. Người có quyền xác nhận phát hành; nếu chính sách yêu cầu phê duyệt riêng thì thực hiện UC-34.
-4. Hệ thống kiểm tra lại điều kiện và ghi nhận hóa đơn đã phát hành cùng người/thời điểm xác nhận.
+4. Trong transaction, hệ thống kiểm quyền hiện hành, tenant/student/period, source revisions/completeness, snapshot và current generation đã apply (không pending/stale); tạo permanent issued claims kể cả dòng 0, cấp số/issue timestamp/audit atomic. Không chọn lại giá theo ngày phát hành hoặc repin calculation policy; giữ giá từng session từ generation hiện hành.
 5. Hệ thống đưa hóa đơn vào theo dõi thanh toán/công nợ và chặn sửa trực tiếp.
 
 **Luồng thay thế và ngoại lệ**
@@ -1034,48 +1048,66 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 
 - AC-24-01: Tạo dự thảo thành công không đồng nghĩa đã phát hành.
 - AC-24-02: Người chỉ có quyền xem hóa đơn không được phát hành.
+- AC-24-03 (O-12): Issue sau ngày tăng giá giữ per-session snapshots; source hoặc current generation thay đổi thì rollback/block, không sửa rồi issue. Thiếu quyền vẫn từ chối dù draft trước đây hợp lệ.
+- AC-24-04 (O-12): ISSUED không recompute/reprice/repin, không sửa/xóa line/claim; correction có thẩm quyền qua UC-26 append-only. Claim không giải phóng sau hủy để đưa participation sang tháng khác.
 
 <a id="uc-25"></a>
 
 ### UC-25 — Ghi nhận thanh toán và theo dõi công nợ
 
+**Wallet amendment — BUSINESS APPROVED B1–B5, 19/10/2026:** xác nhận trực tiếp của chủ dự án; [Requirements Q-10](../requirements_analysis.md), [Decision Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Thay direct-payment-only của UC-25 cho giao dịch mới; O-12 và các ID hiện hữu giữ nguyên. Data/SQL/API transport Q1–Q8 vẫn pending; không feature implementation approval.
+
 | Thuộc tính | Đặc tả |
 |---|---|
-| Mục tiêu | Ghi nhận khoản thanh toán và phản ánh công nợ nhất quán. |
+| Mục tiêu | Ghi nhận top-up đã xác minh, thanh toán invoice từ ví và phản ánh balance/công nợ nhất quán. |
 | Ưu tiên | P0 |
-| Actor/bên tương tác | Accountant/Manager có quyền tài chính; người có quyền xem chỉ tra cứu |
-| Kích hoạt | Có khoản thanh toán cần ghi nhận hoặc người dùng tra cứu công nợ. |
-| Tiền điều kiện | C-01–C-04; tồn tại học sinh/hóa đơn hoặc khoản phải thu hợp lệ được đối soát. |
-| Dữ liệu chính | Khoản phải thu, số tiền, thời điểm thanh toán, thông tin đối soát và định danh chống ghi trùng. |
+| Actor/bên tương tác | Nhân sự có financial permission hiện hành/đúng tenant-student scope; Student/Parent chỉ đọc theo quyền và liên kết hiện hành |
+| Kích hoạt | Tiền đã nhận được xác minh để nạp; hành động trả invoice; hoặc tra cứu balance/history/công nợ. |
+| Tiền điều kiện | C-01–C-04; student cùng tenant; top-up không cần invoice; payment cần invoice ISSUED hợp lệ cùng student/tenant. |
+| Dữ liệu chính | Amount VND string, verified receipt/method/reference, wallet/student/invoice identity, operation key/hash, current state/revision và audit provenance. |
 | Yêu cầu liên quan | FR-30 |
 | Business Rules | BR-08, BR-12, BR-14 |
 | User Stories | US-09, US-14 |
 
 **Luồng chính**
 
-1. Người dùng mở hóa đơn và xem số phải thu, đã thanh toán, còn nợ.
-2. Người có quyền nhập khoản thanh toán và thông tin đối soát.
-3. Hệ thống kiểm tra dữ liệu, quyền, tenant và dấu hiệu giao dịch trùng.
-4. Hệ thống ghi khoản thanh toán và cập nhật số dư/công nợ trong cùng giao dịch.
-5. Hệ thống trả kết quả và lịch sử thanh toán.
+1. Người có financial permission chọn student thuộc tenant/scope; xem riêng balance, net obligation, allocated payment và outstanding nếu có invoice.
+2. **Top-up:** xác minh CASH/BANK_TRANSFER ngoài hệ thống; nhập amount>0, receipt reference/method/receivedAt/evidence. Backend kiểm current authority, ownership và duplicate receipt/key; ghi immutable TOP_UP + tăng balance + receipt/audit atomic. Không cần invoice, không ghi invoice Payment. Parent gửi yêu cầu/chứng từ không tự tăng ví.
+3. **Pay invoice:** người có quyền chọn invoice ISSUED hợp lệ cùng student/tenant và nhập amount rõ ràng; backend resolve wallet/actor/source, kiểm `0<amount<=balance` và `amount<=outstanding` sau khóa phù hợp. Cho phép partial/full, không tự đổi amount vượt khả năng trả thành partial.
+4. Backend commit wallet debit + Payment(method WALLET, đúng một invoice) + allocation evidence + receipt/audit trong một transaction, rollback toàn bộ khi lỗi. Không debit khi top-up, draft, issue hoặc G1/G2 thay đổi.
+5. Trả kết quả/receipt và số dư/công nợ/history theo quyền hiện hành; cùng key/hash replay không tạo effect mới. Read-only Student/Parent chỉ thấy dữ liệu student được phép, không sổ tài chính nội bộ.
 
 **Luồng thay thế và ngoại lệ**
 
-- 1a. Chỉ tra cứu: trả dữ liệu theo quyền, không thay đổi khoản thu.
-- 3a. Gửi lại cùng khoản thanh toán đã xử lý: không cộng tiền lần thứ hai.
-- 3b. P0 chỉ nhận thanh toán tiền mặt/chuyển khoản nhập thủ công cho **một hóa đơn**; từ chối khoản vượt công nợ còn lại, không chia một khoản sang nhiều hóa đơn.
-- 4a. Cập nhật công nợ thất bại: không để thanh toán và công nợ lệch nhau; rollback hoặc phục hồi nhất quán.
+- 1a. Chỉ đọc balance/history: không mutation; liên kết Parent hoặc permission bị thu hồi thì từ chối theo current scope, không lộ wallet student khác.
+- 2a. Missing wallet: top-up có thể tạo account balance0 theo unique student/tenant rồi ghi tiền; pay khi chưa có balance khả dụng thì reject, không giả funding. Không có invoice vẫn top-up hợp lệ.
+- 2b. Cùng key khác hash thì conflict; key mới nhưng cùng receipt đã ghi không được cộng lại. Không cho client tự gửi balance-after hoặc tự chứng nhận khoản tiền đã verified; backend current permission/evidence checks quyết định.
+- 3a. Amount<=0, balance thiếu, request vượt outstanding, wrong owner/tenant, invoice DRAFT/CANCELLED hoặc stale state: reject toàn operation, không debit/Payment một phần.
+- 3b. New P0 CASH/BANK_TRANSFER chỉ ở bước top-up, invoice payment dùng WALLET. Không multi-invoice Payment; một số dư ví có thể trả nhiều invoice qua các hành động được phép riêng.
+- 3c. Legacy CASH/BANK_TRANSFER/mixed history không tự convert hoặc nhận wallet payment khi chưa có policy riêng. Affected collection/migration/adjustment cần inventory/reconciliation, không fake opening balance.
+- 4a. Debit/allocation/audit/guard lỗi thì rollback toàn effect; unknown COMMIT outcome phải tra root receipt, không đổi key để thử thu lần nữa.
+- 5a. Invalid top-up reversal: current financial permission, reason/audit và full original amount; chỉ append compensating transaction khi available balance đủ, nếu thiếu thì reject/chuyển xử lý có kiểm soát. Không xóa TOP_UP, không âm ví hoặc tự đảo invoice payment đúng để đủ tiền. Không cash-out; payment reversal là nghiệp vụ tách riêng theo UC-26/financial contract.
 
-**Hậu điều kiện:** Khoản thu và công nợ khớp nhau; có dữ liệu truy vết. Bảo đảm thất bại theo C-09.
+**Hậu điều kiện:** Balance=net immutable wallet transactions>=0; top-up chưa allocate không giảm công nợ; Payment/allocation/debit khớp, có audit/receipt; failure không half-effect. Bảo đảm thất bại theo C-09.
 
 **Quyết định áp dụng từ Q đã chốt**
 
-- Ghi nhận tiền mặt hoặc chuyển khoản đã được người có permission xác minh bằng đối soát thủ công; cho phép thu một phần, kiểm tra trùng. Không kết nối ngân hàng/cổng thanh toán. Bản ghi khoản thu sai được **đảo/điều chỉnh** có lý do/audit, không xóa lịch sử. P1 có phân bổ nhiều hóa đơn và xử lý tín dụng trả thừa.
+- Theo Q-10 amended19/10: một ví/student/tenant, no expiry/no transfer/no external cash-out; top-up thủ công, pay chủ động từ ví; chỉ financial staff mutate. Wallet P0 không là package prepaid6tháng/combo5% P1. Legacy giữ nguồn gốc/policy riêng; original Group A no-auto-credit bị giới hạn bởi internal wallet refund sau approved execution, không mở general credit engine P1.
 
 **Tiêu chí nghiệm thu**
 
 - AC-25-01: Retry không ghi nhận trùng thanh toán.
 - AC-25-02: Giao dịch thất bại không được ghi nhận thu tiền một phần nhưng công nợ chưa cập nhật.
+- AC-25-03: Nạp1.000.000 vào student chưa có invoice → balance tăng1.000.000, không Payment/allocated tuition revenue; cùng receipt/key không cộng lần2 (W01/02).
+- AC-25-04: Ví1.000.000, invoice ISSUED800.000 → explicit pay800.000: balance200.000/due0; ví500.000 request800.000 reject, không implicit partial (W03/04).
+- AC-25-05: Explicit pay300.000 → balance giảm300.000/due giảm300.000; amount>due hoặc<=0 reject (W05/11).
+- AC-25-06: Concurrent payments/debit-allocation failure → không overdraw/overpay/half-effect; cần PostgreSQL tests, chưa PASS (W10–12).
+- AC-25-07: Cross-tenant/Student/Parent mutation/forged actor denied; scoped read và revocation đúng liên kết hiện hành (W13/14/26/32).
+- AC-25-08: Reverse full top-up chỉ khi balance đủ; original history giữ, insufficient reject, no negative (W15/31).
+- AC-25-09: Draft/issue/recompute không debit; student transfer không đổi wallet owner/lineage, nạp6tháng không combo5% (W16–19).
+- AC-25-10: Unknown commit/retry tra receipt, không thêm debit; ledger SUM=stored balance bằng exact VND (W21/22/25).
+
+**Evidence:** AC-25-01–10 là acceptance specifications **DESIGNED**, không implementation/SQL/runtime PASS. Schema và endpoints chưa triển khai wallet.
 
 <a id="uc-26"></a>
 
@@ -1099,8 +1131,8 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 2. Hệ thống lưu liên kết hóa đơn gốc cùng giá trị trước/sau dự kiến; không sửa trực tiếp hóa đơn.
 3. Hệ thống chuyển người có quyền duyệt thủ công; ưu tiên người khác người tạo nếu có người đủ quyền.
 4. Người duyệt kiểm tra căn cứ và chọn chấp thuận, từ chối hoặc yêu cầu bổ sung.
-5. Khi chấp thuận, hệ thống kiểm tra lại quyền hiện hành, điều kiện và chính sách gắn với yêu cầu.
-6. Hệ thống thực hiện nghiệp vụ điều chỉnh được ủy quyền, cập nhật công nợ liên quan nhất quán và lưu đầy đủ audit.
+5. Lưu bền quyết định APPROVED và audit; chưa coi effect hoàn thành. Explicit authorized execution kiểm lại quyền hiện hành, approved payload/target, điều kiện và policy đã pin.
+6. Trong một transaction: apply adjustment/cancellation, tính `refund=max(P_before−N_after,0)` từ payment còn allocated và nghĩa vụ mới>=0; ghi immutable allocation releases và wallet credit đúng refund nếu nguồn thuần wallet. Ghi source/effect receipt/audit và chỉ COMPLETED khi toàn effect commit. Original amounts/payments/issued participation claims giữ nguyên.
 
 **Luồng thay thế và ngoại lệ**
 
@@ -1109,18 +1141,31 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - 4a. Thiếu chứng cứ: NEEDS_INFORMATION; từ chối: REJECTED; hóa đơn gốc chưa bị thay đổi.
 - 5a. Người duyệt đã bị thu hồi quyền: từ chối thực thi dù trước đó có quyền.
 - 6a. Hóa đơn đã có thanh toán/điều chỉnh khác khiến yêu cầu không còn hợp lệ: dừng để đối soát; không tự hoàn tiền qua cổng thanh toán.
+- 6b. Partial payment chưa vượt nghĩa vụ mới thì refund0; tăng nghĩa vụ không tự debit ví. N800.000/P800.000 giảm còn700.000 → refund100.000 và allocation−100.000; N800.000/P300.000 giảm700.000 → refund0/due400.000.
+- 6c. Execution lỗi: rollback adjustment/releases/credits/receipt success/COMPLETED, giữ APPROVED/decision; retry cùng root không duplicate effect, unknown commit phải lookup receipt trước.
+- 6d. Legacy/mixed hoặc existing excess case chưa có policy/bằng chứng: chặn affected execution để đối soát; không vừa case settlement vừa wallet refund cho cùng nguồn, không tự convert tiền mặt lịch sử.
+- 6e. Payment reversal tách top-up reversal: giữ original Payment; full nominal reversal và cách release net remaining sau refunds là technical proposal cần sign-off. Không vừa filter payment vừa trừ offsets, không credit lại phần đã hoàn. Invalid top-up theo UC-25, không dùng UC-26 đảo payment hợp lệ để che thiếu balance.
 
 **Hậu điều kiện:** Có quyết định và lịch sử điều chỉnh kiểm tra được; hóa đơn gốc không bị sửa lén hoặc mất dấu vết. Bảo đảm thất bại theo C-09.
 
 **Quyết định áp dụng từ Q đã chốt**
 
-- P0 không tích hợp hoàn tiền hay cổng thanh toán; hóa đơn đã thu tiền khi giảm/hủy phải tạo khoản cần xử lý/tín dụng qua phê duyệt tài chính, giữ chứng từ gốc và lịch sử thu/đảo.
+- B1–B5 business approved19/10 supersede có giới hạn no-auto-credit/direct-payment-only cũ: internal wallet refund là effect của adjustment/hủy đã duyệt và thực thi có quyền, **không** bank refund/cash-out hoặc auto-approval. Điều chỉnh/hủy có chứng cứ kể cả đã thu/học giữ issued basis/number/claims; không hủy lịch/attendance hoặc tự khôi phục invoice nguồn. Exact locks/SQL/effect receipt representation/reversal route còn pending technical sign-off.
 
 **Tiêu chí nghiệm thu**
 
 - AC-26-01: Không có cấu hình nào được tự động duyệt điều chỉnh/hủy hóa đơn đã phát hành.
 - AC-26-02: SELF_APPROVED là cờ kiểm toán, không phải trạng thái workflow.
 - AC-26-03: Audit có người duyệt, thời điểm, lý do, kết quả và thay đổi.
+- AC-26-04: Paid800.000 giảm N700.000 → chỉ refund100.000; paid300.000 giảm N700.000 → không refund, due400.000 (W06/07).
+- AC-26-05: Approved cancel paid800.000 → release remaining/credit800.000 atomic, giữ payments/number/claims, không auto approve (W08).
+- AC-26-06: Retry/new caller key cùng root effect không thêm credit/release; no dual excess-case/wallet settlement (W09/30).
+- AC-26-07: Adjustment/cancel vs concurrent payment, forced failure/unknown commit không sai due/balance và decision vẫn bền (W20/21/36).
+- AC-26-08: Legacy/mixed không auto wallet convert/refund; policy thiếu phải chặn affected execution (W23).
+- AC-26-09: Repeated reduce/increase/cancel chỉ hoàn net excess chưa release; multiple payments không hoàn delta cho mỗi payment (W24/27).
+- AC-26-10: Wallet payment800.000 đã refund100.000, full nominal reversal không credit lại800.000; reference expectation thêm700.000, fully released thì0 (W28/29, technical design pending).
+
+**Evidence:** AC-26-01–10 và W01–W36 đều **DESIGNED**; không khẳng định PostgreSQL/runtime verification.
 
 <a id="uc-27"></a>
 
@@ -1435,7 +1480,7 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 3. Người dùng xem dữ liệu gốc, quy tắc/phiên bản và lý do yêu cầu.
 4. Người dùng chọn duyệt, từ chối hoặc yêu cầu bổ sung; ghi lý do quyết định.
 5. Khi duyệt, hệ thống kiểm tra lại quyền hiện hành, tách nhiệm vụ nếu áp dụng và mọi ràng buộc nghiệp vụ.
-6. Hệ thống ghi quyết định; nếu thực thi thành công thì hoàn tất nghiệp vụ, lưu audit và thông tin kết quả.
+6. Hệ thống commit decision APPROVED/audit bền vững; explicit execution là bước riêng, kiểm quyền/dữ liệu lại. Chỉ khi effect+receipt+audit commit thành công mới COMPLETED. Invoice effect gồm allocation release/internal refund nếu cần theo UC-26; execution failure không rollback decision đã commit.
 
 **Luồng thay thế và ngoại lệ**
 
@@ -1444,7 +1489,7 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - 2a. Chưa có người thích hợp: giữ PENDING_APPROVAL, thông báo Manager; không tự cấp quyền.
 - 4a. Từ chối: REJECTED, không áp dụng thay đổi; trả bổ sung: NEEDS_INFORMATION.
 - 5a. Tự duyệt: chỉ cho phép theo BR-11; tài chính nhạy cảm dùng UC-26.
-- 6a. Đã duyệt nhưng thực thi thất bại: ghi trạng thái/lý do thực thi, xử lý lỗi theo UC-37; không báo COMPLETED.
+- 6a. Đã duyệt nhưng thực thi thất bại: giữ APPROVED/decision, ghi outcome/lý do execution riêng sau rollback; phục hồi theo UC-37, không báo COMPLETED hoặc tự thay approved payload. Retry cùng root không lặp effect; quyền hiện hành vẫn kiểm cả replay.
 
 **Hậu điều kiện:** Yêu cầu có kết quả xử lý truy vết được; APPROVED không đồng nghĩa đã thực thi thành công. Bảo đảm thất bại theo C-09.
 
@@ -1453,6 +1498,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - AC-34-01: Role chỉ có quyền xem không được duyệt.
 - AC-34-02: Phê duyệt không được bỏ qua xung đột lịch hoặc sức chứa.
 - AC-34-03: Quyết định ngoại lệ luôn có người, thời điểm, lý do và kết quả.
+- AC-34-04: D1 APPROVED đã commit, E1 lỗi giữa refund/adjustment → toàn E1 rollback, D1 còn; chỉ successful retry mới COMPLETED (W36).
+- AC-34-05: Hai execute keys cùng approved root/version không tạo hai financial effects; stale approval/body mismatch bị từ chối để đối soát, không đổi nội dung đã duyệt (W09/36).
+
+**Wallet amendment 19/10:** durable decision/explicit execution là business contract đã đồng bộ; receipt schema/locking/SQL/API routing vẫn **PENDING TECHNICAL SIGN-OFF**. AC mới **DESIGNED**, chưa chạy.
 
 <a id="uc-35"></a>
 
@@ -1579,6 +1628,10 @@ Các tiêu chí nghiệm thu bên dưới là tập kiểm tra tối thiểu cho
 - AC-37-02: Quyền bị thu hồi giữa hai lần thử được kiểm tra ở lần thực thi kế tiếp.
 - AC-37-03: Tự động hóa không được bỏ qua phê duyệt thủ công bắt buộc.
 - AC-37-04 (P0): Khi retry hết lượt tác vụ trở thành FAILED và Manager xem được danh sách lỗi; retry thủ công không nhân đôi kết quả nghiệp vụ.
+- AC-37-05 (P0): Initial+3 automatic retries theo policy1/5/15phút; sau exhaustion FAILED+Manager alert, không reset counter/mở automatic recovery cycle, không worker tự top-up/pay/approve.
+- AC-37-06 (**PROPOSED / PENDING TECHNICAL SIGN-OFF**): Wallet Proposal E.Q4 khuyến nghị requeue chỉ khi worker count<4; sau4 dùng explicit authorized synchronous manual domain execution cùng effect/G/key, giữ exhausted job history và không ghi worker attempt5. Path/API/receipt semantics cần sign-off; không coi đã triển khai hoặc lifetime bound đã đổi.
+
+**Evidence:** AC-37-05/06 và W35 là **DESIGNED**. `attempt_count<=4` hiện là DB design proposal, chưa SQL CHECK trong checkout; approval B1–B5 không approve manual recovery implementation hoặc generic cycle framework.
 
 ## 4. Quan hệ giữa các use case
 
@@ -1760,7 +1813,7 @@ Các câu hỏi của bản 1.0–1.2 đã được **quyết định làm basel
 | **Q-05** | Teacher xác nhận điểm danh; khóa sau 48h hoặc khi đã phát hành hóa đơn; sửa đặc biệt có audit; dự học thực tế = ATTENDED; xử lý học bù trong hạn gốc. | UC-15–UC-17, UC-23 | Đã chốt |
 | **Q-06** | Tín dụng chỉ tính từ tiền đã thu cho buổi chưa dùng sau ưu đãi; khấu trừ sau ưu đãi mới, không tự hoàn/hết hạn; quay lại trước hạn cần duyệt. | UC-18, UC-19, UC-23, UC-26 | Đã chốt |
 | **Q-07** | Dạy tối đa 8h/ngày, 40h/tuần baseline; bù cùng môn/trình độ/nội dung; dạy thay cần Teacher nhận + người có quyền duyệt, không tự xác nhận. | UC-17, UC-20, UC-33 | Đã chốt |
-| **Q-08** | Ưu tiên giá buổi → lớp → khóa; tính theo tháng P0, hạn thanh toán 7 ngày, ROUND_HALF_UP cuối phép tính; gói trả trước P1. | UC-21–UC-25 | Đã chốt |
+| **Q-08** | Ưu tiên giá buổi → lớp → khóa tại local session-start date (O12-A=A), month cũng theo local start (B1); freeze C1; retry giữ generation/recompute mới D; hạn 7 ngày, HALF_UP cuối; trả trước P1. | UC-21–UC-25 | Đã chốt; O-12 amendment 18/10/2026 |
 | **Q-09** | P0 ưu đãi anh/chị/em 10%; P1 thêm combo 5% trước rồi 10% sau, hiệu dụng 14,5%; không cộng dồn tùy ý. | UC-22, UC-23 | Đã chốt |
 | **Q-10** | P0 tiền mặt/chuyển khoản đối soát và nhập thủ công, thu một phần/1 hóa đơn, từ chối vượt nợ; đảo khoản thu sai, không kết nối cổng thanh toán. | UC-25, UC-26 | Đã chốt |
 | **Q-11** | Priority 1–5; điểm 0–10 (1 chữ số); PDF/DOCX/JPG/PNG, ≤10 MB/tệp và 5 tệp; nộp muộn 7 ngày, nộp lại trước chấm, công bố điểm thủ công. | UC-27–UC-29 | Đã chốt |

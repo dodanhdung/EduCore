@@ -1,5 +1,7 @@
 # EduCore — Class Design: Reporting
 
+**Wallet amendment19/10/2026:** owner B1–B5 **BUSINESS APPROVED**, simplification **PRINCIPLE ACCEPTED**; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Financial definitions dưới đây theo Requirements Q-12 amended, không mở financial dashboard P1; SQL/projections Q1–Q8 vẫn technical pending, chưa implementation.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-40, FR-36 (P1)**, **UC-30, UC-32**, **Q-12, BR-04**.
@@ -203,11 +205,22 @@ classDiagram
 
 1. active_students = số **DISTINCT student_id** đang có ít nhất một enrollment ACTIVE trong scope.
 2. active_classes = số class ACTIVE trong scope.
-3. outstanding = sum(invoice ISSUED + APPLIED adjustments − valid payment allocations − credit allocations P1), không tính draft/prepayment chưa phân bổ.
-4. Phân biệt outstanding, collected và revenue/tuition; không gộp một con số.
+3. outstanding=Σmax(issued adjusted obligation−valid net allocated payments,0), không draft/unused wallet; wallet net allocation=base+signed RELEASE, không exclude reversed payment rồi trừ offset lần2. Legacy positive/nonreversed semantics riêng tới approved migration.
+4. Phân biệt wallet balance, verified cash received, invoice allocated payment, adjusted invoice total và outstanding/revenue; không gộp một con số hoặc cộng wallet debit vào cash receipt.
 5. Không cần materialized view P0 nếu aggregate SQL đạt hiệu năng; benchmark mới quyết định tối ưu.
 
 ## 6. Kiểm thử bắt buộc cho module
+
+**Wallet financial read contract (business approved, query implementation pending):**
+
+| Giá trị | Definition / scope |
+|---|---|
+| Wallet balance | Σsigned WalletTransactions, stored balance phải khớp/không âm; unused money không là tuition revenue/allocated payment |
+| Verified cash received | TOP_UP receipts đã staff xác minh net invalid receipt corrections, legacy receipt origin tách riêng. Wallet pay/refund/payment reversal không là cash flow mới; top-up reversal không chứng minh cash-out |
+| Invoice allocated payment | Σbase + signed releases cho wallet cohort, same Payment/invoice; không SUM Payment amount rồi cộng allocation lần2 |
+| Adjusted obligation/outstanding | N=issued total+APPLIED deltas>=0; D=max(N−P,0) từng invoice; aggregate source subqueries trước JOIN, consistent asOf/scope |
+
+Giữ đúng ba dashboard KPI: distinct active students, active classes, outstanding. Các định nghĩa tiền dùng cho scoped Billing/wallet views và đối soát, không thêm revenue dashboard/materialized projections/general accounting framework P0. Account reconciliation B+A_wallet=T_net_topups dùng consistent snapshot; Parent chỉ own linked student financial summary, không tenant-wide ledger/audit. W01/03/06–08/22–29 **DESIGNED**, cần SQL/runtime tests riêng; không tuyên bố đã chạy.
 
 - [ ] Một student ACTIVE ở hai lớp chỉ được đếm một lần.
 - [ ] Payment đảo làm tăng due; payment chưa phân bổ không tự giảm due.

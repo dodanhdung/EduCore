@@ -11,7 +11,7 @@ Build EduCore P0 via **one approved vertical slice per task**. Treat every reque
 1. `docs/requirements/requirements_analysis.md` **v5** (FR/BR/NFR, Q-01–Q-15).
 2. `docs/requirements/usecase/specification.md` v1.3 (UC-01–UC-37 + AC).
 3. `docs/architectural/architectural_design.md` (Accepted ADRs).
-4. `docs/design/database_design.md` v1.1 after group-A approval; `docs/design/class design/` module file; `docs/design/detailed_des.md`; `docs/design/api_spec.md` — **only those versions actually present in the working branch**.
+4. `docs/design/database_design.md` v1.1 after group-A approval; `docs/design/class design/` module file; `docs/design/detailed_design.md`; `docs/design/api_specification.md` — **only those versions actually present in the working branch**.
 5. Approved feature slice spec; `docs/ai/*` for approved UI framework, screen candidates and on-demand workflow. Individual screens require per-slice review.
 
 If missing, outdated, conflicting, or not merged: **report it**. Do not claim the repository has a document/version or implemented route without checking. BR/Q beat design proposals; never silently edit their meaning. Record assumptions as `PROPOSED`, not `APPROVED`.

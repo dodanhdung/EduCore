@@ -3,8 +3,12 @@
 > **Document ID:** EC-DD-001  
 > **Phiên bản tài liệu:** 1.1-approved-group-A · **Ngày:** 17/10/2026 · **Trạng thái:** Approved nhóm A, pending per-slice review  
 > **Phạm vi:** P0 có thể triển khai thành vertical slices; P1 chỉ thiết kế điểm mở rộng, **không tự đưa vào MVP**.  
-> **Vị trí đề xuất trong repository:** `docs/design/detailed_des.md`  
-> **Quan hệ tài liệu:** đọc cùng `docs/requirements/requirements_analysis.md`, `docs/requirements/usecase/specification.md`, `docs/architectural/architectural_design.md`, `docs/design/database_design.md`, `docs/design/class design/README.md` và `docs/design/api_spec.md`.
+> **Vị trí thực tế trong repository:** `docs/design/detailed_design.md`
+> **Quan hệ tài liệu:** đọc cùng `docs/requirements/requirements_analysis.md`, `docs/requirements/usecase/specification.md`, `docs/architectural/architectural_design.md`, `docs/design/database_design.md`, `docs/design/class design/README.md` và `docs/design/api_specification.md`.
+
+**Changelog — v1.1 + O-12 amendment, 18/10/2026 (`Asia/Ho_Chi_Minh`):** business A=A, B=B1, C=C1, D=D được chủ dự án phê duyệt trực tiếp; §5.7 giữ session-date pricing và bổ sung generation contract. [Decision Register](../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Pseudocode/DTO/locks/persistence vẫn PROPOSED, không code/schema/migration approval.
+
+**Wallet amendment · 19/10/2026:** **BUSINESS APPROVED B1–B5**, simplification **PRINCIPLE ACCEPTED**, xác nhận trực tiếp owner; [Register §G](../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). New finance flow ở §5.7 theo Requirements Q-10 amended. Exact Q1–Q8/locks/grants/G representation/recovery/API vẫn **RECOMMENDED / PENDING TECHNICAL SIGN-OFF**; chưa implementation.
 
 ## 0. Tình trạng nguồn và quy tắc ưu tiên
 
@@ -12,7 +16,7 @@
 - **[Đã kiểm tra repo 17/10/2026]** `dodanhdung/EduCore`, nhánh `main`: `docs/requirements/requirements_analysis.md` **đã được đồng bộ mục lịch sử v5 trên nhánh tài liệu**; repo có cấu trúc monorepo pnpm, app NestJS và Vite scaffold, chưa có Prisma schema/migrations và API nghiệp vụ. Vì vậy **không được xem một hành vi được mô tả ở đây là đã code hoặc đã test**. Trước khi code, merge nhánh tài liệu và đối chiếu Use Case/Architecture.
 - **[Kiến trúc — ACCEPTED]** Modular Monolith; TypeScript, React/Vite, NestJS, PostgreSQL, Prisma, REST/OpenAPI, pnpm; Vercel web, Railway API/PostgreSQL + private Volume; PostgreSQL transactional outbox và internal worker; OTP email là tích hợp nghiệp vụ bên ngoài duy nhất P0.
 - **[Database/Class design — PROPOSED]** `database_design.md` v1.1 Approved nhóm A cùng 14 tài liệu class design còn review theo slice. Các tên table/entity/module được tham chiếu để tạo tính liên tục, **chưa đồng nghĩa schema đã duyệt/migrate**.
-- **[Chi tiết trong tài liệu này — PROPOSED]** Tên file, folder, DTO, permission key cụ thể, exception code, application coordinator, HTTP endpoint, state transition implementation và transaction isolation là phương án kỹ thuật cần review; không giả định là quyết định nghiệp vụ mới. API hợp đồng cụ thể nằm ở `api_spec.md`.
+- **[Chi tiết trong tài liệu này — PROPOSED]** Tên file, folder, DTO, permission key cụ thể, exception code, application coordinator, HTTP endpoint, state transition implementation và transaction isolation là phương án kỹ thuật cần review; không giả định là quyết định nghiệp vụ mới. API hợp đồng cụ thể nằm ở `api_specification.md`.
 - **Quy tắc xử lý xung đột:** (1) FR/BR/Q v5 và UC v1.3; (2) quyết định Accepted trong Architecture; (3) DB/Class Design đề xuất; (4) đề xuất ở đây. Nếu có hai nguồn cùng cấp mâu thuẫn, tạo issue/ADR và **không triển khai tự suy đoán**.
 
 ## 1. Phạm vi và nguyên tắc bất biến
@@ -71,7 +75,7 @@ EduCore/
 ├── docs/
 │   ├── requirements/
 │   ├── architectural/
-│   └── design/{database_design.md,detailed_des.md,api_spec.md,class design/}
+│   └── design/{database_design.md,detailed_design.md,api_specification.md,class design/}
 └── pnpm-workspace.yaml
 ```
 
@@ -119,7 +123,7 @@ interface OutboxPort { append(tx: TxContext, event: DomainEvent): Promise<void> 
 | `PENDING_APPROVAL` | request info | `NEEDS_INFORMATION` | reason bắt buộc |
 | `NEEDS_INFORMATION` | bổ sung/re-submit | `PENDING_APPROVAL` hoặc `DRAFT` | xác minh lại; route tùy operation (đề xuất) |
 | `APPROVED` | execute/re-check | `COMPLETED` | side effect thành công, idempotent |
-| `APPROVED` | execute lỗi | `FAILED` hoặc `NEEDS_INFORMATION` | ghi nguyên nhân và alert; không coi đã thực thi |
+| `APPROVED` | execute lỗi | giữ `APPROVED`/decision | rollback effect, ghi failure/needs-info execution outcome riêng sau rollback; chưa COMPLETED, không mất approval đã commit |
 | `REJECTED`/`COMPLETED` | mutate | từ chối | giữ lịch sử; tạo yêu cầu mới nếu muốn thực hiện khác |
 
 Trường hợp không cần duyệt có thể từ `DRAFT` → `COMPLETED` khi domain action tự động chạy hợp lệ; không tạo trạng thái `SELF_APPROVED`. Mọi transition chạy dưới transaction/compare-and-swap, chỉ một decision active tại thời điểm xử lý.
@@ -132,7 +136,7 @@ Trường hợp không cần duyệt có thể từ `DRAFT` → `COMPLETED` khi 
 | `ClassSession` | `DRAFT→CONFIRMED→COMPLETED`; `DRAFT/CONFIRMED→CANCELLED`; confirmed future có reschedule bằng revision | không sửa buổi đã hoàn tất, CANCELLED release booking |
 | `Attendance` | từng participant = ATTENDED/EXCUSED/UNEXCUSED; `finalization` riêng | EXCUSED cần leave approved; khóa 48h hoặc issue invoice trước |
 | `Invoice` | `DRAFT→ISSUED`, khi issued giữ snapshot; cancellation/adjustment qua approval, không overwrite | invoice_auto_issue=false |
-| `Payment` | ghi nhận append-only, sai thì `PaymentReversal` mới | overpayment P0 bị từ chối; mỗi payment một invoice |
+| `Payment` | WALLET payment mới append-only, sai thì PaymentReversal/release có quyền; TOP_UP là receipt ví độc lập | một payment/invoice ISSUED; amount<=balance/due, new funds không direct external payment |
 | `Assignment` | `DRAFT→PUBLISHED→ARCHIVED` | publish tạo recipient snapshot và outbox |
 | `Submission` | nhiều immutable versions; lấy latest valid | tối đa 7 ngày late; dừng resubmit sau chấm |
 | `Grade` | `DRAFT→PUBLISHED`, sửa published bằng revision có reason | Student/Parent không thấy draft |
@@ -227,9 +231,86 @@ sequenceDiagram
 
 **Issue:** người có `invoice.issue`, recheck completeness, idempotency, unique claim nguồn tham gia để chống tính 2 lần; DRAFT→ISSUED, freeze lines/discount/snapshot, due = issuedAt + 7 ngày, audit; invoice là bảng kê nội bộ, không phải hóa đơn điện tử hợp pháp.
 
-**Payment:** CASH/BANK_TRANSFER nhân sự tự đối soát bên ngoài; `0 < amount <= outstanding`; một invoice/payment P0; row lock balance, allocate + append payment/audit trong transaction; retry same key không cộng tiền lần hai. Sai payment → reversal mới có quyền/lý do và audit. Issued invoice adjustment/cancellation → workflow **manual approval** luôn, kiểm tra số tiền/ledger, append-only adjustment/reversal; tiền dư sau giảm nợ được đánh dấu chờ xử lý có duyệt (không auto-refund, auto-credit P0).
+#### O-12 algorithm contract — business approved; implementation proposed
 
-**Công thức:** `outstanding = max(0, issuedTotal + approvedAdjustments − validAllocatedPayments − validAllocatedCredits)`; xử lý trường hợp phần thu vượt do điều chỉnh sau issue theo trạng thái **pending resolution** thay vì tự làm mất dòng ledger; không âm silently. Thuật ngữ `validAllocatedCredits` là P1/adjustment đã hợp lệ, không mặc định có engine credit ở P0.
+**Inputs:** server principal/tenant/student/month, typed operation key/request hash; recompute thêm reason + expected base/applied generation; committed session/participant/finalized-attendance/absence/verified-sibling revisions và historical session/class/course lineage. Client không được truyền clock/timezone/pricing-date override hoặc arbitrary price/result snapshot. **Output:** durable generation receipt/result + same logical DRAFT invoice, per-line evidence hoặc NEEDS_INFORMATION/stale/conflict; không issue tự động.
+
+```text
+admit(command):                              // PROPOSED transaction boundary, not code
+  acquire reviewed tenant gate before source reads; check current permission/scope
+  if typed key exists: assert same requestHash; return authorized historical receipt/result
+  lock canonical run(student,month); check expected base/current on recompute
+  reject issued/cancelled-after-issue, concurrent pending generation, period not closed
+  c = server DB instant sampled once at durable admission
+  V = pin calculation policy effective at c (BR-14); z = frozen tenant timezone
+  capture source set + revisions + sibling evidence under same transaction protocol
+  for source in sources:
+    assert tenant/student/session/finalization and original class/course lineage
+    d = local_date(source.session.startsAt,z) // NEVER local_date(c,z) for pricing
+    assert period.monthStart <= d < period.monthEnd
+    eligible = rules(correct tenant/target, effectiveFrom <= d,
+                     effectiveTo is NULL or d < effectiveTo)
+    chosen = first nonempty tier SESSION > CLASS > COURSE
+    if absent/ambiguous price or missing confirmed attendance (except CANCELLED):
+      persist immutable NEEDS_INFORMATION G/receipt with captured evidence + missing reasons
+      commit receipt; return NEEDS_INFORMATION // stop; no completed draft or fall-through
+    units = 1 for ATTENDED/UNEXCUSED; 0 for approved EXCUSED/CANCELLED
+    capture d as sourceBusinessDate AND pricingLocalDate, z, chosen ID/window/unit/tier,
+            selection proof, source revisions/lineage and separate policy provenance IDs
+  persist immutable G payload/key/hash/c/V/z + job enqueue atomically, commit
+
+apply(G):
+  acquire same ordered locks; check current permission and current base/pending CAS
+  re-read source set/revisions/lineage/eligibility and pinned-date pricing facts
+  if relevant change: mark stale/block, no refresh of G, no partial invoice writes
+  gross = SUM(units * snapshot.unitPriceVnd)  // BigInt/Decimal exact arithmetic
+  net = HALF_UP(gross * (verifiedSibling ? 0.90 : 1)) // once at final invoice
+  atomically apply to same logical draft, lines/discounts/current G/policy/hash/result/audit
+  force reviewed deferred final-state checks; commit; retain G1 payload/result history
+
+issue(currentDraft):
+  acquire same lock protocol; verify rights, current applied G, source completeness/revisions,
+    snapshot/selection facts and absence of pending recompute/stale state
+  do not resolve current tariff or repin policy; claim all participations incl. units 0
+  atomically number + ISSUED + frozen snapshots/claims/audit; commit
+```
+
+**Ba mốc độc lập:** session local-start date chọn PriceRule và billing month; generation admission time `chargeCreatedAt/generationCreatedAt` chỉ audit/idempotency/request-policy pin (PolicyVersion TIMESTAMPTZ `[from,to)`); issue time cấp số, phát hành/dueAt, không chọn lại giá. PriceRule `effectiveFrom/effectiveTo` là local DATE `[from,to)`; không parse thành UTC để đổi ngày, không dùng một pricing date chung cho G có nhiều buổi. Policy của tariff/scheduling là provenance riêng, không phải calculation-policy ID bắt buộc bằng nhau.
+
+**Retry / recompute / source correction:** cùng key/hash trả G1 và kết quả cũ, không đọc tariff mới để reprice; source đổi trước apply thì stale, cần command mới. Recompute mới key/reason/base/current CAS tạo G2, pin policy request mới và đọc nguồn hợp lệ; từng giá vẫn theo ngày session. Attendance correction có thể đổi units/eligibility; policy mới có thể đổi net nếu được duyệt, nhưng G2 muộn không tự nâng unitPrice của buổi cũ. Giữ G1/diff/reason/audit; new pending G chặn issue current G1. Hai recomputes cùng expected generation tối đa một thắng, replay G1 sau G2 không write-back. Invoice chưa có sau NEEDS_INFORMATION được tiếp nhận G2, không cần tạo invoice giả. ISSUED không recompute/reprice/repin; correction UC-26 append-only theo issued basis có quyền/duyệt, không lấy tariff hiện hành để tự sửa.
+
+**Price writes / timezone / scheduling:** ordinary tariff mutation không backdate hoặc sửa amount/target/override làm đổi giá buổi đã bắt đầu, ngay cả chưa có invoice; publish local future-date (DATE không intraday). Future end-bound thay đổi chỉ hợp lệ khi không phá selection tại source dates/captured snapshots; semantic recheck thay vì updatedAt-only. Missing past tariff vẫn NEEDS_INFORMATION, sửa dữ liệu lịch sử cần task/approval riêng. C1 freeze ở first ScheduleSeries/ClassSession (kể cả DRAFT), BillingPeriod hoặc BillingRun/generation, sticky dù cancel/delete; marker/source atomic; Ops chỉ đổi trước đó với audit/CAS. Lưu z và derived dates; kiểm tzdata. Reschedule future-only cung cấp startsAt/revision/lineage đáng tin qua Scheduling port, invalidate affected drafts trong transaction, không âm thầm chuyển invoice period hoặc sửa issued sources.
+
+**Errors / rollback / locks:** no price hoặc ambiguous/missing confirmed source → NEEDS_INFORMATION, không implicit zero (cancelled vẫn cần giá, không attendance giả); tenant/student/period/lineage mismatch hoặc key/hash conflict → reject; permission failure không thành needs-info. Source đổi → stale/block issue. O-01 tenant-gate/order/privileges vẫn cần technical review: auth/key → period/run/G → course/class/price/resources/session sorted → participants/attendance → invoices/lines/claims → counter/audit/outbox, tenant gate trước tất cả. Child và inverse-parent period guards, immediate issued immutability và deferred draft final-state checks theo DB §3.6. Deadlock/serialization timeout rollback toàn phase, bounded retry cùng key/pin; commit unknown tra receipt trước, không lấy clock/policy mới hoặc nhân claim. Không external I/O trong lock; chưa chứng minh PostgreSQL concurrency bằng pseudocode/Prisma validation.
+
+**Acceptance:** [O12-AC-01–27, addendum N](../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa); required PostgreSQL two-connection source/price/reschedule/line/issue races, raw DML privilege and rollback tests còn NOT RUN. Technical/schema/PG/runtime gates tách biệt; business approval không mở implementation R1b/R2.
+
+**Wallet finance (UC-25/26, business amended19/10):** financial staff verified CASH/BANK_TRANSFER → TOP_UP độc lập invoice; hành động pay rõ amount → WALLET Payment chỉ invoice ISSUED cùng owner, `0<amount<=balance/due`, partial được. Debit+Payment+base allocation+receipt+audit atomic. Draft/ISSUE/G1/G2 không tự debit. Điều chỉnh/hủy issued luôn manual approval; explicit execution mới apply delta/release/refund đúng excess về ví. Legacy/mixed thiếu policy phải chặn affected command, không convert/auto credit; no expiry/cash-out/transfer.
+
+**Công thức wallet cohort:** `N=issuedTotal+ΣAPPLIED deltas>=0`, `P=Σbase allocations+signed RELEASE offsets`, `outstanding=max(N−P,0)`, `refund=max(P_before−N_after,0)`. Không filter reversed wallet payment rồi trừ release lần2. Legacy positive allocations/no-full-reversal semantics giữ riêng tới approved migration; unused balance không là allocated Payment/revenue. Old pending excess/no-auto-credit Group A chỉ còn provenance/legacy, superseded có giới hạn cho new wallet refunds; không new excess-case engine cho wallet-only.
+
+#### Wallet application operations — business approved / technical pending
+
+Một **FinancialCoordinator** giữ transaction client chung cho Billing/Wallet/Workflow/Audit; domain methods không tự commit/repository ghi chéo module. Logical2wallet tables và signed Allocation delta xem [DB §3.6](database_design.md). Không general ledger/event-sourcing/generic workflow/recovery-cycle framework.
+
+| Operation | Atomic effect và required checks |
+|---|---|
+| `topUpWallet` | Verified staff/current permission + student scope; amount>0, CASH/BANK_TRANSFER receipt reference/evidence; unique account/receipt và typed key/hash; TOP_UP+balance+audit/receipt commit. Parent request không tạo tiền; không invoice Payment |
+| `payInvoiceFromWallet` | Explicit amount/current authority, same tenant/student, ISSUED payable; Wallet lock trước Invoice, fresh p<=B/due; debit+WALLET Payment+base allocation+balance+audit/receipt. Insufficient full request reject, không tự partial |
+| `refundInvoicePaymentToWallet` | **Internal sub-operation**, không client tự nhập refund; root adjustment/hủy manual đã duyệt, N_after>=0, derive r=max(P_before−N_after,0); applied delta+release(s)+credit(s)+balance+receipt+audit+COMPLETED atomic; r0 không zero entry |
+| `reverseInvalidTopUp` | Permission+reason, full original TOP_UP khi available balance đủ; append negative compensation/history/receipt. Thiếu thì reject/reconciliation, không đảo đúng invoice payment để đủ tiền |
+| `reversePayment` | Khác top-up reversal. **Technical recommendation** full nominal one/payment; credit ví chỉ net remaining sau prior refunds:800k đã refund100k thì thêm700k; fully released thì không zero WT. Không double reversed-filter+offset |
+| Read balance/history/due | Current scope/Parent link, consistent asOf, money strings; balance=ΣWT; chỉ expose receipt/audit fields được phép |
+
+**Locking recommendation Q1, chưa sign-off:** verified actor/affected User locks → Tenant NK/RC gate → fresh current auth/key/Approval/queue roots → Period/Run/G/source anchors → Wallet → Invoice/ledger parents → new records/audit. User SHARE vs global disable/revoke UPDATE cần tất cả IAM writers tham gia; không global distributed fence framework mặc định. Không Job-before-Tenant/invoice-before-Wallet/late User locks; exact SQL/implicit FK waits/grants cần R1b/R2 review. Missing wallet không fake balance.
+
+Immediate shape/FK/UQ/history/owner guards; cross-row final checks có thể deferred, ép named checks IMMEDIATE cuối command. Stored balance update một lần qua reviewed command cùng ledger, không service+trigger cùng cộng. Proposed grants cấm raw protected DML/DDL, narrow fixed domain commands/current scope; không generic gateway/policy engine. Không external I/O dưới lock; **chưa có SQL/concurrency proof**.
+
+**Approval/failure:** D1 manual decision/audit commit APPROVED bền; E1 explicit execute kiểm approved body/target obligation revision/current authority. Payment thay đổi có thể làm refund derived khác estimate nhưng không tự đổi approved obligation delta. Root effect identity theo approved request/version; reuse IdempotencyRecord là recommendation, không receipt table mới bắt buộc. All E1 effects+receipt+COMPLETED một TX; fail rollback E1, giữ D1, failure audit riêng. Unknown COMMIT lookup root trước retry, không key/G/policy mới; bounded transient retry sau rollback, no blind retry data/permission conflict.
+
+**Examples/proof:** B1m/pay800k→B200k; reduce N700k→refund100k/B300k/P700k. Paid300k reduce800→700→refund0/due400k. Reduce700→650→increase900→cancel0 chỉ hoàn thêm50k/0/remaining650k, giữ claims/history. N800k paid300+500 reduce600k→total refund200k; LIFO payment attribution còn technical recommendation. `B=ΣWT>=0`, `B+A_wallet=T_net_topups`; credit phải có release cùng amount. Top-up không revenue/allocated payment, no combo5% từ số dư6tháng.
+
+**G representation recommendation Q2:** một typed G(owner/run/student/period/key/base/policy/z/no)+immutable versioned input/result JSON, Run currentApplied pointer/CAS và indexed latest generation; full source-set/semantic price recheck dưới gate, không Source table/epoch/nhiều pointer layers nếu không cần. O12-D giữ G1/G2/history/local-session-date prices như thuật toán trên, wallet thay đổi không tạo G2. R1b chỉ minimum live period/source/snapshot contract, full generation R2-A. W01–W36 **DESIGNED**, DB/Prisma/runtime gates riêng, chưa feature ready.
 
 **Tests:** idempotency 2 payments đồng thời, overpayment, sibling verified/unverified, SESSION price override, tháng thiếu attendance, issue after 7 days due, issue twice conflict, adjustment authorized, ROUND_HALF_UP cuối công thức, không double billing từng participant.
 
@@ -260,6 +341,8 @@ sequenceDiagram
 
 `automation_jobs` persistent; worker claim `FOR UPDATE SKIP LOCKED` + lease; `job_attempts` append-only; operationKey/idempotency unique. Retry **tối đa 3 lần thử lại sau lần đầu**, backoff 1/5/15 phút cho transient; `NEEDS_INFORMATION`/`PENDING_APPROVAL` không retry vô hạn; `FAILED` alert Manager. Scheduler tính billing draft đầu tháng kế tiếp, không issue. Outbox dispatcher at-least-once, consumer phải idempotent. Job pin policy version từ lúc enqueue; sau restart reclaim expired lease nhưng kiểm tra lại actor permission/scope.
 
+**Wallet/simplification19/10:** worker không tự top-up/pay/approve. Claim/effect phải cùng entry order (poll IDs advisory trước locks), monotonic fencing/lease check/one-time finish còn technical sign-off. Initial+3 giữ; DB prose `attempt_count<=4` chưa SQL constraint. **Recommendation Q4 pending:** requeue khi count<4 không reset; sau exhaustion explicit synchronous manual domain execution cùng root/G/key giữ job FAILED history/audit riêng, không worker attempt5/cycles. Accepted receipt/G inputs không refresh do job fail, stale cần explicit new G. Recovery path/API chưa technical approved. DB-only outbox notification+dedup+DONE một TX là recommendation, không extra lease framework nếu không external I/O.
+
 ### 5.13. Audit & Traceability — P0 (FR-41; UC-35; Q-14)
 
 `audit_logs` append-only ít nhất gồm tenant, actorKind/user/membership, action/event/target, reason, safe before/after, policyVersion, correlationId, occurredAt; redact token/password/OTP/secret. Retention baseline **24 tháng**; không cung cấp update/delete qua nghiệp vụ. User được cấp permission tra cứu scoped, operator không có quyền xem tenant PII mặc định. Worker/approval records giải thích quyết định tự động, nhưng UI P0 chỉ cần tra cứu căn bản.
@@ -277,8 +360,8 @@ Railway private persistent Volume lưu bytes; PostgreSQL `stored_files` lưu met
 | `FinalizeAttendanceCoordinator` | Scheduling, Attendance, Audit | tất cả active participants đủ record, một finalization/session, no partial |
 | `GenerateBillingDraftCoordinator` | Attendance, Billing, TenantPolicy, Jobs, Audit | confirmed source; unique operation per student-period; incomplete ⇒ NEEDS_INFORMATION |
 | `IssueInvoiceCoordinator` | Billing, Workflow/Authorization, Audit | freeze invoice + claims, issue đúng quyền, no double-charge |
-| `RecordPaymentCoordinator` | Billing, Authorization, Audit | payment + allocation + ledger consistency; no overpay, idempotent |
-| `ExecuteApprovedFinancialChangeCoordinator` | Workflow, Billing, Audit | approve không tự thực thi; append adjustment sau recheck |
+| `FinancialCoordinator` (reuse financial use-case boundary) | Billing/Wallet, Workflow, Authorization, Audit | top-up/pay/reverse/approved adjustment-cancel+release/refund atomic; Wallet trước Invoice, root receipt; không nested partial commits |
+| `ExecuteApprovedFinancialChangeCoordinator` (entry delegating FinancialCoordinator) | Workflow, Billing/Wallet, Audit | D1 approve không effect; E1 recheck/apply/releases/credits/receipt/COMPLETED atomic, fail giữ decision |
 | `PublishAssignmentCoordinator` | Academic, Assignments, Notification/Outbox, Audit | assignment recipients + outbox committed cùng nhau |
 | `SubmitAssignmentCoordinator` | Assignments, File Management, Audit | READY files + version metadata atomic DB; filesystem eventually reconciled |
 

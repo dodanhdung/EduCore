@@ -1,5 +1,7 @@
 # EduCore — Class Design: Automation & Job
 
+**Wallet/simplification amendment19/10/2026:** B1–B5 **BUSINESS APPROVED**, minimal architecture **PRINCIPLE ACCEPTED**; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Retry/fencing/manual executor/SQL Q1–Q8 vẫn **RECOMMENDED / PENDING TECHNICAL SIGN-OFF**, không recovery-cycle framework.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-45, FR-39 (hỗ trợ)**, **UC-37, UC-34**, **BR-09, BR-12–BR-14**.
@@ -105,7 +107,7 @@ classDiagram
 
 | Method/contract (đề xuất) | Trách nhiệm / kiểm soát |
 |---|---|
-| `finish(result): void` | append-only record |
+| `finish(result): void` | PROPOSED one-time unfinished→terminal CAS; immutable input/identity, finished result không UPDATE/DELETE lại |
 | `isTransient(): boolean` | lỗi có thể retry |
 
 ### 3.3. `IdempotencyRecord`
@@ -230,6 +232,10 @@ classDiagram
 ## 4. Luồng phối hợp ứng dụng / transaction boundary
 
 Internal scheduler lấy các job due bằng transaction claim/lease → runner load policy version được pin, kiểm tra nguồn và permission hiện hành → check key/hash → route P0 operations hợp lệ → complete hoặc NEEDS_INFORMATION/PENDING_APPROVAL/FAILED; transient backoff 1/5/15 phút tối đa 3 lần **retry**. Outbox consumer dùng at-least-once + unique recipient dedup.
+
+**Bounded recovery:** initial+3 automatic, exhaustion FAILED+Manager alert; no reset fence/attempt count hoặc auto cycles. `attempt_count<=4` hiện DB design prose, chưa SQL CHECK. Wallet E.Q4 **proposal**: requeue chỉ count<4; sau4 explicit synchronous manual domain execution do current-authorized USER, same root/G/key/pin, giữ exhausted Job FAILED/attempt history và recovery audit/result riêng, không JobAttempt5/new recovery job. Job failure không refresh sealed G hoặc overwrite terminal root result; accepted G/receipt còn PREPARED/ACCEPTED tới apply hoặc stale disposition. Stale source cần explicit new G, không manual refresh. Path/API/count semantics cần technical sign-off, chưa approved bởi principle.
+
+**Financial boundary:** worker không tự top-up/pay/approve hoặc phát hành invoice. Root effect/retry không duplicate funds; approved financial changes do explicit authorized execution qua FinancialCoordinator. Claim polling chỉ advisory IDs trước common entry, không giữ Job lock rồi chờ Tenant; monotonic attempt fence/lease recheck khi effect, stale worker không commit. DB-only outbox notification+dedup+DONE cùng TX là minimal recommendation; không external I/O hay lease engine bổ sung khi không cần. Các critical roles/SQL guards/fencing/order tests W21/32/35/36 **DESIGNED**, PostgreSQL/runtime NOT RUN.
 
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
