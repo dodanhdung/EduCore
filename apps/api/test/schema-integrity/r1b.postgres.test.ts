@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
@@ -1766,15 +1766,21 @@ describe('R1b grants, recovery and catalogs', () => {
       const rows = await q.unsafe(
         'SELECT migration_name,finished_at,rolled_back_at FROM public._prisma_migrations ORDER BY migration_name',
       );
-      expect(rows.map((r) => r.migration_name)).toEqual([
-        '202610190001_r1a_baseline',
-        '202610190002_r1b_integrity',
-      ]);
+      expect(rows.map((r) => r.migration_name)).toEqual(
+        readdirSync(resolve('prisma/migrations'))
+          .filter((n) => /^\d{12}_/.test(n))
+          .sort(),
+      );
       expect(rows.every((r) => r.finished_at && !r.rolled_back_at)).toBe(true);
       const tables = await q.unsafe(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'",
       );
-      expect(tables).toHaveLength(63); // 62 domain tables + Prisma history
+      const modelCount = (
+        readFileSync(resolve('prisma/schema.prisma'), 'utf8').match(
+          /^model /gm,
+        ) ?? []
+      ).length;
+      expect(tables).toHaveLength(modelCount + 1); // domain tables + Prisma history
     },
   );
   it.skip('R1B-T37: populated legacy timezone adoption requires reviewed per-target evidence/migration', () => {});
@@ -1826,7 +1832,11 @@ describe('R1b grants, recovery and catalogs', () => {
             'SELECT count(*)::int AS n FROM public._prisma_migrations WHERE finished_at IS NOT NULL',
           )
         )[0].n,
-      ).toBe(2);
+      ).toBe(
+        readdirSync(resolve('prisma/migrations')).filter((n) =>
+          /^\d{12}_/.test(n),
+        ).length,
+      );
     },
   );
   testCase(

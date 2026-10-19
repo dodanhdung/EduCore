@@ -89,7 +89,7 @@ try {
   $environment.mounts = @($container.Mounts | Select-Object Type, Name, Destination)
   $ready = $false
   for ($attempt = 0; $attempt -lt 60; $attempt++) {
-    & $dockerCommand.Source --context $contextName exec $containerName pg_isready --quiet --username r1b_test_admin --dbname $databaseName 2>$null | Out-Null
+    & $dockerCommand.Source --context $contextName exec $containerName pg_isready --host 127.0.0.1 --quiet --username r1b_test_admin --dbname $databaseName 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { $ready = $true; break }
     Start-Sleep -Milliseconds 500
   }
