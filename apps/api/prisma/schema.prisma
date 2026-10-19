@@ -324,6 +324,11 @@ model AuthSession {
   expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
   lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+  accessTokenHash  String?   @map("access_token_hash") @db.Text
+  accessExpiresAt  DateTime? @map("access_expires_at") @db.Timestamptz(6)
+  csrfHash         String?   @map("csrf_hash") @db.Text
+  refreshHistory   RefreshTokenHistory[]
+  automationJobs   AutomationJob[]
 
   user                User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
   activeTenant        Tenant?              @relation(fields: [activeTenantId], references: [id], onDelete: Restrict)
@@ -332,6 +337,15 @@ model AuthSession {
   @@index([userId, revokedAt, expiresAt])
   @@index([activeTenantId])
   @@map("auth_sessions")
+}
+
+model RefreshTokenHistory {
+  tokenHash  String      @id @map("token_hash") @db.Text
+  sessionId  String      @map("session_id") @db.Uuid
+  consumedAt DateTime    @default(now()) @map("consumed_at") @db.Timestamptz(6)
+  session    AuthSession @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@map("refresh_token_history")
 }
 
 // Historical table name is retained for activation and password-reset OTPs.
@@ -768,6 +782,7 @@ model ParentStudentLink {
   parentMembershipId     String    @map("parent_membership_id") @db.Uuid
   studentId              String    @map("student_id") @db.Uuid
   relationship           String    @db.Text
+  evidenceReference      String?   @map("evidence_reference") @db.Text
   verifiedAt             DateTime? @map("verified_at") @db.Timestamptz(6)
   verifiedByMembershipId String?   @map("verified_by_membership_id") @db.Uuid
   revokedAt              DateTime? @map("revoked_at") @db.Timestamptz(6)
@@ -1715,6 +1730,11 @@ model AutomationJob {
   nextAttemptAt     DateTime            @map("next_attempt_at") @db.Timestamptz(6)
   leaseOwner        String?             @map("lease_owner") @db.Text
   leaseUntil        DateTime?           @map("lease_until") @db.Timestamptz(6)
+  fencingToken      BigInt              @default(0) @map("fencing_token")
+  requestHash       String              @map("request_hash") @db.Text
+  actorSessionId    String?             @map("actor_session_id") @db.Uuid
+  actorSession      AuthSession?        @relation(fields: [actorSessionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  leaseStartedAt    DateTime?           @map("lease_started_at") @db.Timestamptz(6)
   lastErrorCode     String?             @map("last_error_code") @db.Text
   payloadJson       Json                @map("payload_json") @db.JsonB
   resultJson        Json?               @map("result_json") @db.JsonB
@@ -1841,6 +1861,7 @@ model AuditLog {
   actorUserId       String?        @map("actor_user_id") @db.Uuid
   actorMembershipId String?        @map("actor_membership_id") @db.Uuid
   actorKind         AuditActorKind @map("actor_kind")
+  operatorIdentity  String?        @map("operator_identity") @db.Text
   eventType         String         @map("event_type") @db.Text
   entityType        String         @map("entity_type") @db.Text
   entityId          String         @map("entity_id") @db.Uuid

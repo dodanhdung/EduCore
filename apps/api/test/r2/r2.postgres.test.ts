@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   seed,
+  changeFixtureRole,
   put,
   type Query,
   waitBlocked,
@@ -2110,9 +2111,7 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
     async () => {
       const c = await fixture();
       await top(c);
-      await admin.unsafe("UPDATE roles SET code='STUDENT' WHERE id=$1", [
-        c.f.role,
-      ]);
+      await changeFixtureRole(admin,c.f,'STUDENT');
       await admin.unsafe(
         'UPDATE student_profiles SET membership_id=$1 WHERE id=$2',
         [c.f.member, c.f.student],
@@ -2139,9 +2138,7 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
     async () => {
       const c = await fixture();
       await top(c);
-      await admin.unsafe("UPDATE roles SET code='PARENT' WHERE id=$1", [
-        c.f.role,
-      ]);
+      await changeFixtureRole(admin,c.f,'PARENT');
       const link = await put(
         admin as unknown as Query,
         'parent_student_links',
@@ -2365,14 +2362,7 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
       EXISTS(SELECT FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') public_execute,
       has_function_privilege('educore_r2_command',p.oid,'EXECUTE') command_execute
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner WHERE n.nspname='educore_r2' ORDER BY p.proname`);
-      const expectedFunctions = (
-        readFileSync(
-          resolve(
-            'prisma/migrations/202610190004_r2_financial_integrity/migration.sql',
-          ),
-          'utf8',
-        ).match(/^CREATE FUNCTION educore_r2\./gm) ?? []
-      ).length;
+      const expectedFunctions = readdirSync(resolve('prisma/migrations')).filter(n=>/^\d{12}_/.test(n)).reduce((sum,name)=>sum+(readFileSync(resolve('prisma/migrations',name,'migration.sql'),'utf8').match(/^CREATE FUNCTION educore_r2\./gm)??[]).length,0);
       expect(functions).toHaveLength(expectedFunctions);
       for (const fn of functions) {
         expect(fn.rolname).toBe('educore_r2_owner');
