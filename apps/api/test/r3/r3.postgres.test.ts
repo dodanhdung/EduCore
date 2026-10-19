@@ -2,10 +2,17 @@ import 'reflect-metadata';
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import { Test, type TestingModule } from '@nestjs/testing';
 import postgres from 'postgres';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { readdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  readdirSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  copyFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -16,7 +23,10 @@ import {
   type Query,
 } from '../schema-integrity/support.js';
 import { R3Module } from '../../src/academic/r3.module.js';
-import { AcademicService } from '../../src/academic/academic.service.js';
+import {
+  AcademicService,
+  type PlacementEvidence,
+} from '../../src/academic/academic.service.js';
 import { R3Repository } from '../../src/academic/r3-repository.js';
 import { SchedulingService } from '../../src/scheduling/scheduling.service.js';
 import {
@@ -45,6 +55,39 @@ const native = (id: string, action: () => Promise<void>) =>
     }
   });
 const intent = () => ({ key: randomUUID(), reason: 'R3 native verification' });
+function deploy(config?: string) {
+  const require = createRequire(import.meta.url);
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        require.resolve('prisma/build/index.js'),
+        'migrate',
+        'deploy',
+        ...(config ? ['--config', config] : []),
+      ],
+      {
+        cwd: resolve('.'),
+        env: { ...process.env, DATABASE_URL: url },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 90_000,
+      },
+    );
+  } catch (error) {
+    const failure = error as { stdout?: Buffer; stderr?: Buffer };
+    throw Error(
+      (String(failure.stdout ?? '') + String(failure.stderr ?? ''))
+        .replaceAll(url, '[URL]')
+        .replaceAll(new URL(url).password, '[SECRET]'),
+    );
+  }
+}
+async function attendanceFunctionSecurity() {
+  const [row] = await admin.unsafe(
+    "SELECT p.proowner::regrole::text owner,p.proacl::text acl,p.prosecdef,p.proconfig FROM pg_proc p WHERE p.oid='educore_r3.attendance(uuid,jsonb)'::regprocedure",
+  );
+  return row;
+}
 
 beforeAll(async () => {
   if (process.env.R3_TEST_DISPOSABLE !== 'I_OWN_THIS_DISPOSABLE_CLUSTER')
@@ -70,26 +113,106 @@ beforeAll(async () => {
     admission.version >= 170000
   )
     throw Error('R3_TARGET_NOT_FRESH_POSTGRES16');
-  const require = createRequire(import.meta.url);
-  try {
-    execFileSync(
-      process.execPath,
-      [require.resolve('prisma/build/index.js'), 'migrate', 'deploy'],
-      {
-        cwd: resolve('.'),
-        env: { ...process.env, DATABASE_URL: url },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 90_000,
-      },
-    );
-  } catch (error) {
-    const failure = error as { stdout?: Buffer; stderr?: Buffer };
-    throw Error(
-      (String(failure.stdout ?? '') + String(failure.stderr ?? ''))
-        .replaceAll(url, '[URL]')
-        .replaceAll(target.password, '[SECRET]'),
+  // Exercise a real populated checkpoint007 -> 008/009 upgrade, keeping the
+  // recorded migrations byte-identical. R1b/R2 suites separately deploy all nine
+  // migrations on new databases, covering fresh deployment as well.
+  const baselineRoot = mkdtempSync(
+    join(tmpdir(), 'educore-r3-followup-baseline-'),
+  );
+  const baselineMigrations = join(baselineRoot, 'migrations');
+  mkdirSync(baselineMigrations);
+  copyFileSync(
+    resolve('prisma/migrations/migration_lock.toml'),
+    join(baselineMigrations, 'migration_lock.toml'),
+  );
+  const names = readdirSync(resolve('prisma/migrations'))
+    .filter((n) => /^\d{12}_/.test(n) && n.slice(0, 12) <= '202610190007')
+    .sort((a, b) => a.localeCompare(b));
+  expect(names).toHaveLength(7);
+  for (const name of names) {
+    mkdirSync(join(baselineMigrations, name));
+    copyFileSync(
+      resolve('prisma/migrations', name, 'migration.sql'),
+      join(baselineMigrations, name, 'migration.sql'),
     );
   }
+  const config = join(baselineRoot, 'prisma.config.mjs');
+  writeFileSync(
+    config,
+    'export default {schema:' +
+      JSON.stringify(resolve('prisma/schema.prisma')) +
+      ',migrations:{path:' +
+      JSON.stringify(baselineMigrations) +
+      '},datasource:{url:process.env.DATABASE_URL}};',
+  );
+  deploy(config);
+  const originalSecurity = await attendanceFunctionSecurity();
+  const reproductions = [];
+  const legacyReceipts = [];
+  for (const approve of [true, false]) {
+    const c = await earlyIssueFixture();
+    await finalized(c);
+    const generation = await c.generation.initial(
+      c.f.tenant,
+      c.f.student,
+      c.earlyPeriod,
+      intent(),
+    );
+    await c.invoice.issue(c.f.tenant, generation.invoiceId as string, intent());
+    const key = intent();
+    const decision = await c.leave.decide(
+      c.f.tenant,
+      c.pendingLeave,
+      approve,
+      key,
+    );
+    expect(decision.status).toBe(approve ? 'APPROVED' : 'REJECTED');
+    const [proof] = await admin.unsafe(
+      'SELECT educore_r3.time_locked(clock_timestamp(),ends_at) time_locked,(SELECT count(*)::int FROM invoiced_participation_claims WHERE participant_id=$2) claims FROM class_sessions WHERE id=$1',
+      [c.f.session, c.f.participant],
+    );
+    expect(proof).toMatchObject({ time_locked: false, claims: 1 });
+    reproductions.push({
+      operation: approve ? 'LEAVE_APPROVE' : 'LEAVE_REJECT',
+      checkpoint007: 'BUG_REPRODUCED',
+      proof,
+    });
+    legacyReceipts.push({ c, approve, key });
+  }
+  deploy();
+  expect(await attendanceFunctionSecurity()).toEqual(originalSecurity);
+  for (const { c, approve, key } of legacyReceipts) {
+    const before = await sourceAndFinance(c);
+    await expect(
+      c.leave.decide(c.f.tenant, c.pendingLeave, approve, key),
+    ).rejects.toThrow(/ISSUED_LEAVE_SOURCE/);
+    expect(await sourceAndFinance(c)).toEqual(before);
+  }
+  const history = await admin.unsafe(
+    'SELECT migration_name,checksum FROM _prisma_migrations WHERE finished_at IS NOT NULL',
+  );
+  for (const migration of history) {
+    expect(migration.checksum).toBe(
+      createHash('sha256')
+        .update(
+          readFileSync(
+            resolve(
+              'prisma/migrations',
+              migration.migration_name,
+              'migration.sql',
+            ),
+          ),
+        )
+        .digest('hex'),
+    );
+  }
+  evidence.followupUpgrade = {
+    baselineMigrations: names,
+    reproductions,
+    functionSecurity: originalSecurity,
+    allChecksumsMatch: true,
+    legacyReceiptReplaysBlockedWithoutEffects: true,
+  };
   evidence.admission = admission;
   evidence.migrations = await admin.unsafe(
     'SELECT migration_name,finished_at FROM _prisma_migrations ORDER BY migration_name',
@@ -134,7 +257,12 @@ const permissions = [
   'payment.record',
 ];
 async function fixture(
-  options: { start?: string; zone?: string; enrollmentFrom?: string } = {},
+  options: {
+    start?: string;
+    end?: string;
+    zone?: string;
+    enrollmentFrom?: string;
+  } = {},
 ) {
   const f = await seed(admin as unknown as Query, options);
   await admin.unsafe("UPDATE roles SET code='MANAGER' WHERE id=$1", [f.role]);
@@ -275,6 +403,134 @@ async function placement(c: Context) {
       'No published subject assessments; staff confirms target suitability',
   };
 }
+async function seedGrade(
+  c: Context,
+  options: {
+    studentId?: string;
+    classId?: string;
+    versionId?: string;
+    revision?: number;
+    score?: string;
+    status?: 'DRAFT' | 'PUBLISHED';
+    gradedAt?: string;
+    publishedAt?: string | null;
+  } = {},
+) {
+  let versionId = options.versionId;
+  if (!versionId) {
+    const assignment = await put(admin as unknown as Query, 'assignments', {
+      tenant_id: c.f.tenant,
+      class_id: options.classId ?? c.f.classId,
+      created_by_teacher_id: c.f.teacher,
+      title: 'Published subject assessment',
+      description:
+        'Synthetic existing grading evidence; no R5 application code',
+      priority: 1,
+      deadline_at: '2026-09-01',
+      status: 'PUBLISHED',
+      published_at: '2026-08-01',
+      revision: 1,
+    });
+    const recipient = await put(
+      admin as unknown as Query,
+      'assignment_recipients',
+      {
+        tenant_id: c.f.tenant,
+        assignment_id: assignment,
+        student_id: options.studentId ?? c.f.student,
+        assigned_at: '2026-08-01',
+      },
+    );
+    const submission = await put(admin as unknown as Query, 'submissions', {
+      tenant_id: c.f.tenant,
+      recipient_id: recipient,
+      status: 'SUBMITTED',
+    });
+    versionId = await put(admin as unknown as Query, 'submission_versions', {
+      tenant_id: c.f.tenant,
+      submission_id: submission,
+      version_no: 1,
+      submitted_at: '2026-08-10',
+      is_late: false,
+      status: 'SUBMITTED',
+    });
+  }
+  const gradeId = await put(admin as unknown as Query, 'grades', {
+    tenant_id: c.f.tenant,
+    submission_version_id: versionId,
+    revision_no: options.revision ?? 1,
+    score: options.score ?? '8.5',
+    graded_by_teacher_id: c.f.teacher,
+    graded_at: options.gradedAt ?? '2026-08-11',
+    status: options.status ?? 'PUBLISHED',
+    published_at:
+      options.publishedAt === undefined ? '2026-08-12' : options.publishedAt,
+  });
+  return { gradeId, versionId };
+}
+async function gradePlacement(
+  c: Context,
+  student = c.f.student,
+  classId = c.f.class2,
+): Promise<PlacementEvidence & { basis: 'PUBLISHED_GRADES' }> {
+  const context = await c.academic.placementContext(
+    c.f.tenant,
+    student,
+    classId,
+  );
+  return {
+    basis: 'PUBLISHED_GRADES',
+    subjectId: context.targetSubjectId,
+    levelId: context.targetLevelId,
+    reason:
+      'Authorized staff considers published scores, subject, assessment difficulty and dates',
+    grades: context.publishedAssessments.map(
+      ({ gradeId, revision, evidenceHash }) => ({
+        gradeId,
+        revision,
+        evidenceHash,
+      }),
+    ),
+  };
+}
+async function assessmentClass(c: Context, differentSubject = false) {
+  const [source] = await admin.unsafe(
+    'SELECT subject_id FROM courses WHERE id=$1',
+    [c.f.course],
+  );
+  const subject = differentSubject
+    ? await put(admin as unknown as Query, 'subjects', {
+        tenant_id: c.f.tenant,
+        code: randomUUID(),
+        name: 'Other subject',
+        active: true,
+      })
+    : source.subject_id;
+  const level = await put(admin as unknown as Query, 'levels', {
+    tenant_id: c.f.tenant,
+    code: randomUUID(),
+    name: 'Different assessment difficulty',
+    sort_order: 7,
+    active: true,
+  });
+  const course = await put(admin as unknown as Query, 'courses', {
+    tenant_id: c.f.tenant,
+    code: randomUUID(),
+    name: 'Assessment course',
+    subject_id: subject,
+    level_id: level,
+    status: 'ACTIVE',
+  });
+  const classId = await put(admin as unknown as Query, 'classes', {
+    tenant_id: c.f.tenant,
+    code: randomUUID(),
+    name: 'Assessment class',
+    course_id: course,
+    capacity: 10,
+    status: 'ACTIVE',
+  });
+  return { classId, course, subject, level };
+}
 async function assigned(
   c: Context,
   classId = c.f.classId,
@@ -324,7 +580,11 @@ async function historical(start = '2025-09-20T10:00:00Z') {
   );
   return c;
 }
-async function billingPeriod(c: Context) {
+async function billingPeriod(
+  c: Context,
+  monthStart = '2025-09-01',
+  monthEnd = '2025-10-01',
+) {
   await put(admin as unknown as Query, 'price_rules', {
     tenant_id: c.f.tenant,
     scope_kind: 'COURSE',
@@ -337,10 +597,95 @@ async function billingPeriod(c: Context) {
   });
   return put(admin as unknown as Query, 'billing_periods', {
     tenant_id: c.f.tenant,
-    month_start: '2025-09-01',
-    month_end: '2025-10-01',
+    month_start: monthStart,
+    month_end: monthEnd,
     status: 'OPEN',
   });
+}
+async function earlyIssueFixture(lateNotice = false) {
+  const [clock] =
+    await admin.unsafe(`SELECT to_char(date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 month','YYYY-MM-DD') month_start,
+    to_char(date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC'),'YYYY-MM-DD') month_end,
+    (date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')-interval '30 minutes') AT TIME ZONE 'UTC' starts,
+    clock_timestamp()-interval '1 hour' ends`);
+  // An intentionally long cross-period interval isolates ISSUE-before-48h with
+  // the REAL DB clock and real R2 closed-period/start-month rules. No clock GUC,
+  // time-dependent production function replacement or period bypass is used.
+  const c = await fixture({
+    start: new Date(clock.starts).toISOString(),
+    end: new Date(clock.ends).toISOString(),
+    zone: 'UTC',
+    enrollmentFrom: '2020-01-01',
+  });
+  await assigned(c);
+  await admin.unsafe(
+    'UPDATE teacher_profiles SET membership_id=$2 WHERE id=$1',
+    [c.f.teacher, c.f.member],
+  );
+  await admin.unsafe(
+    "UPDATE class_sessions SET status='COMPLETED' WHERE id=$1",
+    [c.f.session],
+  );
+  const requester = await actor(c, 'STUDENT');
+  const [policy] = await admin.unsafe(
+    "SELECT id FROM policy_versions WHERE tenant_id=$1 AND version_code='R3_CURRENT'",
+    [c.f.tenant],
+  );
+  const pendingLeave = await put(
+    admin as unknown as Query,
+    'absence_requests',
+    {
+      tenant_id: c.f.tenant,
+      participant_id: c.f.participant,
+      requester_membership_id: requester.f.member,
+      submitted_at: new Date(
+        new Date(clock.starts).getTime() - (lateNotice ? 23 : 25) * 3600000,
+      ).toISOString(),
+      reason: 'Synthetic original notice before the session',
+      is_late_notice: lateNotice,
+      status: 'PENDING_APPROVAL',
+      policy_version_id: policy.id,
+    },
+  );
+  const earlyPeriod = await billingPeriod(
+    c,
+    String(clock.month_start),
+    String(clock.month_end),
+  );
+  return { ...c, pendingLeave, earlyPeriod };
+}
+async function earlyDraft(lateNotice = false) {
+  const c = await earlyIssueFixture(lateNotice),
+    attendanceRecord = await finalized(c);
+  const generation = await c.generation.initial(
+    c.f.tenant,
+    c.f.student,
+    c.earlyPeriod,
+    intent(),
+  );
+  const [lock] = await admin.unsafe(
+    'SELECT educore_r3.time_locked(clock_timestamp(),ends_at) locked FROM class_sessions WHERE id=$1',
+    [c.f.session],
+  );
+  expect(lock.locked).toBe(false);
+  return { ...c, attendanceRecord, invoiceId: generation.invoiceId as string };
+}
+async function sourceAndFinance(c: Context) {
+  const [row] = await admin.unsafe(
+    `SELECT jsonb_build_object(
+    'leave',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM absence_requests x WHERE tenant_id=$1),
+    'attendance',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM attendance_records x WHERE tenant_id=$1),
+    'invoices',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM invoices x WHERE tenant_id=$1),
+    'lines',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM invoice_lines x WHERE tenant_id=$1),
+    'generations',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM billing_run_generations x WHERE tenant_id=$1),
+    'claims',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM invoiced_participation_claims x WHERE tenant_id=$1),
+    'wallets',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM wallet_accounts x WHERE tenant_id=$1),
+    'transactions',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM wallet_transactions x WHERE tenant_id=$1),
+    'auditCount',(SELECT count(*) FROM audit_logs WHERE tenant_id=$1),
+    'receipts',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM idempotency_records x WHERE tenant_id=$1)) snapshot`,
+    [c.f.tenant],
+  );
+  return row.snapshot;
 }
 async function finalized(c: Context) {
   const ar = await c.attendance.mark(
@@ -501,23 +846,37 @@ describe('R3-A Academic', () => {
         c.f.student,
         c.f.classId,
       );
-      expect(context.state).toBe('REQUIRES_GRADE_EVALUATION_POLICY');
+      expect(context.state).toBe('GRADE_CONFIRMATION_AVAILABLE');
       expect(context.publishedAssessments).toHaveLength(1);
       expect(context.publishedAssessments[0]).toMatchObject({
         score: '8.5',
         subjectId: context.targetSubjectId,
         assessmentLevelId: context.targetLevelId,
       });
-      await expect(
-        c.academic.enroll(
-          c.f.tenant,
-          c.f.class2,
-          c.f.student,
-          '2099-01-01',
-          await placement(c),
-          intent(),
-        ),
-      ).rejects.toThrow(/GRADE_SUITABILITY/);
+      const enrolled = await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student,
+        '2099-01-01',
+        {
+          basis: 'PUBLISHED_GRADES',
+          subjectId: context.targetSubjectId,
+          levelId: context.targetLevelId,
+          reason: 'Staff reviews the published subject assessment',
+          grades: context.publishedAssessments.map(
+            ({ gradeId, revision, evidenceHash }) => ({
+              gradeId,
+              revision,
+              evidenceHash,
+            }),
+          ),
+        },
+        intent(),
+      );
+      expect(enrolled.status).toBe('ACTIVE');
+      expect(
+        (enrolled.placementEvidence as { grades: unknown[] }).grades,
+      ).toHaveLength(1);
     },
   );
   native(
@@ -804,6 +1163,629 @@ describe('R3-A Academic', () => {
           )
         )[0].enrollment_id,
       ).toBe(result.id);
+    },
+  );
+});
+
+describe('R3 follow-up leave claim guard', () => {
+  native(
+    'FU-A06 late approval replay rechecks the specific late permission without effects',
+    async () => {
+      const c = await earlyDraft(true),
+        key = intent();
+      await c.leave.decide(c.f.tenant, c.pendingLeave, true, key);
+      await admin.unsafe(
+        "DELETE FROM role_permissions WHERE role_id=$1 AND permission_id=(SELECT id FROM permissions WHERE code='absence.approve_late')",
+        [c.f.role],
+      );
+      const before = await sourceAndFinance(c);
+      await expect(
+        c.leave.decide(c.f.tenant, c.pendingLeave, true, key),
+      ).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+      expect(await sourceAndFinance(c)).toEqual(before);
+    },
+  );
+  native(
+    'FU-A01 valid pending decisions and replay before ISSUE retain authorization checks',
+    async () => {
+      for (const approve of [true, false]) {
+        const c = await earlyDraft(),
+          key = intent();
+        const decision = await c.leave.decide(
+          c.f.tenant,
+          c.pendingLeave,
+          approve,
+          key,
+        );
+        expect(decision.status).toBe(approve ? 'APPROVED' : 'REJECTED');
+        expect(
+          await c.leave.decide(c.f.tenant, c.pendingLeave, approve, key),
+        ).toEqual(decision);
+        await admin.unsafe(
+          'UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',
+          [c.f.membershipRole],
+        );
+        await expect(
+          c.leave.decide(c.f.tenant, c.pendingLeave, approve, key),
+        ).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+      }
+    },
+  );
+  native(
+    'FU-A02 issued approval/rejection and forged target hints fail without any source or financial effects',
+    async () => {
+      for (const approve of [true, false]) {
+        const c = await earlyDraft();
+        await c.invoice.issue(c.f.tenant, c.invoiceId, intent());
+        const before = await sourceAndFinance(c);
+        await expect(
+          c.leave.decide(c.f.tenant, c.pendingLeave, approve, intent()),
+        ).rejects.toThrow(
+          /ISSUED_LEAVE_SOURCE_REQUIRES_FINANCIAL_CORRECTION_PATH/,
+        );
+        await expect(
+          c.repository.command('attendance', c.f.tenant, {
+            ...intent(),
+            operation: approve ? 'LEAVE_APPROVE' : 'LEAVE_REJECT',
+            absenceId: c.pendingLeave,
+            participantId: randomUUID(),
+            sessionId: randomUUID(),
+          }),
+        ).rejects.toThrow(/ISSUED_LEAVE_SOURCE/);
+        const other = await fixture();
+        await expect(
+          c.leave.decide(other.f.tenant, c.pendingLeave, approve, intent()),
+        ).rejects.toThrow(/SESSION_NOT_CURRENT/);
+        await expect(
+          c.leave.decide(c.f.tenant, other.f.participant, approve, intent()),
+        ).rejects.toThrow(/LEAVE_TARGET_NOT_ACCESSIBLE/);
+        expect(await sourceAndFinance(c)).toEqual(before);
+      }
+    },
+  );
+  native(
+    'FU-A03 real ISSUE before 48h locks ordinary teacher marking independently of elapsed-time lock',
+    async () => {
+      const c = await earlyDraft();
+      await c.invoice.issue(c.f.tenant, c.invoiceId, intent());
+      const [proof] = await admin.unsafe(
+        'SELECT educore_r3.time_locked(clock_timestamp(),ends_at) time_locked,(SELECT count(*)::int FROM invoiced_participation_claims WHERE participant_id=$2) claims FROM class_sessions WHERE id=$1',
+        [c.f.session, c.f.participant],
+      );
+      expect(proof).toMatchObject({ time_locked: false, claims: 1 });
+      await admin.unsafe("UPDATE roles SET code='TEACHER' WHERE id=$1", [
+        c.f.role,
+      ]);
+      await expect(
+        c.attendance.mark(
+          c.f.tenant,
+          c.f.session,
+          c.f.participant,
+          'UNEXCUSED',
+          1,
+          intent(),
+        ),
+      ).rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED/);
+      evidence.earlyIssue = {
+        time_locked: proof.time_locked,
+        claims: proof.claims,
+        clockOverride: false,
+        fixture: 'cross-period interval, real closed local-start month',
+      };
+    },
+  );
+  native(
+    'FU-A04 LEAVE_APPROVE/REJECT vs ISSUE both writer orders and first-writer rollback',
+    async () => {
+      for (const approve of [true, false])
+        for (const issueFirst of [true, false])
+          for (const commit of [true, false]) {
+            const c = await earlyDraft();
+            const decide = (q: Query) =>
+              command(q, c, 'attendance', {
+                ...intent(),
+                operation: approve ? 'LEAVE_APPROVE' : 'LEAVE_REJECT',
+                absenceId: c.pendingLeave,
+              });
+            const issue = (q: Query) =>
+              command(q, c, 'billing', {
+                ...intent(),
+                operation: 'ISSUE',
+                invoiceId: c.invoiceId,
+              });
+            const outcome = await race(
+              c,
+              `${approve ? 'approve' : 'reject'} vs ISSUE ${issueFirst ? 'ISSUE first' : 'leave first'}`,
+              issueFirst ? issue : decide,
+              issueFirst ? decide : issue,
+              commit,
+            );
+            // Pending-leave decisions do not change this finalized ATTENDED
+            // billing basis. Leave-first may therefore commit before ISSUE;
+            // ISSUE-first must seal both approval and rejection operations.
+            expect(outcome.code).toBe(commit && issueFirst ? '23514' : null);
+            const [sealed] =
+              await admin`SELECT count(*)::int n FROM invoiced_participation_claims WHERE tenant_id=${c.f.tenant}::uuid AND participant_id=${c.f.participant}::uuid`;
+            expect(sealed.n).toBe(!issueFirst || commit ? 1 : 0);
+          }
+    },
+  );
+  native(
+    'FU-A05 claim guard also denies replay of a previous valid rejection after ISSUE',
+    async () => {
+      const c = await earlyDraft(),
+        key = intent();
+      await c.leave.decide(c.f.tenant, c.pendingLeave, false, key);
+      await c.invoice.issue(c.f.tenant, c.invoiceId, intent());
+      const before = await sourceAndFinance(c);
+      await expect(
+        c.leave.decide(c.f.tenant, c.pendingLeave, false, key),
+      ).rejects.toThrow(/ISSUED_LEAVE_SOURCE/);
+      expect(await sourceAndFinance(c)).toEqual(before);
+    },
+  );
+});
+
+describe('R3 follow-up grade-backed placement', () => {
+  native(
+    'FU-B01 latest valid published revisions, multiple dates and assessment levels remain review evidence',
+    async () => {
+      const c = await fixture(),
+        assessment = await assessmentClass(c);
+      const first = await seedGrade(c, { score: '6.5' });
+      const latest = await seedGrade(c, {
+        versionId: first.versionId,
+        revision: 2,
+        score: '7.5',
+        gradedAt: '2026-09-01',
+        publishedAt: '2026-09-02',
+      });
+      await seedGrade(c, {
+        versionId: first.versionId,
+        revision: 3,
+        score: '9.5',
+        status: 'DRAFT',
+        publishedAt: null,
+      });
+      const second = await seedGrade(c, {
+        classId: assessment.classId,
+        score: '8.1',
+        gradedAt: '2026-10-01',
+        publishedAt: '2026-10-02',
+      });
+      const context = await c.academic.placementContext(
+        c.f.tenant,
+        c.f.student,
+        c.f.class2,
+      );
+      expect(context.state).toBe('GRADE_CONFIRMATION_AVAILABLE');
+      expect(context.automaticRecommendation).toBe(
+        'DEFERRED_NO_APPROVED_RUBRIC',
+      );
+      expect(context.publishedAssessments.map((g) => g.gradeId)).toEqual([
+        second.gradeId,
+        latest.gradeId,
+      ]);
+      expect(context.publishedAssessments.map((g) => g.score)).toEqual([
+        '8.1',
+        '7.5',
+      ]);
+      expect(
+        new Set(context.publishedAssessments.map((g) => g.assessmentLevelId))
+          .size,
+      ).toBe(2);
+      const result = await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student,
+        '2099-01-01',
+        await gradePlacement(c),
+        intent(),
+      );
+      expect(result.status).toBe('ACTIVE');
+      expect(
+        (
+          result.placementEvidence as { grades: { gradeId: string }[] }
+        ).grades.map((g) => g.gradeId),
+      ).toEqual([second.gradeId, latest.gradeId]);
+    },
+  );
+  native(
+    'FU-B02 wrong student, subject, tenant and unpublished grade IDs cannot be asserted by caller',
+    async () => {
+      const c = await fixture(),
+        other = await fixture(),
+        otherSubject = await assessmentClass(c, true);
+      await seedGrade(c, { studentId: c.f.student2 });
+      await seedGrade(c, { classId: otherSubject.classId });
+      await seedGrade(other);
+      const wrongStudent = await gradePlacement(c, c.f.student2),
+        wrongSubject = await gradePlacement(
+          c,
+          c.f.student,
+          otherSubject.classId,
+        ),
+        foreign = await gradePlacement(other);
+      const draft = await seedGrade(c, { status: 'DRAFT', publishedAt: null });
+      const base = await placement(c);
+      const invalid = [
+        wrongStudent.grades[0],
+        wrongSubject.grades[0],
+        foreign.grades[0],
+        { gradeId: draft.gradeId, revision: 1, evidenceHash: '0'.repeat(64) },
+      ];
+      for (const reference of invalid) {
+        await expect(
+          c.academic.enroll(
+            c.f.tenant,
+            c.f.class2,
+            c.f.student,
+            '2099-01-01',
+            { ...base, basis: 'PUBLISHED_GRADES', grades: [reference] },
+            intent(),
+          ),
+        ).rejects.toThrow(/STALE_OR_INELIGIBLE/);
+      }
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT count(*)::int n FROM enrollments WHERE class_id=$1',
+            [c.f.class2],
+          )
+        )[0].n,
+      ).toBe(0);
+      expect(
+        (await c.academic.placementContext(c.f.tenant, c.f.student, c.f.class2))
+          .publishedAssessments,
+      ).toHaveLength(0);
+    },
+  );
+  native(
+    'FU-B03 changed score, latest revision or source metadata between context read and confirmation is stale',
+    async () => {
+      const c = await fixture(),
+        grade = await seedGrade(c),
+        old = await gradePlacement(c);
+      await admin.unsafe(
+        'UPDATE grades SET score=7.0,updated_at=clock_timestamp() WHERE id=$1',
+        [grade.gradeId],
+      );
+      await expect(
+        c.academic.enroll(
+          c.f.tenant,
+          c.f.class2,
+          c.f.student,
+          '2099-01-01',
+          old,
+          intent(),
+        ),
+      ).rejects.toThrow(/STALE_OR_INELIGIBLE/);
+      const current = await gradePlacement(c);
+      await seedGrade(c, {
+        versionId: grade.versionId,
+        revision: 2,
+        score: '8.0',
+      });
+      await expect(
+        c.academic.enroll(
+          c.f.tenant,
+          c.f.class2,
+          c.f.student,
+          '2099-01-01',
+          current,
+          intent(),
+        ),
+      ).rejects.toThrow(/STALE_OR_INELIGIBLE/);
+      const assessment = await assessmentClass(c);
+      await seedGrade(c, { classId: assessment.classId });
+      const metadata = await gradePlacement(c);
+      await admin.unsafe(
+        'UPDATE courses SET level_id=(SELECT level_id FROM courses WHERE id=$2) WHERE id=$1',
+        [assessment.course, c.f.course],
+      );
+      await expect(
+        c.academic.enroll(
+          c.f.tenant,
+          c.f.class2,
+          c.f.student,
+          '2099-01-01',
+          metadata,
+          intent(),
+        ),
+      ).rejects.toThrow(/STALE_OR_INELIGIBLE/);
+    },
+  );
+  native(
+    'FU-B04 missing/duplicate evidence is denied; confirmed audit and replay retain DB-derived scores',
+    async () => {
+      const c = await fixture();
+      await seedGrade(c);
+      const valid = await gradePlacement(c);
+      for (const placementInput of [
+        undefined,
+        { ...valid, grades: [] },
+        { ...valid, grades: [valid.grades[0], valid.grades[0]] },
+        {
+          ...valid,
+          grades: [{ gradeId: valid.grades[0].gradeId, revision: 1 }],
+        },
+      ]) {
+        await expect(
+          c.repository.command('academic', c.f.tenant, {
+            ...intent(),
+            operation: 'ENROLL',
+            classId: c.f.class2,
+            studentId: c.f.student,
+            effectiveFrom: '2099-01-01',
+            placement: placementInput,
+          }),
+        ).rejects.toThrow(/PLACEMENT_/);
+      }
+      const key = intent();
+      const forged = {
+        ...valid,
+        grades: [{ ...valid.grades[0], score: '10.0' }],
+      };
+      const enrolled = await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student,
+        '2099-01-01',
+        forged,
+        key,
+      );
+      const snapshot = enrolled.placementEvidence as {
+        grades: { score: string }[];
+        confirmedByMembershipId: string;
+        confirmedAt: string;
+        targetCourseId: string;
+      };
+      expect(snapshot.grades[0].score).toBe('8.5');
+      expect(snapshot.confirmedByMembershipId).toBe(c.f.member);
+      expect(snapshot.targetCourseId).toBe(c.f.course);
+      expect(snapshot.confirmedAt).toBeTruthy();
+      const [audit] = await admin.unsafe(
+        "SELECT after_json FROM audit_logs WHERE tenant_id=$1 AND event_type='R3:ENROLL'",
+        [c.f.tenant],
+      );
+      expect(audit.after_json.result.placementEvidence).toEqual(snapshot);
+      await admin.unsafe('UPDATE grades SET score=5.0 WHERE id=$1', [
+        valid.grades[0].gradeId,
+      ]);
+      expect(
+        await c.academic.enroll(
+          c.f.tenant,
+          c.f.class2,
+          c.f.student,
+          '2099-01-01',
+          forged,
+          key,
+        ),
+      ).toEqual(enrolled);
+    },
+  );
+  native(
+    'FU-B05 grade-backed transfer confirms explicitly and preserves original historical enrollment',
+    async () => {
+      const c = await historical();
+      await seedGrade(c);
+      const evidence = await gradePlacement(c);
+      const request = await c.academic.requestTransfer(
+        c.f.tenant,
+        c.f.enrollment,
+        c.f.class2,
+        '2099-01-01',
+        intent(),
+      );
+      expect(
+        (
+          await admin.unsafe('SELECT status FROM enrollments WHERE id=$1', [
+            c.f.enrollment,
+          ])
+        )[0].status,
+      ).toBe('ACTIVE');
+      const staff = await actor(c, 'ACADEMIC_STAFF');
+      const confirmation = await staff.academic.confirmTransfer(
+        c.f.tenant,
+        request.id,
+        evidence,
+        intent(),
+      );
+      expect(confirmation.status).toBe('CONFIRMED');
+      expect(
+        (confirmation.placementEvidence as { confirmedByMembershipId: string })
+          .confirmedByMembershipId,
+      ).toBe(staff.f.member);
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT enrollment_id FROM session_participants WHERE id=$1',
+            [c.f.participant],
+          )
+        )[0].enrollment_id,
+      ).toBe(c.f.enrollment);
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT prior_enrollment_id FROM enrollments WHERE id=$1',
+            [confirmation.id],
+          )
+        )[0].prior_enrollment_id,
+      ).toBe(c.f.enrollment);
+    },
+  );
+  native(
+    'FU-B06 ENTRY_TEST and reasoned staff fallback work without certificates, including unsuitable existing grades',
+    async () => {
+      const c = await fixture();
+      await seedGrade(c);
+      const base = await placement(c);
+      const entry = await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student,
+        '2099-01-01',
+        {
+          ...base,
+          basis: 'ENTRY_TEST',
+          reason:
+            'Published assessment does not cover the target difficulty; entry test reviewed by staff',
+        },
+        intent(),
+      );
+      expect((entry.placementEvidence as { basis: string }).basis).toBe(
+        'ENTRY_TEST',
+      );
+      const noGrades = await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student2,
+        '2099-01-01',
+        base,
+        intent(),
+      );
+      expect((noGrades.placementEvidence as { basis: string }).basis).toBe(
+        'STAFF_CONFIRMATION',
+      );
+      const student = await actor(c, 'STUDENT');
+      await admin.unsafe(
+        'UPDATE student_profiles SET membership_id=$2 WHERE id=$1',
+        [c.f.student, student.f.member],
+      );
+      await expect(
+        student.academic.placementContext(c.f.tenant, c.f.student, c.f.class2),
+      ).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+      await expect(
+        student.academic.enroll(
+          c.f.tenant,
+          c.f.class2,
+          c.f.student,
+          '2099-01-01',
+          base,
+          intent(),
+        ),
+      ).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    },
+  );
+  native(
+    'FU-B07 concurrent published revision vs confirmation rejects stale input or preserves committed receipt',
+    async () => {
+      for (const gradeFirst of [true, false]) {
+        const c = await fixture(),
+          grade = await seedGrade(c),
+          placementInput = await gradePlacement(c),
+          key = intent();
+        const publish = (q: Query) =>
+          put(q, 'grades', {
+            tenant_id: c.f.tenant,
+            submission_version_id: grade.versionId,
+            revision_no: 2,
+            score: '9.0',
+            graded_by_teacher_id: c.f.teacher,
+            graded_at: '2026-09-01',
+            published_at: '2026-09-02',
+            status: 'PUBLISHED',
+          });
+        const enroll = (q: Query) =>
+          command(q, c, 'academic', {
+            ...key,
+            operation: 'ENROLL',
+            classId: c.f.class2,
+            studentId: c.f.student,
+            effectiveFrom: '2099-01-01',
+            placement: placementInput,
+          });
+        const outcome = await race(
+          c,
+          'published grade revision vs enrollment',
+          gradeFirst ? publish : enroll,
+          gradeFirst ? enroll : publish,
+          true,
+          gradeFirst,
+          !gradeFirst,
+        );
+        expect(outcome.code).toBe(gradeFirst ? '23514' : null);
+        if (!gradeFirst) {
+          const [receipt] = await admin.unsafe(
+            "SELECT result_snapshot FROM idempotency_records WHERE tenant_id=$1 AND operation_type='R3:ENROLL' AND idempotency_key=$2",
+            [c.f.tenant, key.key],
+          );
+          expect(
+            receipt.result_snapshot.placementEvidence.grades[0].gradeId,
+          ).toBe(grade.gradeId);
+          expect(
+            await c.academic.enroll(
+              c.f.tenant,
+              c.f.class2,
+              c.f.student,
+              '2099-01-01',
+              placementInput,
+              key,
+            ),
+          ).toEqual(receipt.result_snapshot);
+        }
+      }
+    },
+  );
+  native(
+    'FU-B08 grade-backed confirmation cannot change Billing generations, issued claims or wallet effects',
+    async () => {
+      const c = await historical(),
+        period = await billingPeriod(c);
+      await finalized(c);
+      const generation = await c.generation.initial(
+        c.f.tenant,
+        c.f.student,
+        period,
+        intent(),
+      );
+      await c.invoice.issue(
+        c.f.tenant,
+        generation.invoiceId as string,
+        intent(),
+      );
+      await seedGrade(c);
+      const [before] = await admin.unsafe(
+        'SELECT input_snapshot,result_snapshot FROM billing_run_generations WHERE id=$1',
+        [generation.id as string],
+      );
+      await c.academic.enroll(
+        c.f.tenant,
+        c.f.class2,
+        c.f.student,
+        '2099-01-01',
+        await gradePlacement(c),
+        intent(),
+      );
+      const [after] = await admin.unsafe(
+        'SELECT input_snapshot,result_snapshot FROM billing_run_generations WHERE id=$1',
+        [generation.id as string],
+      );
+      expect(after).toEqual(before);
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT count(*)::int n FROM billing_run_generations WHERE tenant_id=$1',
+            [c.f.tenant],
+          )
+        )[0].n,
+      ).toBe(1);
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT count(*)::int n FROM wallet_transactions WHERE tenant_id=$1',
+            [c.f.tenant],
+          )
+        )[0].n,
+      ).toBe(0);
+      expect(
+        (
+          await admin.unsafe(
+            'SELECT count(*)::int n FROM invoiced_participation_claims WHERE participant_id=$1',
+            [c.f.participant],
+          )
+        )[0].n,
+      ).toBe(1);
     },
   );
 });

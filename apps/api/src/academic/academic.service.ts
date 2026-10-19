@@ -5,15 +5,23 @@ export interface R3Intent {
   key: string;
   reason: string;
 }
-/** Minimal placement contract. Grade-backed evaluation needs a reviewed
- * subject/difficulty/recency policy; no universal score-to-level thresholds. */
-export interface PlacementEvidence {
-  basis: 'STAFF_CONFIRMATION' | 'ENTRY_TEST';
+export interface PlacementGradeReference {
+  gradeId: string;
+  revision: number;
+  evidenceHash: string;
+}
+/** Staff confirms suitability in the enrollment/transfer command. Published
+ * evidence is re-read and snapshotted by PostgreSQL; no automatic level rubric. */
+export type PlacementEvidence = {
   subjectId: string;
   levelId: string;
   reason: string;
-}
+} & (
+  | { basis: 'STAFF_CONFIRMATION' | 'ENTRY_TEST' }
+  | { basis: 'PUBLISHED_GRADES'; grades: PlacementGradeReference[] }
+);
 export interface PlacementAssessmentContext {
+  targetCourseId: string;
   targetSubjectId: string;
   targetLevelId: string;
   publishedAssessments: {
@@ -25,8 +33,10 @@ export interface PlacementAssessmentContext {
     publishedAt: string;
     submissionVersionId: string;
     revision: number;
+    evidenceHash: string;
   }[];
-  state: 'FALLBACK_AVAILABLE' | 'REQUIRES_GRADE_EVALUATION_POLICY';
+  state: 'FALLBACK_AVAILABLE' | 'GRADE_CONFIRMATION_AVAILABLE';
+  automaticRecommendation: 'DEFERRED_NO_APPROVED_RUBRIC';
 }
 export function intent(input: R3Intent) {
   if (!input.key?.trim() || input.key.length > 200 || !input.reason?.trim())

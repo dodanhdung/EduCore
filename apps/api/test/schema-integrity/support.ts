@@ -174,6 +174,7 @@ export async function seed(
   q: Query,
   opts: {
     start?: string;
+    end?: string;
     zone?: string;
     firstSource?: 'series' | 'session' | 'period';
     sessionStatus?: 'DRAFT' | 'CANCELLED';
@@ -330,7 +331,8 @@ export async function seed(
     teacher_id: teacher,
     delivery_mode: 'ONLINE',
     starts_at: start,
-    ends_at: new Date(new Date(start).getTime() + 3600000).toISOString(),
+    ends_at:
+      opts.end ?? new Date(new Date(start).getTime() + 3600000).toISOString(),
     status: opts.sessionStatus ?? 'DRAFT',
     revision: 1,
     policy_version_id: policy,

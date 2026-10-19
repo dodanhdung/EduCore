@@ -347,3 +347,206 @@ tests and the closed branches above. The 42 native cases and preserved R1b/R2
 regressions verify the implemented internal subset. They do not justify calling
 the entire R3 acceptance matrix complete, closing H-04 or claiming authenticated
 HTTP/production readiness. Work stops at R3; R4/R5/frontend were not started.
+
+## R3 Follow-up — Leave Claim Guard & Grade-Based Placement
+
+Date: 2026-10-19, Asia/Ho_Chi_Minh. This section records the follow-up against the
+committed R3 checkpoint. Sections A–O above are preserved as historical evidence;
+the changed placement and early-ISSUE statuses below supersede their old status
+descriptions only. No finding or project-wide acceptance is silently closed.
+
+### Baseline, scope and sources
+
+- Branch: `feat/scheduling-attendance-r3`.
+- Initial/final HEAD: `24482eb27b219e2339c3ecf150010857a44e725a`.
+- Initial working tree and index: clean. Migrations 001–007 already existed in
+  the checkpoint and remain byte-identical. No Git mutation was performed.
+- Scope: repair leave claim resolution/replay ordering; enable grade-backed
+  authorized enrollment/transfer; native regression and an append-only report
+  update. No frontend, R4 runtime or new R5 grading application.
+- Sources: the owner's R3 follow-up and prior approved enrollment/placement
+  decisions; AGENTS, PROJECT_CONTEXT, DECISION_REGISTER; current Requirements
+  v5/v5.1, UC v1.3 (Q-03/Q-05 and related FR/BR); existing DB/Detailed/API and
+  Academic, Academic Exceptions, Attendance/Leave, Scheduling, Assignments/Grading
+  and Billing class designs; actual migrations/services and R2/R3 reports.
+  Historical implementation-status paragraphs in project documents remain stale;
+  this report uses the checked-out branch and measured evidence.
+
+### Root cause and forward migrations
+
+Migration007 checked `invoiced_participation_claims.participant_id=p.id` before
+loading `p`. Its NULL ID made EXISTS false. The harness deploys the original seven
+migrations first and reproduces **both** APPROVE and REJECT succeeding after real
+ISSUE, with `time_locked=false` and one permanent claim.
+
+Migration008 replaces only `attendance(uuid,jsonb)`. It resolves absence → actual
+participant → session within the tenant, authorizes, locks/revalidates source
+rows, validates the identity chain and checks claims using the loaded participant.
+The existing principal takes User SHARE → Tenant NO KEY UPDATE before resolution;
+ISSUE uses that same predicate gate, including when no claim exists yet. No
+invoice/wallet lock or mutation is introduced. The claim check precedes replay
+and decision effects. Late approval also rechecks `absence.approve_late` before
+replay, so revoking that specific permission cannot expose an old approval result.
+Signature, owner, SECURITY DEFINER, search_path and command ACL are preserved.
+
+Migration009 adds private grade-evidence helpers and replaces placement/context
+and academic functions without adding tables or columns. It adds a grade source
+tenant-gate trigger to serialize new revision phantoms with confirmation. Existing
+source rows are locked FOR SHARE; narrow `UPDATE(id)` privileges for the NOLOGIN
+owner allow those locks and confer no raw DML on runtime LOGINs. Future R5 writers
+must still follow User → Tenant before source DML. This is not a grading writer,
+published-grade lifecycle or authorization API.
+
+| New migration | SHA-256 of actual file bytes |
+|---|---|
+| `202610190008_r3_leave_claim_guard` | `88d947296253dcfd674466562e612daaf873e0dbd2cb755722ae64a9330e30dd` |
+| `202610190009_r3_grade_placement` | `1a87180879defb3f7e542e0d8dcd1324efd802b58cade08fc7e25d9d00d211b6` |
+
+### Grade-backed placement contract — IMPLEMENTED
+
+`placementContext` returns the target course/subject/level and same-subject
+published assessment candidates, newest publication first. The database verifies
+Grade → SubmissionVersion → Submission → AssignmentRecipient → Assignment →
+Class → Course, including every tenant and student ownership predicate. Only
+SUBMITTED versions and valid PUBLISHED grades with nonfuture publication and
+`gradedAt <= publishedAt` qualify. It chooses the latest valid published revision
+per submission version; a newer DRAFT does not hide an earlier published revision.
+
+Evidence includes score as a decimal string, assessment subject/level, publication
+and grading times, Grade ID/revision, source lineage and an evidence hash. There
+is no hard age cutoff or universal score threshold. Different assessment levels
+remain evidence for staff judgment; Level.sortOrder performs no conversion.
+
+An authorized Manager/Academic Staff confirms within the existing ENROLL or
+TRANSFER_CONFIRM command using basis `PUBLISHED_GRADES`, target subject/level,
+nonempty reason and one or more `{gradeId, revision, evidenceHash}` references.
+The command re-reads and locks current database evidence, rejects ineligible,
+duplicate, missing or stale references, and ignores caller-supplied scores or
+identity metadata. Changed score, published revision or source level invalidates
+the context hash. A new context must be reviewed before retrying stale input.
+
+The trusted snapshot is stored in `result.placementEvidence`, already persisted
+immutably by audit and idempotency receipts. It contains selected DB-derived
+grades, lineage, target course/subject/level, confirmer membership, DB time and
+reason. Request hashing remains based on the original request. Successful replay
+returns the original receipt after fresh authorization; later grade changes do
+not rewrite historical confirmation evidence. Transfer still requires explicit
+authorized confirmation and preserves original participant/enrollment lineage.
+
+`ENTRY_TEST` and reasoned `STAFF_CONFIRMATION` remain available when suitable
+results are unavailable. The existence of any same-subject grade alone no longer
+blocks enrollment. The receipt records available candidate count and the fallback
+reason. No certificate is required; StudentProfile is unchanged. Staff assesses
+grade suitability, including time and difficulty, because no approved rubric is
+present. **Automatic recommendation remains `DEFERRED_NO_APPROVED_RUBRIC`.**
+
+### Cases and temporal/concurrency evidence
+
+| Cases | Verified behavior | Result |
+|---|---|---|
+| Checkpoint007 → 008/009 upgrade | Old APPROVE/REJECT bug reproduced; real forward deploy; all migration checksums match; owner/ACL preserved; legacy buggy receipts denied without effects | PASS |
+| FU-A01, FU-A06 | Ordinary approve/reject and replay; fresh general and specific late permission checks | PASS |
+| FU-A02, FU-A05 | ISSUED claims block approval/rejection and old replay; forged participant/session hints and wrong tenant cannot bypass; finance/source/audit/receipt snapshots unchanged | PASS |
+| FU-A03 | Real ISSUE with `time_locked=false`; actual assigned Teacher cannot ordinarily edit the source | PASS |
+| FU-A04 | APPROVE/REJECT vs ISSUE, both writer orders and first-writer COMMIT/ROLLBACK, eight observed waits | PASS |
+| FU-B01 | Latest valid published revisions, multiple dates/levels, grade-backed enrollment | PASS |
+| FU-B02–04 | Wrong student/subject/tenant, DRAFT, missing/duplicate/hashless/stale evidence rejected; DB-derived immutable audit and replay | PASS |
+| FU-B05–06 | Explicit authorized transfer and historical lineage; entry-test/no-grade/unsuitable-grade fallback; unauthorized actor denied | PASS |
+| FU-B07 | Published revision vs confirmation, both writer orders; stale read rejected or committed receipt retained | PASS |
+| FU-B08 | Grade-backed future enrollment preserves existing G1 snapshot, issued claim and wallet | PASS |
+| Existing A/B/C/D/X cases | Academic, scheduling, 48h boundary, attendance, source correction, G1/G2 and authorization regressions retained; A09 updated to the now-working grade-backed branch | PASS |
+
+Early-ISSUE fixtures use an intentionally long synthetic original interval that
+starts in the previous UTC month and ends one hour before the **real PostgreSQL
+clock**. Thus the local-start billing month is genuinely closed while elapsed
+time after the end is under 48h. They use actual finalized attendance, G1, ISSUE
+and permanent claims, without time overrides, production function substitution
+or period bypass. This isolates the two independent locks; it is not evidence
+of a normal class-duration contract or a production historical backfill.
+
+On this finalized ATTENDED source, a leave decision committed before ISSUE does
+not alter R2's billed status/units, so subsequent ISSUE may succeed. If ISSUE
+commits first, both decisions fail. If the first ISSUE rolls back, the waiting
+decision succeeds. This follows the existing R2 capture/fingerprint rather than
+inventing an invoice rewrite or a new stale-generation rule.
+
+### Verification results and retained evidence
+
+Commands were run from repository root. Native runners use separate newly
+created PostgreSQL 16 Docker clusters, anonymous volumes, loopback ports and
+private process credentials. No shared database was used or reset.
+
+| Command actually run | Final result |
+|---|---|
+| `pnpm.cmd --dir apps/api exec prisma validate` | PASS |
+| `pnpm.cmd --dir apps/api exec prisma generate` | PASS, Client 7.10.1 |
+| `pnpm.cmd --dir apps/api exec tsc --noEmit` | PASS |
+| `pnpm.cmd --dir apps/api build` | PASS |
+| `pnpm.cmd --dir apps/api lint` | PASS, final no diagnostics |
+| `pnpm.cmd --dir apps/api test` | PASS, 33 cases / 4 files |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r3/start-r3-native.ps1 -RunTests` | PASS, 56 cases, 29 observed schedules |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r2/start-r2-native.ps1 -RunTests` | PASS, 57 cases, 35 observed schedules, EMPTY Prisma schema drift |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/schema-integrity/start-r1b-native.ps1 -RunTests` | PASS, 39 cases, 3 existing skipped, 32 observed schedules |
+| `git diff --check` | PASS |
+| `git diff --quiet HEAD -- apps/api/prisma/migrations` | PASS, tracked migrations 001–007 unchanged |
+| Historical report prefix compared with HEAD | PASS, sections A–O preserved |
+
+R1b still skips T37 populated adoption, T41 authenticated HTTP and T42 independent
+restore/tzdata upgrade. They are not counted as passes. R1b/R2 deploy 001–009
+directly on fresh targets; R3 exercises populated **synthetic checkpoint** upgrade.
+Neither constitutes R6 real populated-data adoption or restore verification.
+
+Retained final evidence:
+
+| Suite | Container / loopback port | Sanitized evidence JSON |
+|---|---|---|
+| R3 | `educore-r3-native-9f88d8c908384166ba38694a94fe7593` / `49172` | `%TEMP%/educore-r3-evidence-uG6sKS/evidence.json` |
+| R2 | `educore-r2-native-a69dd3a7b2284684b1bbc8b2f3860845` / `50669` | `%TEMP%/educore-r2-evidence-rypELA/evidence.json` |
+| R1b | `educore-r1b-native-00184c554db94acbb139c26e2a078b4d` / `50670` | `%TEMP%/educore-r1b-pg-evidence-aIE1LE/evidence.json` |
+
+Intermediate verification is also retained: the initial 47-case follow-up run
+passed 46 cases and failed an overly strict leave-first ISSUE expectation. The
+expectation was corrected against the unchanged R2 ATTENDED capture semantics;
+the subsequent 55-case run passed all cases. An added 56th late-permission test
+initially attempted to change immutable absence metadata and correctly failed
+with `ABSENCE_REQUEST_IMMUTABLE`; its synthetic original data is now created with
+the correct late notice at insert time. No production guard was weakened and no
+failed migration was marked applied to bypass a failure. Failed evidence remains
+under `%TEMP%/educore-r3-evidence-8fw76s/` and `educore-r3-evidence-DZhjQu/`.
+The final R3 rerun passes all 56 cases, including the specific late-permission
+revocation check. No final test failure remains.
+
+### Files changed and Git preservation
+
+Five existing files modified and two new migration files; all remain unstaged:
+
+| File | Follow-up change |
+|---|---|
+| `apps/api/prisma/migrations/202610190008_r3_leave_claim_guard/migration.sql` (new) | Verified participant claim guard and authorization before replay |
+| `apps/api/prisma/migrations/202610190009_r3_grade_placement/migration.sql` (new) | Private evidence verification, locks/revision gate, authorized snapshot integration |
+| `apps/api/src/academic/academic.service.ts` | Published-grade reference/context internal TypeScript contract |
+| `apps/api/test/r3/r3.postgres.test.ts` | Real checkpoint upgrade, defect reproduction, leave/ISSUE and placement verification |
+| `apps/api/test/schema-integrity/support.ts` | Optional explicit fixture end; existing default duration unchanged |
+| `apps/api/test/r3/README.md` | Upgrade and temporal/grade fixture documentation |
+| `docs/ai/reviews/database/R3_IMPLEMENTATION_REPORT.md` | This appended follow-up section |
+
+Branch, HEAD and index unchanged. No commit, push, branch/checkout, reset, merge,
+rebase, PR, external application write or deployment. Every new file remains
+pending review before Git. Task-owned test containers/volumes are retained for
+inspection; no cleanup deletion was performed.
+
+### Risks, deferred branches and review verdict
+
+| Branch / acceptance | Current status |
+|---|---|
+| Grade-backed authorized placement confirmation | IMPLEMENTED; enrollment and transfer use database-verified immutable evidence |
+| Automatic grade-to-level recommendation | DEFERRED; no approved per-subject/difficulty/recency rubric; no invented cutoff |
+| Sealed attendance/leave financial correction | BLOCKED; an approved source/financial coordination contract is still absent; ordinary changes fail closed |
+| HTTP authentication/controllers, full IAM, jobs/workflow and notification delivery | DEFERRED to R4 |
+| Assignment/grading lifecycle and published grade write API | DEFERRED to R5; existing data reused only |
+| R6 adoption/backup/restore/independent audit | NOT VERIFIED; H-04 remains OPEN |
+| Representative performance and ≥80% unit branch coverage | NOT ESTABLISHED; native SQL passes are not those metrics |
+
+Recommendation: accept the two bounded follow-up changes for code review after
+the recorded checks, retaining these boundaries. **R3 remains PARTIALLY
+IMPLEMENTED — VERIFIED SUBSETS**, not complete acceptance or production readiness.
