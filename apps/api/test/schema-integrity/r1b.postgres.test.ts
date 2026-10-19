@@ -15,6 +15,7 @@ import {
   connect,
   initialize,
   seed,
+  preserveFixtureManager,
   line,
   id,
   put,
@@ -1176,7 +1177,7 @@ describe('R1b independent-connection protocols', () => {
             tenant: await put(tx, 'tenants', {
               code: id(),
               name: 'Race empty',
-              status: 'ACTIVE',
+              status: 'CREATED',
             }),
           };
         });
@@ -1220,6 +1221,7 @@ describe('R1b independent-connection protocols', () => {
       for (const opFirst of [true, false])
         for (const commit of [true, false]) {
           const f = await observer.begin((tx) => seed(tx));
+          await preserveFixtureManager(observer,f);
           const operation: Action = async (q) => {
             await authorized(q, f);
             await audit(q, f, f.tenant);
@@ -1230,8 +1232,8 @@ describe('R1b independent-connection protocols', () => {
                   f.scope,
                 ])
               : q.unsafe(
-                  'DELETE FROM public.role_permissions WHERE tenant_id=$1 AND role_id=$2',
-                  [f.tenant, f.role],
+                  'DELETE FROM public.role_permissions WHERE tenant_id=$1 AND role_id=$2 AND permission_id=$3',
+                  [f.tenant, f.role, f.permission],
                 );
           const r = await race(
             f,
@@ -1252,6 +1254,7 @@ describe('R1b independent-connection protocols', () => {
     for (const disableFirst of [true, false])
       for (const commit of [true, false]) {
         const f = await observer.begin((tx) => seed(tx));
+        await preserveFixtureManager(observer,f);
         const operation: Action = async (q) => {
           await authorized(q, f);
           await audit(q, f, f.tenant);
@@ -1276,6 +1279,7 @@ describe('R1b independent-connection protocols', () => {
       for (const commit of [true, false]) {
         const f = await observer.begin((tx) => seed(tx)),
           g = await observer.begin((tx) => seed(tx));
+        await preserveFixtureManager(observer,f);
         const a = client(),
           b = client();
         await a.unsafe('BEGIN');

@@ -58,12 +58,12 @@ const nestedLine: Prisma.InvoiceLineCreateInput = {
 };
 
 describe('R1b offline checks (not PostgreSQL verification)', () => {
-  it('retains R1b marker and R1a mapped relations through additive R2 changes', () => {
+  it('retains R1b marker and R1a mapped relations through additive R2/R4 changes', () => {
     const current = readFileSync(resolve('prisma/schema.prisma'), 'utf8');
-    expect(current.match(/^model /gm)).toHaveLength(67);
+    expect(current.match(/^model /gm)).toHaveLength(68);
     expect(current.match(/^enum /gm)).toHaveLength(28);
     // Exact baseline bytes remain asserted below. Current schema now includes
-    // approved R2 extensions; test the preserved named composite protections.
+    // R2 extensions and R4 refresh history; preserve named composite protections.
     for (const name of [
       'il_invoice_student_fk',
       'il_participant_student_fk',

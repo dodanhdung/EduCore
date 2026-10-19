@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   seed,
+  changeFixtureRole,
+  preserveFixtureManager,
   put,
   waitBlocked,
   sqlstate,
@@ -993,6 +995,7 @@ describe('R3-A Academic', () => {
           intent(),
         ),
       ).rejects.toThrow();
+      await preserveFixtureManager(admin as unknown as Query,c.f);
       await admin.unsafe(
         'UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',
         [c.f.membershipRole],
@@ -1201,6 +1204,7 @@ describe('R3 follow-up leave claim guard', () => {
         expect(
           await c.leave.decide(c.f.tenant, c.pendingLeave, approve, key),
         ).toEqual(decision);
+        await preserveFixtureManager(admin as unknown as Query,c.f);
         await admin.unsafe(
           'UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',
           [c.f.membershipRole],
@@ -1253,9 +1257,7 @@ describe('R3 follow-up leave claim guard', () => {
         [c.f.session, c.f.participant],
       );
       expect(proof).toMatchObject({ time_locked: false, claims: 1 });
-      await admin.unsafe("UPDATE roles SET code='TEACHER' WHERE id=$1", [
-        c.f.role,
-      ]);
+      await changeFixtureRole(admin,c.f,'TEACHER');
       await expect(
         c.attendance.mark(
           c.f.tenant,
@@ -1849,6 +1851,7 @@ describe('R3-B Scheduling', () => {
           ),
         ).toHaveLength(0);
       }
+      await preserveFixtureManager(admin as unknown as Query,c.f);
       await admin.unsafe(
         "UPDATE access_scopes SET scope_kind='CLASS',class_id=$2 WHERE id=$1",
         [c.f.scope, c.f.classId],
@@ -2951,6 +2954,7 @@ describe('R3-D observed independent-connection concurrency', () => {
     'X10 staff permission revoke wins before schedule confirmation',
     async () => {
       const c = await fixture();
+      await preserveFixtureManager(admin as unknown as Query,c.f);
       await assigned(c);
       const s = await session(c);
       const outcome = await race(

@@ -186,7 +186,7 @@ export async function seed(
     code: id(),
     name: 'R1b fixture',
     timezone: opts.zone ?? 'Asia/Ho_Chi_Minh',
-    status: 'ACTIVE',
+    status: 'CREATED',
   });
   const user = await put(q, 'users', {
     email_normalized: id() + '@r1b.invalid',
@@ -206,8 +206,9 @@ export async function seed(
   });
   const role = await put(q, 'roles', {
     tenant_id: tenant,
-    code: 'R1B_FIXTURE',
+    code: 'MANAGER',
     name: 'Fixture actor',
+    is_system_seeded: true,
   });
   let permissions = await q.unsafe(
     "SELECT id FROM public.permissions WHERE code='r1b.fixture.mutate'",
@@ -223,6 +224,9 @@ export async function seed(
     role_id: role,
     permission_id: permission,
   });
+  const existingManagerPermission=await q.unsafe("SELECT id FROM permissions WHERE code='role.assign'");
+  const managerPermission=existingManagerPermission[0]?.id as string | undefined ?? await put(q,'permissions',{code:'role.assign',description:'Required current Manager authority'});
+  await put(q,'role_permissions',{tenant_id:tenant,role_id:role,permission_id:managerPermission});
   const membershipRole = await put(q, 'membership_roles', {
     tenant_id: tenant,
     membership_id: member,
@@ -375,6 +379,7 @@ export async function seed(
     policy_version_id: policy,
     snapshot_json: JSON.stringify({ fixtureOnly: true }),
   });
+  await q.unsafe("UPDATE public.tenants SET status='ACTIVE' WHERE id=$1",[tenant]);
   return {
     tenant,
     user,
@@ -398,6 +403,27 @@ export async function seed(
     run,
     invoice,
   };
+}
+
+/** R4-compliant regression fixture: the subject loses its grant/scope while a
+ * DIFFERENT verified user retains the tenant's Manager invariant. */
+export async function preserveFixtureManager(q: Query,f: Fixture) {
+  const [role]=await q.unsafe("SELECT id FROM roles WHERE tenant_id=$1 AND code='MANAGER'",[f.tenant]);
+  if(!role)return;
+  const user=await put(q,'users',{email_normalized:id()+'@backup.invalid',display_name:'Independent fixture Manager',status:'ACTIVE'});
+  const member=await put(q,'tenant_memberships',{tenant_id:f.tenant,user_id:user,status:'ACTIVE'});
+  const assignment=await put(q,'membership_roles',{tenant_id:f.tenant,membership_id:member,role_id:role.id,assigned_by_membership_id:f.member});
+  await put(q,'access_scopes',{tenant_id:f.tenant,membership_role_id:assignment,scope_kind:'TENANT'});
+}
+/** Role-switch fixtures must not silently leave an ACTIVE tenant unmanaged. */
+export async function changeFixtureRole(q: Db,f: Fixture,code: string) {
+  await q.begin(async tx=>{
+    await tx.unsafe('UPDATE roles SET code=$2 WHERE id=$1',[f.role,code]);
+    const role=await put(tx,'roles',{tenant_id:f.tenant,code:'MANAGER',name:'Independent fixture Manager'});
+    const [permission]=await tx.unsafe("SELECT id FROM permissions WHERE code='role.assign'");
+    await put(tx,'role_permissions',{tenant_id:f.tenant,role_id:role,permission_id:permission.id});
+    await preserveFixtureManager(tx,f);
+  });
 }
 
 export async function line(
