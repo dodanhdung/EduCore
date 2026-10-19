@@ -1,5 +1,7 @@
 # EduCore — Class Design: Resource & Scheduling
 
+**Wallet amendment19/10/2026:** B1–B5 business approved, minimal architecture principle accepted; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Scheduling không sở hữu wallet/payment hoặc tự gọi debit/refund; Q1–Q8 lock/SQL details **PENDING TECHNICAL SIGN-OFF**.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **v1.0 + O-12 amendment · 18/10/2026 · Asia/Ho_Chi_Minh:** business A=A, B=B1, C=C1, D=D được chủ dự án phê duyệt trực tiếp; [Decision Register](../../ai/DECISION_REGISTER.md#f-o-12--approved-business-decision-2026-10-18). Source contract bên dưới phục vụ Billing; class/storage/locking vẫn PROPOSED, không schema/migration/implementation approval. Group A Database v1.1 giữ nguyên.
@@ -266,6 +268,10 @@ classDiagram
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
 ## 5. Invariants / Business Rules phải bảo vệ
+
+**Source/financial boundary:** transfer/class reschedule không đổi wallet owner, original source class/course/enrollment lineage hoặc invoice period; không tự recompute G/financial effect từ balance changes. O-12/date/month/C1/history/confirmed attendance như §4 giữ nguyên. Scheduling cung cấp source evidence, FinancialCoordinator mới áp approved financial change có release/internal refund khi cần.
+
+**Entry refinement recommendation:** User current-auth anchor trước Tenant gate, rồi resources/sessions/participants và affected billing/invoice rows theo reviewed shared graph; financial writers thêm Wallet trước Invoice. Không hold resource/invoice rồi quay lên User/Tenant, không external I/O hoặc generic distributed lock framework. Before R2 invalidation/rebuild adapter, source mutation không thể giữ valid persisted period phải reject/rollback, không commit wrong-period chờ job repair. W17/19/20/32/33 và O12-AC source races **DESIGNED**, H-04 vẫn OPEN tới real SQL/parent/inverse/concurrency verification.
 
 1. Overlap iff `A.start < B.end && B.start < A.end`, biên `[start,end)`; liền kề hợp lệ.
 2. CANCELLED và booking RELEASED không chiếm tài nguyên; resource booking EXCLUDE GiST khi ACTIVE là guard DB đề xuất.

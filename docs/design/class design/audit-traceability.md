@@ -1,5 +1,7 @@
 # EduCore — Class Design: Audit & Traceability
 
+**Wallet amendment19/10/2026:** owner B1–B5 **BUSINESS APPROVED**, minimal architecture **PRINCIPLE ACCEPTED**; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Q1–Q8/actor field/SQL/roles/retention execution **RECOMMENDED / PENDING TECHNICAL SIGN-OFF**, no audit/code changes.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-41, NFR-16**, **UC-35**, **BR-08, BR-11, BR-12, BR-14, Q-14**.
@@ -186,6 +188,10 @@ Application use case thực thi mutation quan trọng + `AuditRecorder.recordIns
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
 ## 5. Invariants / Business Rules phải bảo vệ
+
+**Wallet audit contract:** TOP_UP/Payment/Adjustment/Release/Refund/TopUpReversal/PaymentReversal có verified actor/tenant/student/wallet/source IDs, amount, reason khi correction, receipt/root/effect identity, time/correlation/pinned policy khi áp dụng. Success audit cùng financial transaction; D1 decision audit bền riêng; failed E1 rollback audit-success và ghi failure attempt riêng sau rollback, không sửa original successful history. Record before/after B/N/P và source refs đủ đối soát, không lưu secrets hoặc bank proof PII dư thừa.
+
+USER financial principal kiểm current Member/User coherence; WORKER chỉ allowlisted non-financial job/notification, record job/attempt/worker provenance; OPERATOR không fake tenant financial actor. Versioned audit payload có typed join validation là minimal recommendation, không thêm mọi actor column/general event-sourcing framework khi chưa cần. Root/source uniqueness chống retry ghi financial effect lần2, replay không tạo business-success effect mới; access/failure/recovery audit là event riêng. Financial receipts/history/dedup không TTL mặc định, audit baseline24tháng không tự purge đúng ngày vừa đủ. W02/09/12/21/22/30/32/35/36 **DESIGNED**, roles/immutability/restore/runtime NOT RUN.
 
 1. Audit ghi actor/source, event, target, reason, before/after an toàn, timestamp, policy version và correlation ID.
 2. P0 UI chỉ tra cứu cơ bản khi có permission; không sửa/đổi/xóa log qua UI, baseline giữ 24 tháng.

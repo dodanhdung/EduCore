@@ -1,5 +1,7 @@
 # EduCore — Class Design: Identity & Access
 
+**Wallet amendment19/10/2026:** B1–B5 **BUSINESS APPROVED**, minimal architecture **PRINCIPLE ACCEPTED**; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Implementation Q1–Q8 vẫn **RECOMMENDED / PENDING TECHNICAL SIGN-OFF**, không permission seed/code changes.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-01–FR-06**, **UC-01–UC-06**, **BR-06, BR-08, BR-10, BR-14**.
@@ -268,6 +270,10 @@ classDiagram
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
 ## 5. Invariants / Business Rules phải bảo vệ
+
+**Wallet authorization contract:** chỉ nhân sự có financial permission hiện hành/đúng tenant-student scope được top-up/pay/reverse/balance-changing execution; role name/JWT cũ không là authority. Student/Parent read-only theo SELF/current verified link, revoke link/permission phải phản ánh tại query/execute/replay; không expose internal receipt/audit ngoài scope. Không wallet auto-credit từ request/chứng từ, không default finance cho platform operator. Exact permission codes/seed/DTO/REST paths chưa khóa, không tự mở Student/Parent self-service hoặc worker funding.
+
+**Minimal current-auth locking — pending O-01/O-13:** common financial/source command lấy actor/affected User SHARE trước Tenant gate, fresh current session/member/grants; global disable/credential/session revocation User UPDATE, membership attach/change cũng User-before-Tenant để set membership không phantom. Full involved User/Tenant IDs sorted/no upgrades/late locks, last active Manager checks giữ; missing writer coverage hoặc unsafe raw grants thì chưa đạt technical/PG gate. Không distributed/global advisory fence mặc định, không claim chống compromised trusted backend/DB owner. W13/14/26/32 và raw-grant/auth race tests **DESIGNED**, chưa SQL/runtime PASS.
 
 1. Một user có thể thuộc nhiều tenant; membership/role/scope là thành phần riêng.
 2. Quyền được đánh giá theo permission + tenant + scope, không dựa nút UI, tên job position hay JWT cũ.

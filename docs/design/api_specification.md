@@ -10,6 +10,8 @@
 
 ## 0. Cảnh báo đồng bộ source of truth
 
+**Wallet amendment · 19/10/2026:** B1–B5 **BUSINESS APPROVED**, minimal architecture **PRINCIPLE ACCEPTED**, xác nhận trực tiếp owner; [Register §G](../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Giao dịch mới là verified top-up→WALLET payment; internal refund sau authorized adjustment/cancel execution, không external cash-out. Các application DTO/REST transport/permission codes ở §5.5 **PROPOSED / PENDING API REVIEW**; Q1–Q8 chưa technical approved, không route/runtime implementation. Group A direct-payment/no-auto-credit samples giữ nhãn historical nơi có liên quan.
+
 Theo việc kiểm tra `dodanhdung/EduCore` nhánh `main` ngày 17/10/2026, file `docs/requirements/requirements_analysis.md` đã được đồng bộ bản v5 trên nhánh tài liệu, trong khi bản Requirements Library đã có Q-01–Q-15. **Phải merge nhánh tài liệu trước khi sinh mã.** App NestJS hiện chỉ có controller/service scaffold, chưa có các routes dưới đây, không có Prisma migrations; routes/permission string/request schemas trong tài liệu này là **hợp đồng kỹ thuật đề xuất**, không phải mô tả runtime hiện hành.
 
 **Precedence:** FR/BR/Q v5 và UC v1.3 > Accepted Architecture > Proposed Database/Class Design > đề xuất API tại đây. Với domain đã có quy định P0/P1, **không tự nâng cấp P1 thành P0**. Bất kỳ API dưới đây ghi `P1` phải trả 404/không mount route ở P0, thay vì trả dữ liệu mô phỏng.
@@ -99,7 +101,7 @@ Authorization is **deny by default**. Resource path ID → query tenant-filtered
 | DTO / Value | Fields, type, constraints | Notes |
 |---|---|---|
 | `ResourceRef` | `id: UUID`, `tenantId` only when response needs it | ID cross tenant treated invisible |
-| `MoneyVnd` | string regex `^(0|[1-9][0-9]*)$`, server parses `bigint` | signed adjustments use separate signed string validator |
+| `MoneyVnd` | string regex `^(0\|[1-9][0-9]*)$`, server parses `bigint` | signed adjustments use separate signed string validator |
 | `DateTimeUtc` | RFC3339 full UTC datetime | session half-open range |
 | `DateOnly` / `TimeOnly` | `YYYY-MM-DD` / `HH:mm` | series is local-time input |
 | `MutationMeta` | optional `reason`, `revision`, `correlationId`; `policyVersionId` server-origin | not client-supplied authority |
@@ -209,7 +211,7 @@ Notice cutoff ≥24h is classified by server using session start; no submission 
 
 | Method & path | Input → output | P / invariants |
 |---|---|---|
-| `GET T/price-rules` / `POST T/price-rules` | filters / `{scope:SESSION|CLASS|COURSE,scopeId,unitPriceVnd,effectiveFrom,effectiveTo?}`; effective dates `YYYY-MM-DD`, `[from,to)` | `pricing.read/manage`; no overlap same tenant/target; selection by local session-start date, future-only tariff publication |
+| `GET T/price-rules` / `POST T/price-rules` | filters / `{scope:SESSION\|CLASS\|COURSE,scopeId,unitPriceVnd,effectiveFrom,effectiveTo?}`; effective dates `YYYY-MM-DD`, `[from,to)` | `pricing.read/manage`; no overlap same tenant/target; selection by local session-start date, future-only tariff publication |
 | `PATCH T/price-rules/{id}` | modify future-effective rule; protect begun sessions and captured selection even before draft | `pricing.manage`; no historical amount/target/backdated override, no implicit past-tariff repair; snapshots immutable |
 | `GET T/billing/periods` | `{year?}` → monthly periods | `billing.read` |
 | `POST T/billing/runs` | `{period:YYYY-MM,studentIds?}` → job(s)/run(s), 202 possible | `billing.generate_draft`, **IDEMP**; only confirmed attendance; early next month |
@@ -217,14 +219,14 @@ Notice cutoff ≥24h is classified by server using session start; no submission 
 | `GET T/invoices` / `GET T/invoices/{id}` | period/status/studentId page / summary+lines+ledger | `invoice.read` or SELF/REL child invoice |
 | `POST T/invoices/{id}/issue` | `{revision?}` → ISSUED, dueAt | `invoice.issue`, **IDEMP**; manual issue, freeze snapshot |
 | `GET T/invoices/{id}/receivable` | amount issued, valid allocations, outstanding | `invoice.read`, scope |
-| `POST T/invoices/{id}/payments` | `{amountVnd,method:CASH|BANK_TRANSFER,receivedAt?,externalReference?}` → payment | `payment.record`, **IDEMP**; manual reconciliation, amount ≤ outstanding |
+| **HISTORICAL direct-payment contract:** `POST T/invoices/{id}/payments` | CASH/BANK_TRANSFER direct receipt sample trước wallet approval; không normative route cho giao dịch P0 mới | Superseded có giới hạn19/10: dùng application `payInvoiceFromWallet` ở §5.5, REST method/path/permission cụ thể **PENDING API REVIEW**, không tự mount legacy endpoint |
 | `GET T/invoices/{id}/payments` | payments/reversals/allocations | `payment.read`, scope |
 | `POST T/payments/{id}/reversals` | `{reason}` → reversal request/record | `payment.reverse`, **IDEMP**; audited authority |
 | `POST T/invoices/{id}/adjustment-requests` | `{kind,amountDeltaVnd,reason,evidence?}` → approval request | `invoice.adjust_request`; manual approval mandatory |
 | `POST T/invoices/{id}/cancellation-requests` | `{reason}` → approval request | `invoice.cancel_request`; manual approval mandatory |
 | `GET T/receivables` | `studentId?,status?,dueBefore?` → page | `receivable.read`, tenant/student scope |
 
-No P0 endpoint to collect money via bank API, gateway, auto issue invoice or auto refund. `payment.method=BANK_TRANSFER` means **manual recording after outside reconciliation**. An issued invoice’s raw line amount cannot be patched directly.
+No P0 bank API/gateway, auto issue, cash-out or external refund. CASH/BANK_TRANSFER mới là verified manual **TOP_UP receipt**, không Payment invoice; Payment mới WALLET, old methods giữ legacy provenance. Internal wallet credit chỉ trong successful execution của adjustment/cancel đã manual-approved. Issued raw amounts/claims/history không patch. Wallet endpoints/permissions chưa được transport sign-off.
 
 ### 3.7. Assignments, submissions & grading — UC-27–29 (P0)
 
@@ -445,28 +447,32 @@ Reject unknown/server-owned write fields: pricingLocalDate/sourceBusinessDate, t
 
 New tariff applies future local dates only; DATE cannot price intraday. No historical amount/target edit or backdated rule/override for already-started sessions even if no invoice exists. Future close of an open window must preserve old selections/snapshots; irrelevant future tariff changes do not stale/reprice G1. Missing historic prices require explicit data-repair review outside ordinary create/update; never silently use current tariff. Scheduling/attendance/price writer vs capture/apply/issue must follow the reviewed common transaction protocol in [DB §3.6](database_design.md) and [DD §5.7](detailed_design.md); O-01 SQL privileges/lock order remain pending, no concurrency safety claim here. Acceptance [O12-AC-01–27](../ai/reviews/database/O12_DECISION_PROPOSAL.md#n5-acceptance-matrix-hien-hanh--o12-aa) is a test specification, not test evidence.
 
-### 5.5. Payment (P0)
+### 5.5. Wallet application contracts — PROPOSED / PENDING API REVIEW
 
-```http
-POST /api/v1/tenants/{tenantId}/invoices/{invoiceId}/payments
-Authorization: Bearer <accessToken>
-Idempotency-Key: manual-payment-receipt-487
-Content-Type: application/json
+**Business authority:** Requirements FR-30/31/Q-10/12, UC-25/26, WALLET-B1–B5 owner19/10. Operation names dưới đây **không mặc nhiên là REST paths/methods hoặc permission codes đã duyệt**. No endpoints implemented. FinancialCoordinator/current permission/tenant-student scope bảo vệ mọi mutation, Student/Parent chỉ đọc đúng liên kết hiện hành; worker không tự top-up/pay/approve.
 
-{"amountVnd":"400000","method":"BANK_TRANSFER","externalReference":"MANUAL-RECON-487"}
-```
+| Application operation | Untrusted client input / DTO proposal | Server-resolved checks/effect và response proposal |
+|---|---|---|
+| `topUpWallet` | student selector, `amountVnd` positive integer string, receiptMethod CASH/BANK_TRANSFER, receiptReference, receivedAt/evidenceNote; typed idempotency key | Resolve tenant từ verified context và đối chiếu membership/student scope, actor server-authenticated; authorized staff đã xác minh tiền ngoài hệ thống. Không nhận client `verified=true` hoặc balance-after làm bằng chứng. Unique wallet/receipt/key/hash, TOP_UP+balance+audit/receipt atomic; trả receipt/transaction ID và authorized balance string |
+| `getWalletBalance` | student selector, không balance override | Current read scope/Parent link; resolve account/student/tenant; trả balanceVnd string/asOf, không cho đọc tenant khác; missing-wallet response shape cần API review, không giả funding |
+| `listWalletTransactions` | student selector, bounded filters/page | Scoped sanitized history/receipt refs; không internal audit/PII ngoài quyền; DTO/pagination theo conventions, no mutation |
+| `payInvoiceFromWallet` | invoice selector, amountVnd string, typed key; expected invoice/obligation version token proposal | Derive student/wallet từ invoice+tenant, không tin owner/balance/due do client gửi; ISSUED payable, amount<=fresh B/outstanding, Wallet→Invoice locks; debit+Payment.WALLET+allocation+balance+audit/receipt atomic. Trả payment/receipt IDs/balance/outstanding strings |
+| `refundInvoicePaymentToWallet` | **Không direct client refund amount**; internal input approved adjustment/cancel root + approved version/hash và execution intent | Server derive obligation/payment remaining/refund/source per payment; signed release+credit+applied delta+receipt/audit+COMPLETED atomic. Source/effect uniqueness chống repeat với key mới; no external refund |
+| `reverseInvalidTopUp` | original TOP_UP selector, reason, typed key; expected source state/version nếu reviewed | Server original amount/wallet owner/current permission/source chưa reversed; full amount only khi available B đủ; compensation+balance+audit/receipt atomic, original giữ; thiếu thì reject/reconciliation, không âm hoặc tự đảo payment đúng |
 
-`201`:
+`expected...Version` là DTO/CAS **proposal**, không khẳng định Invoice/WalletAccount đã có revision field trong Prisma; field/token representation phải technical/API review. Request hash server tính trên normalized typed intent/target/amount/reference/expected approved version; không nhận hash client làm authority. Actor/current authorization không bị pin vào JWT cũ, worker attempt/lease IDs không thay logical financial effect key. Same key+hash authorized replay, changed hash conflict; new key cùng receipt/approved source không thêm effect.
 
-```json
-{"paymentId":"9c489d49-0f12-4121-a45b-fb534d25be2b","invoiceId":"a20ab050-35ae-45d6-a631-0c9d243ffbe2","amountVnd":"400000","outstandingVnd":"500000","status":"RECORDED"}
-```
+**Errors proposal (HTTP mappings/DTO/details còn PENDING API REVIEW):** unauthorized/forbidden/out-of-scope (không leak existence), invalid/nonpositive/money-range, WALLET_NOT_FOUND/INSUFFICIENT_BALANCE, PAYMENT_EXCEEDS_RECEIVABLE, INVOICE_NOT_PAYABLE, DUPLICATE_RECEIPT, IDEMPOTENCY_KEY_REUSED, STALE_OBJECT_OR_APPROVAL, UNSUPPORTED_LEGACY_MIXED, TOP_UP_ALREADY_REVERSED, OPERATION_OUTCOME_PENDING. Không trả success khi COMMIT unknown: lookup durable root sau resolve transaction trước, không key mới/duplicate debit. Data/permission failure rollback toàn command; transient lock failure bounded retry sau rollback, same key/body.
 
-The amount is verified manually by authorized staff **outside EduCore**. Server locks invoice/receivable, validates non-overpayment, inserts one payment + allocation + audit in one transaction; same key replay returns the same payment; same key with altered amount returns `409 IDEMPOTENCY_KEY_REUSED`. No gateway callback or auto bank validation endpoint P0.
+Full invoice payment reversal khác TOP_UP reversal; existing reversal application operation phải review nominal full amount/net-remaining credit cùng history/refund offsets, không dùng nó để rút ví. Top-up không cần invoice/không revenue; partial pay explicit, no debit draft/issue/G1/G2. Legacy CASH/BANK_TRANSFER/mixed history giữ nguyên, chưa policy thì affected wallet collection/excess execution reject; không opening balance từ old payments.
+
+**Acceptance:** UC-25/26 ACs và Wallet W01–W36 **DESIGNED**; locks/roles/SQL/native precision, runtime auth/receipt/crash/unknown-commit tests chưa chạy. Đặc tả operations không tự approve API transport hoặc implement financial routes.
 
 ### 5.6. Financial approval is not execution (P0)
 
 **Request:** `POST T/invoices/{id}/adjustment-requests` with `{kind:"REDUCE",amountDeltaVnd:"-100000",reason:"Điều chỉnh có chứng cứ"}` creates `PENDING_APPROVAL`; `POST T/approvals/{id}/decisions` with `{decision:"APPROVE",reason:"Đã đối chiếu"}` returns `APPROVED` only. **Only** `POST T/approvals/{id}/execute` may append adjustment to ledger and transition to `COMPLETED` after recheck. If worker executes later, response is `202` with job state rather than false completion. Audit decision and execution separately.
+
+**Amendment19/10:** durable APPROVED survives execution failure; explicit E1 rechecks current rights/approved body/target and atomically appends adjustment/cancel+signed releases+wallet credits+root receipt+audit+COMPLETED. Failed E1 rollback all effects, keep decision, separate execution outcome/audit. Same approved root/version không double execute dù caller đổi key; pending transport/status/worker execution examples ở trên không authorize background finance. Worker không tự financial mutations/approval; sync execution routing/receipt representation vẫn Q7 technical pending. Refund amount server-derived, không đổi approved obligation delta âm thầm; legacy/mixed thiếu policy phải chặn.
 
 ### 5.7. Upload + submit + publish grade (P0)
 
@@ -512,7 +518,7 @@ The amount is verified manually by authorized staff **outside EduCore**. Server 
 | finalize attendance | one finalization/session + operation key; full participant set | attendance finalized + correction audit |
 | billing run | `(tenant,student,period)` logical unique; generation typed key/hash, new-command expected-generation CAS; session-date pricing snapshots | initial/retry/recompute diff/history audit; job attempts separate; O-12 transport pending review |
 | issue invoice | invoice row lock + unique participation charge claim | issued audit; no auto in-app billing message P0 |
-| payment record | invoice lock + `(tenant,operationType,idempotencyKey)` unique | payment recorded audit; no duplicate allocation |
+| wallet top-up/pay/refund/reverse | recommendation common entry→Wallet→Invoice, typed key/hash+receipt/source UQs; exact SQL/gates pending | TOP_UP không Payment; signed debit/base hoặc credit/release atomic; audit/root receipt, no duplicate effect |
 | finance approve/execute | approval revision + unique target execution operation | decision and execution audit separately |
 | publish assignment | assignment lock/revision + unique assignment event | `AssignmentPublished` outbox |
 | submit version | recipient/submission row lock + version unique index | submission audit; READY file links |
@@ -537,6 +543,8 @@ Suggested `operationId` naming convention: `AuthController_login`, `SchedulingCo
 
 ```ts
 // Pseudocode: exact NestJS decorator choices are implementation proposals.
+// HISTORICAL direct-payment sample, limited-superseded 2026-10-19.
+// Do not mount for new wallet flow; use reviewed FinancialCoordinator contracts in section 5.5.
 @Post('invoices/:invoiceId/payments')
 @RequirePermission('payment.record')
 async recordPayment(
@@ -597,6 +605,8 @@ No standalone otp/verify endpoint. OTP expires in 15 min, hashed one-use with at
 ### A.5. P0 invoices
 - One invoice per student per tenant per billing month aggregates enrollment lines. Invoice number assigned at issue only. After approved negative adjustment on already paid invoice, outstanding never negative; excess stored in payment_excess_resolutions (PENDING_RESOLUTION), visible to authorized accounting and not automatically refunded/credited.
 - Schema/DTO for excess reconciliation is part of billing vertical slice, not authorization to mount refund or credit endpoints in P0.
+
+**Historical limitation / owner amendment19/10:** hai bullet excess/no-credit trên giữ Group A provenance, **superseded cho new wallet-only flow** bởi B1–B5: approved execution releases net allocation và credits wallet, không tạo case engine mới/dual credit. Legacy records giữ, policy thiếu thì block affected execution. Internal credit không external refund, API transport/permission/SQL vẫn pending; no schema/runtime implementation.
 ## 11. Decisions pending per-slice review (not group A)
 
 1. Billing asynchronous 202 vs synchronous 201, dueAt timezone/day-boundary, reversal approval and excess resolution exact state transitions.

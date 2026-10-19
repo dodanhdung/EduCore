@@ -1,5 +1,7 @@
 # EduCore — Class Design: Tenant & Policy
 
+**Wallet amendment19/10/2026:** B1–B5 **BUSINESS APPROVED**, simplification **PRINCIPLE ACCEPTED**; [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Q1–Q8 exact persistence/locking/recovery/API **PENDING TECHNICAL SIGN-OFF**; wallet/R1b/R2 chưa triển khai.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-42–FR-43, FR-44**, **UC-33, UC-36**, **BR-10, BR-13, BR-14**.
@@ -181,6 +183,10 @@ API tạo nghiệp vụ → xác thực membership/tenant → `PolicyService.pin
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
 ## 5. Invariants / Business Rules phải bảo vệ
+
+**Wallet/policy boundary:** unique wallet/student/tenant, immutable owner dù đổi lớp; no expiry/no cash-out/no cross-wallet transfer. Policy/config không tự tạo debit/refund/approval hoặc combo5% từ top-up6tháng. BR-14 request policy pin/current authorization giữ; cash receipt và wallet changes không chọn PriceRule/billing month hoặc tự tạo G2. O12-A=A/B=B1/C=C1/D=D không đổi: freeze sticky tại first ScheduleSeries/ClassSession(any status)/BillingPeriod/BillingRun-generation; top-up đơn lẻ không tự thêm freeze boundary mới. Tenant timezone/storage marker/guard là technical design cần sign-off, không field đã implement.
+
+Ops không mặc định financial permission, không sửa balance/clear frozen zone để xử lý sai tiền. Legacy/mixed inventory/policy riêng trước conversion; không dùng policy upgrade giả historical funding. W16–19/23/33 **DESIGNED**, cần explicit R1b/R2 technical and PostgreSQL evidence.
 
 1. P0 có baseline riêng từng tenant, được seed có kiểm soát; P1 chỉ mở UI quản trị.
 2. Không sửa snapshot cũ khi published; phiên bản hiệu lực không được chồng lấn cho cùng loại chính sách.

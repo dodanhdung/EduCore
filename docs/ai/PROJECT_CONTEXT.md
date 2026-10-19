@@ -2,6 +2,8 @@
 
 **Version 1.0 · 2026-10-17 · APPROVED KIT BASELINE (not deployed)**
 
+**Wallet amendment · 2026-10-19:** owner trực tiếp BUSINESS APPROVED B1–B5, minimal architecture PRINCIPLE ACCEPTED; [Register §G](DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). §10 là current wallet contract; historical Group A no-credit/direct-pay ở §4/9 được limited-superseded cho new wallet cohort. Q1–Q8 technical details pending, wallet/R1b/R2 NOT IMPLEMENTED, documentation-only authorization.
+
 ## 1. Product in 30 seconds
 
 EduCore is a **multi-tenant learning-center management web app** for scheduling and resource conflicts, attendance/leave, monthly tuition/receivables, assignment/submission/grading, scoped user access, in-app notifications and a simple dashboard. Target P0: internal-first MVP with human approval where required; P1 is separately scoped.
@@ -43,7 +45,7 @@ EduCore is a **multi-tenant learning-center management web app** for scheduling 
 |---|---|
 | Schedule | `[start,end)`, teacher/room/student/unavailability conflicts, weekly series max 6 months, all-or-nothing confirm; cancelled releases bookings |
 | Attendance | `ATTENDED`, `EXCUSED` (approved leave), `UNEXCUSED`; confirm batch; usual edit locks at 48h or invoice issue (earlier) |
-| Billing | Monthly *confirmed* sources; session>class>course price; draft generated, issue manual; payments CASH/BANK_TRANSFER manually recorded; sibling discount 10%; end-round HALF_UP once |
+| Billing | Monthly confirmed sources/session-date prices; SESSION>CLASS>COURSE; draft generated/manual ISSUE; CASH/BANK_TRANSFER verified TOP_UP, explicit WALLET payment ISSUED; approved execution refunds net excess via signed releases. Legacy riêng; sibling10%/HALF_UP/O-12 giữ |
 | Grades | 1–5 priority, score 0–10 one decimal; drafts not visible to Student/Parent, publish explicitly |
 | Files | PDF/DOCX/JPG/PNG <=10 MB each, <=5 files per submission; private storage |
 | Jobs | Retry on transient failures: up to **three retries after initial**, 1/5/15 minutes; pinned policy, dedup |
@@ -68,3 +70,13 @@ When planning, quote reference identifiers such as `FR-12`, `UC-12`, `Q-04`, `BR
 ## 9. Screen design source and new Group A views
 
 Stitch source was a detailed screen spec, not a design implementation. In v1.0 review, its 70 cards are retained tool-neutrally and one `AU06` activation card is added (total 71 design units). Approved group A changes: reset AU04 is atomic; new member/first Manager activates via AU06; BL07/BL09 show pending excess separately after downward invoice adjustment, never auto-refund/credit P0. For exact visual tokens look at `DESIGN_TOKENS.md` (PROPOSED), not Requirements v5.
+
+## 10. Current P0 Wallet amendment — 2026-10-19
+
+Business source: Requirements5.1 FR-30/31/BR-08/11/Q-10/12/§8 and UC-25/26/34/37, WALLET-B1–B5/Register §G. **B1** top-up thủ công→explicit invoice WALLET payment, refund đúng excess khi execute approved adjustment/cancel; **B2** financial staff mutate, Student/Parent scoped read only; **B3** one student/tenant wallet/no negative/no expiry/no cash-out/transfer; **B4** full original TOP_UP reversal khi available balance đủ, permission/reason/audit, thiếu thì reject/no wrong payment reversal; **B5** no automatic legacy/mixed conversion, inventory/policy riêng. TOP_UP không invoice Payment/revenue, unused balance không tự giảm due; invoice allocations dùng signed releases không double-count reversed payment. FinancialCoordinator giữ all effect/receipt/audit atomic, durable APPROVED survives failed explicit execution, COMPLETED only after success.
+
+Group A identity/claims/issued history/manual approval giữ, no-auto-credit/direct-payment-only clause chỉ limited-superseded cho new wallet cohort; §4/9 giữ lịch sử, không current requirement xây excess-case engine. UI wallet/refund flows chưa review, không rewrite SCREEN_MAP/Figma theo context. Ví không prepaid package6tháng/combo5% P1; sibling10%/HALF_UP once và O12-A=A/B=B1/C=C1/D=D không đổi. Wallet thay đổi không tự debit/G2.
+
+Simplification principle ACCEPTED: NestJS modular monolith/PostgreSQL, reuse two new wallet tables và existing payment/allocation/adjustment/reversal/audit/idempotency, no general ledger/event sourcing/distributed locks/generic workflow/recovery cycles. **Q1–Q8 RECOMMENDED / PENDING TECHNICAL SIGN-OFF**: per-User→Tenant current-auth/source locks, G metadata+immutable JSON/current applied pointer/CAS, states/roles/jobs, manual recovery after4, counter/dueAt, signed allocation/pair UQs/payment reversal/source lineage/precision/API transport. Worker không tự top-up/pay/approve. `attempt_count<=4` là DB design proposal chưa SQL CHECK, manual recovery path chưa technical approved.
+
+Reality19/10 read-only: current schema62models/28enums có R1a draft composites, chưa có WalletAccount/WalletTransaction/BillingRunGeneration hoặc field Tenant.timezoneFrozenAt; không `apps/api/prisma/migrations/` trong checkout, API scaffold. §7 là snapshot cũ; không suy ra DB tồn tại/rỗng hoặc deployed. H-04 OPEN, no PG/runtime evidence. Next scope: review Phase2 sources, authorize minimal R1b preparation/sign-off riêng; no schema/DB/Git write hoặc R2 tự động. AGENTS “refund automation”/Architecture wording ngoài scope chưa sửa; approved exception chỉ internal credit sau authorized execution, không bank refund hoặc permission cho agent triển khai.

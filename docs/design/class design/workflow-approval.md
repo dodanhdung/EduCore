@@ -1,5 +1,7 @@
 # EduCore — Class Design: Workflow & Approval
 
+**Wallet amendment19/10/2026 — BUSINESS APPROVED B1–B5 / PRINCIPLE ACCEPTED:** [Register §G](../../ai/DECISION_REGISTER.md#g-wallet-p0--owner-business-approval-2026-10-19). Q1–Q8 implementation vẫn **RECOMMENDED / PENDING TECHNICAL SIGN-OFF**, không generic workflow engine.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-44–FR-45**, **UC-26, UC-33–UC-34**, **BR-08–BR-11, BR-13–BR-14**.
@@ -184,7 +186,11 @@ classDiagram
 
 ## 4. Luồng phối hợp ứng dụng / transaction boundary
 
-Business operation tạo request với pinned policy → thiếu dữ liệu NEEDS_INFORMATION, hợp lệ cần duyệt PENDING_APPROVAL, vi phạm cấm reject → người có permission/scope đưa decision → APPROVED → coordinator re-check quyền **hiện hành**, target, conflict → execute domain action → COMPLETED; lỗi ghi FAILED/job.
+Business operation tạo request/pinned policy → thiếu NEEDS_INFORMATION, cần manual PENDING_APPROVAL, vi phạm reject → current-authorized decision/audit **commit APPROVED bền ở D1**. Explicit authorized E1 qua FinancialCoordinator recheck current rights/approved payload/target/obligation → apply delta+allocation releases+wallet credits đúng excess+effect receipt/audit+COMPLETED **một transaction**. E1 lỗi rollback effects, giữ APPROVED/decision; execution failure/job outcome ghi riêng, không mất approval hoặc báo completed.
+
+**Wallet traceability:** refund link invoice+approved adjustment/cancel+original payment và release; root effect duy nhất/request/approved version dù caller đổi key. Reuse IdempotencyRecord root/hash/result là **technical recommendation Q7**, không receipt table/workflow framework mới bắt buộc. Same root authorized replay không repeat credit; approved body/delta không tự đổi, stale obligation cần reconciliation/new approval. BR-11 manual/self-approved one-Manager audit giữ. Top-up correction routing chi tiết còn review, không tự coi mọi reversal workflow approved.
+
+Legacy/mixed thiếu policy chặn affected effect, không auto convert/dual-credit excess. Worker không tự top-up/pay/approve. W06–09/20/21/23/28/30/36 và AC-26/34 mới **DESIGNED**; SQL/failure/concurrency/API NOT RUN, wallet NOT IMPLEMENTED.
 
 **Nguyên tắc xuyên module:** Không repository trực tiếp vào bảng của module khác. Nếu phải ghi nhiều module trong cùng một nghiệp vụ, application coordinator sở hữu transaction PostgreSQL; domain service chỉ trả kết quả/điều kiện; sự kiện side effect ghi vào outbox cùng transaction khi cần.
 
