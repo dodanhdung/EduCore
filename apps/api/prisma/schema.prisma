@@ -178,14 +178,15 @@ enum AuditActorKind {
 }
 
 model Tenant {
-  id          String    @id @default(uuid()) @db.Uuid
-  code        String    @unique @db.Text
-  name        String    @db.Text
-  timezone    String    @default("Asia/Ho_Chi_Minh") @db.Text
-  status      String    @db.Text
-  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String    @id @default(uuid()) @db.Uuid
+  code             String    @unique @db.Text
+  name             String    @db.Text
+  timezone         String    @default("Asia/Ho_Chi_Minh") @db.Text
+  timezoneFrozenAt DateTime? @map("timezone_frozen_at") @db.Timestamptz(6)
+  status           String    @db.Text
+  activatedAt      DateTime? @map("activated_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   policyVersions               PolicyVersion[]
   authSessions                 AuthSession[]
