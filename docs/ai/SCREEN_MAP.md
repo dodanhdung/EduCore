@@ -8,6 +8,8 @@ This is a merged **design-unit inventory**, not 71 mandatory routes or 71 separa
 
 **Routes:** `/app/:tenantId/*` is the approved UI navigation convention; listed route paths are preferred defaults subject to **individual screen review** (not NestJS API). Tenant ID grants no access. Unauthenticated routes remain global. `embedded:` entries are components/flows and require no standalone route unless a slice review decides otherwise.
 
+**Business amendments (18–19/10/2026):** O-12 và Wallet B1–B5 đã được duyệt ở mức nghiệp vụ trong Requirements v5.1/UC-21/23–26/34/37; các thay đổi card/host tài chính bên dưới là **PROPOSED UI**, chưa duyệt từng màn hình hay route/API. Giữ 71 design units; `BL08` bao cả nạp ví không cần invoice và thanh toán invoice từ ví, `BL11` phân biệt đảo TOP_UP với đảo Payment. Q1–Q8 kỹ thuật Wallet vẫn chờ sign-off; không suy ra tính năng đã triển khai.
+
 ## A. P0 screen/design-unit inventory
 
 | ID | Name | Route / host (kit default; per-screen review) | Trace (source) | Review |
@@ -48,17 +50,17 @@ This is a merged **design-unit inventory**, not 71 mandatory routes or 71 separa
 | `AT03` | Gửi đơn xin nghỉ | `/app/:tenantId/leave-requests/new` | UC-16 · BR-04 · Q-02 | PROPOSED |
 | `AT04` | Danh sách và xử lý đơn nghỉ | `/app/:tenantId/leave-requests` | UC-16 · Q-02 | PROPOSED |
 | `AT05` | Đề nghị điều chỉnh điểm danh | `embedded: /attendance/corrections (sheet/list)` | UC-15 · Q-05 | PROPOSED |
-| `BL01` | Bảng đơn giá học phí | `/app/:tenantId/finance/pricing` | UC-21 · Q-08 | PROPOSED |
+| `BL01` | Bảng đơn giá học phí | `/app/:tenantId/finance/pricing` | UC-21 · BR-06 · Q-08 (O-12) | PROPOSED |
 | `BL02` | Xác minh và áp dụng ưu đãi anh/chị/em | `/app/:tenantId/finance/discount-eligibility` | UC-22 · Q-02 · Q-09 | PROPOSED |
-| `BL03` | Kỳ học phí & lần tính | `/app/:tenantId/finance/billing-periods` | UC-23 · BR-04 · Q-08 | PROPOSED |
+| `BL03` | Kỳ học phí & generation tính | `/app/:tenantId/finance/billing-periods` | UC-23 · BR-04 · Q-08 (O-12) | PROPOSED |
 | `BL04` | Danh sách hóa đơn dự thảo | `/app/:tenantId/finance/drafts` | UC-23–24 | PROPOSED |
 | `BL05` | Rà soát và phát hành hóa đơn nội bộ | `/app/:tenantId/finance/drafts/:draftId` | UC-23–24 · BR-13 · Q-08–09 | PROPOSED |
 | `BL06` | Danh sách hóa đơn đã phát hành | `/app/:tenantId/finance/invoices` | UC-24–26 | PROPOSED |
 | `BL07` | Chi tiết hóa đơn & lịch sử thu | `/app/:tenantId/finance/invoices/:invoiceId` | UC-24–26 · Q-10 | PROPOSED |
-| `BL08` | Ghi nhận thanh toán thủ công | `embedded: BL07 payment dialog` | UC-25 · Q-10 | PROPOSED |
-| `BL09` | Công nợ & khoản thu | `/app/:tenantId/finance/receivables` | UC-25 · Q-12 | PROPOSED |
+| `BL08` | Nạp ví thủ công / thanh toán invoice từ ví | `embedded: BL09 student wallet panel; BL07 payment dialog` | UC-25 · FR-30 · Q-10 (Wallet) | PROPOSED |
+| `BL09` | Công nợ, ví & khoản thu | `/app/:tenantId/finance/receivables` | UC-25 · Q-10/12 (Wallet) | PROPOSED |
 | `BL10` | Yêu cầu điều chỉnh/hủy hóa đơn | `/app/:tenantId/finance/invoices/:invoiceId/adjust` | UC-26 · BR-11 · Q-10 | PROPOSED |
-| `BL11` | Đảo khoản thu sai | `/app/:tenantId/finance/payments/:paymentId/reversal` | UC-25–26 · Q-10 | PROPOSED |
+| `BL11` | Đảo nạp ví sai / đối soát đảo Payment | `embedded: BL09/BL08 TOP_UP reversal; Payment reversal host NEEDS_DECISION` | UC-25–26 · Q-10 (Wallet) | PROPOSED |
 | `AS01` | Danh sách bài tập của giáo viên | `/app/:tenantId/teaching/assignments` | UC-27 | PROPOSED |
 | `AS02` | Tạo/chỉnh sửa/giao bài | `/app/:tenantId/teaching/assignments/new` | UC-27 · Q-11 | PROPOSED |
 | `AS03` | Chi tiết bài tập & lượt nộp | `/app/:tenantId/teaching/assignments/:assignmentId` | UC-27–29 | PROPOSED |
@@ -70,7 +72,7 @@ This is a merged **design-unit inventory**, not 71 mandatory routes or 71 separa
 | `PO02` | Trang chủ học sinh | `/app/:tenantId/student` | UC-14 · UC-16 · UC-28 · UC-31 | PROPOSED |
 | `PO03` | Trang chủ phụ huynh | `/app/:tenantId/parent` | UC-06 · UC-14 · UC-16 · UC-25 (quyền xem) | PROPOSED |
 | `PO04` | Thông tin học tập của con (P0 read-only) | `/app/:tenantId/parent/children/:studentId` | UC-06 · UC-14 · UC-28–29 (phần hiển thị kết quả đã công bố) | PROPOSED |
-| `PO05` | Học phí của con / học sinh | `/app/:tenantId/my/billing` | UC-25 · Q-10 · Q-12 (quyền xem) | PROPOSED |
+| `PO05` | Học phí & ví của con / học sinh (chỉ xem) | `/app/:tenantId/my/billing` | UC-25 · Q-10/12 (quyền xem Wallet) | PROPOSED |
 
 ## B. P1 concepts — NOT TO BE MOUNTED IN P0
 
@@ -143,6 +145,7 @@ This is a merged **design-unit inventory**, not 71 mandatory routes or 71 separa
 - Shared `AppShell`+`TenantSwitcher` (only permitted memberships), menu based on **effective** permission, not role labels. Parent selects only **verified linked student**; Teacher sees current assigned classes; student sees own records.
 - Manager dashboard `G01`: exactly 3 P0 business KPIs; Teacher/Student/Parent landing `PO01/02/03` are task summaries, not extra manager KPI dashboards.
 - `SC01` vs `SC06`, `AC02` vs `PO04`, `BL07` vs `PO05`, `AS03` vs `AS07` can reuse components. Different view != duplicated business flow.
+- `BL08` top-up thuộc student/tenant và không cần invoice; payment chỉ từ ví cho một invoice ISSUED. `BL11` không dùng đảo Payment hợp lệ để bù top-up sai. Chỉ financial staff đúng permission/scope có nút mutation; Student/Parent chỉ xem dữ liệu được cấp. Host Payment reversal chờ screen/API review; `/app/:tenantId/finance/payments/:paymentId/reversal` là route đề xuất lịch sử để đối chiếu, không phải route/API đã duyệt.
 - Do not ship `EX01`–`EX12`, P1 controls, or a platform tenant lifecycle UI in P0. P1 conceptual routes are not permission to implement.
 
 ## E. Required review per screen

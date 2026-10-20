@@ -2,6 +2,8 @@
 
 **Version:** 1.0 · **Status:** APPROVED UI defaults; never supersede FR/UC/Q/BR or replace screen-level approval. 
 
+**Content alignment 20/10/2026:** O-12 và Wallet B1–B5 là business approved trong Requirements/UC hiện tại. Hành vi UI tài chính dưới đây là đề xuất cho từng screen review; Wallet Q1–Q8 còn cần đối chiếu technical sign-off, public write transport và trạng thái R6, không suy ra API/screen đã sẵn sàng.
+
 ## 1. Guiding priorities
 
 1. **Clarity over decoration:** Scheduling conflicts, unpaid invoices, attendance locks, permission limitations, and workflow stages need distinct visual/semantic treatment.
@@ -46,6 +48,8 @@ Spacing: 4/8/12/16/24/32px increments; body 14–16px; page title 24–30px; min
 | `ResourceConflictList` | resource type, time window, conflict reason safe for scope; no leaking other tenant names |
 | `MoneyVnd` | decimal string from API, BigInt-safe handling, local VND formatting and no float arithmetic |
 | `DateTimeTenant` | timestamp UTC to selected tenant timezone; local time labels, calendar consistency |
+| `BillingSourceDate` | hiển thị ngày bắt đầu buổi theo timezone tenant đã freeze để giải thích kỳ/PriceRule; không dùng ngày draft/issue để giải thích giá |
+| `WalletSummary` | tách balance khả dụng, invoice allocated payment, outstanding và verified cash received; chỉ render giá trị server trả về theo scope |
 | `NotificationsInbox` | read/unread dedup; in-app only P0 |
 | `FileUploadField` | allowed extensions, MIME, max 10MB per file, max 5 files/submission, errors, never direct volume path |
 | `AuditTrail` | permission-filtered, redact secrets, actor/result/reason/policy/time |
@@ -69,7 +73,11 @@ Every view/action should specify and test: `idle`, `loading`, `empty`, `success`
 
 **Attendance:** distinguish draft vs finalization, show deadline (48h from session end or invoice issued, whichever first), `EXCUSED` only after approved absence; Teacher attendance status `ATTENDED` if child actually attended despite leave approval. Locked corrections require authorized reason/audit.
 
-**Billing:** Separate DRAFT vs ISSUED. One internal invoice per student/month aggregates class lines; don't label it an electronic legal tax invoice. Use server-derived debt (issued, adjusted, allocated) only; no green zero-debt card that hides **pending excess resolutions**. Show payment method CASH or BANK_TRANSFER manually recorded; do not imply bank verification.
+**Billing — O-12:** Separate DRAFT vs ISSUED. Một invoice logic/student/tenant/local-start month có thể gộp nhiều lớp và nhiều PriceRule. Giá từng line theo ngày bắt đầu session tại timezone tenant đã freeze, ưu tiên Session→Class→Course; calculation policy pin riêng. Hiển thị ngày/giá/window/policy và generation hiện hành ở review. Retry giữ generation; recompute DRAFT có lý do, generation mới và diff/history. Source/generation stale thì chặn ISSUE; không reprice hoặc sửa line ISSUED. HALF_UP một lần cuối, hạn 7 ngày sau issue theo Backend.
+
+**Billing — Wallet:** Với giao dịch P0 mới, CASH/BANK_TRANSFER là nguồn receipt **TOP_UP** đã được nhân sự tài chính xác minh thủ công theo student/tenant, không cần invoice; không tạo invoice Payment hoặc giảm công nợ. Payment trực tiếp CASH/BANK_TRANSFER lịch sử giữ nhãn nguồn cũ, không tự chuyển thành ví. Trả invoice ISSUED là hành động WALLET riêng cho một invoice, amount nhập rõ `>0`, không vượt balance/outstanding và không tự hạ thành partial. Chỉ staff có financial permission/scope hiện hành được top-up/pay/reverse; Student/Parent scoped read only. Không hiển thị top-up như doanh thu hoặc balance như tiền đã phân bổ. Use server-derived debt (issued adjusted obligation minus valid net allocations), not a locally subtracted wallet balance.
+
+**Adjustment/approval:** Invoice ISSUED là chứng từ nội bộ bất biến; request adjustment/cancel cần duyệt thủ công. Decision `APPROVED` được lưu bền, explicit execution kiểm quyền/điều kiện lại; chỉ `COMPLETED` sau adjustment, signed release, net-excess wallet credit, receipt và audit commit. Execution lỗi giữ APPROVED với outcome lỗi riêng; không báo đã hoàn. Legacy/mixed hoặc excess cũ thiếu policy/bằng chứng phải hiển thị blocked/reconciliation, không tự convert hoặc hoàn ra ngân hàng. Không có payment gateway, cash-out hay prepaid combo P1.
 
 **Assignments:** Draft, publish, submission versions and grade DRAFT/PUBLISHED. Student/Parent must not see draft grades. Late submission <=7 days visibly flagged. File type/size checks client-side **and server-side**.
 
@@ -87,6 +95,7 @@ Use Figma **optionally for design** if an editable design and explicitly authori
 - 320/375/768/1024/1440px layouts and long Vietnamese text; low bandwidth, double-click/retry, invalid form, slow response and timeout.
 - Compare displayed business state to API. Never show private file URL, OTP, token or unredacted audit data.
 - Confirmations and errors match acceptance criteria; align UI strings with actual implemented endpoint states.
+- Financial review: top-up khi chưa có invoice, payment thiếu balance/vượt outstanding, retry trùng receipt/key, O-12 buổi qua ranh giới tháng/giá, G1→G2/stale issue, APPROVED→execution failure/retry, legacy/mixed blocked. AC trong UC hiện là DESIGNED; chỉ ghi PASS khi thật sự chạy test.
 
 ## 10. Canonical patterns from the retired Stitch kit
 

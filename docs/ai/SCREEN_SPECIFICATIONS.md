@@ -6,7 +6,9 @@
 
 **Read selectively:** open ONLY the requested screen ID and linked business UC; see `SCREEN_MAP.md` for canonical route/status. All 59 P0 design units are approved planning coverage, NOT 59 implemented/individually signed-off routes and NOT a request to generate all at once. `EX01`–`EX12` are future P1 **concepts only**.
 
-**Normative precedence:** Requirements v5 → Use Case Spec v1.3 → Accepted Architecture → approved DB/Detailed/API contracts when actually available in checkout → this approved UI planning baseline (per-screen approval still required). User role listed is descriptive; Backend checks permission+scope. UI paths here are frontend proposals, not `/api/v1` endpoints. For screen approval use `SCREEN_REVIEW_TEMPLATE.md`.
+**Normative precedence:** Requirements v5 baseline + O-12/Wallet v5.1 amendments → Use Case Spec v1.3 + corresponding amendments → Accepted Architecture → approved DB/Detailed/API contracts when actually available in checkout → this UI planning baseline (per-screen approval still required). User role listed is descriptive; Backend checks permission+scope. UI paths here are frontend proposals, not `/api/v1` endpoints. For screen approval use `SCREEN_REVIEW_TEMPLATE.md`.
+
+**Amendment 20/10/2026 (docs alignment):** O-12 (18/10) và Wallet B1–B5 (19/10) là quyết định **business approved** của Requirements/UC hiện tại. Các cách đặt component/host và trạng thái UX bên dưới là **PROPOSED** cho review từng màn hình; Q1–Q8 Wallet về schema/API/locking/receipt còn **PENDING TECHNICAL SIGN-OFF**. AC là DESIGNED, không phải runtime PASS. Không suy ra route hoặc tính năng đã triển khai.
 
 ## A. Reusable patterns
 
@@ -117,14 +119,14 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 
 **OP04 — Danh sách phê duyệt [P0]**  
 `UI route đề xuất:` `/app/:tenantId/approvals` · `Actor thường gặp:` Người có permission approve · `Nguồn trace:` UC-26 · UC-34 · BR-08–11 · `Artboard đề xuất:` Desktop + Mobile · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Tab Chờ xử lý / Cần bổ sung / Hoàn thành; loại yêu cầu, mức độ khẩn, người yêu cầu, thời điểm, scope.
+- **Khối UI:** Tab Chờ xử lý / Cần bổ sung / Đã duyệt chờ thực thi / Hoàn thành; loại yêu cầu, mức độ khẩn, người yêu cầu, thời điểm, scope.
 - **Thao tác & luồng:** Mở request; lọc theo nghiệp vụ tài chính/học vụ; không tự nhận quyền chỉ vì tên role.
-- **Trạng thái cần thiết kế:** PENDING_APPROVAL, NEEDS_INFORMATION, REJECTED, COMPLETED.
+- **Trạng thái cần thiết kế:** PENDING_APPROVAL, NEEDS_INFORMATION, REJECTED, APPROVED (decision bền vững/chưa hoàn tất), COMPLETED; execution lỗi có outcome riêng.
 
 **OP05 — Xem xét và quyết định phê duyệt [P0]**  
 `UI route đề xuất:` `/app/:tenantId/approvals/:requestId` · `Actor thường gặp:` Người có quyền xử lý request · `Nguồn trace:` UC-26 · UC-34 · BR-11 · `Artboard đề xuất:` Desktop + Mobile · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
 - **Khối UI:** Evidence/đối tượng gốc; request reason; chính sách áp dụng; timeline; fields lý do, quyết định; cảnh báo self-approve financial.
-- **Thao tác & luồng:** Approve/Reject/Request information; tái kiểm tra quyền/dữ liệu khi thực thi; hiển thị APPROVED riêng COMPLETED.
+- **Thao tác & luồng:** Approve/Reject/Request information; lưu quyết định APPROVED trước, sau đó chỉ người có quyền mới thực thi rõ ràng và kiểm tra lại quyền/dữ liệu/payload đã duyệt. Chỉ báo COMPLETED khi effect, receipt, audit commit; lỗi thực thi giữ quyết định APPROVED và cho đối soát/retry cùng root khi hợp lệ.
 - **Trạng thái cần thiết kế:** Not authorized, stale/changed context, approval success but execution failed, SELF_APPROVED flag.
 
 **OP06 — Tra cứu audit log [P0]**  
@@ -136,7 +138,7 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 **OP07 — Quản lý job và retry [P0]**  
 `UI route đề xuất:` `/app/:tenantId/operations/jobs` · `Actor thường gặp:` Manager/người có permission vận hành · `Nguồn trace:` UC-37 · BR-12 · Q-13 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
 - **Khối UI:** Danh sách job: loại, source, policy version, status, attempt, error reason, correlation ID; filter FAILED/NEEDS_INFORMATION/PENDING_APPROVAL.
-- **Thao tác & luồng:** Xem job; retry thủ công nếu được phép; xác nhận rerun; cùng idempotency key, không hiển thị auto-infinite retry.
+- **Thao tác & luồng:** Xem job; retry thủ công nếu được phép; xác nhận rerun; cùng idempotency root, không hiển thị auto-infinite retry. Manual recovery sau exhausted retries là PROPOSED/PENDING TECHNICAL SIGN-OFF, chưa thành nút P0 được duyệt.
 - **Trạng thái cần thiết kế:** Queued, running, failed, needs info, retried, completed.
 
 
@@ -276,9 +278,9 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 
 **BL01 — Bảng đơn giá học phí [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/pricing` · `Actor thường gặp:` Accountant/Manager được cấp quyền · `Nguồn trace:` UC-21 · Q-08 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Bảng rule theo scope Buổi/Lớp/Khóa, đơn giá VND, ngày hiệu lực, version policy, trạng thái.
-- **Thao tác & luồng:** Tạo/sửa giá với ngày hiệu lực; hiển thị thứ tự ưu tiên Session→Class→Course; không cập nhật ngầm hóa đơn đã phát hành.
-- **Trạng thái cần thiết kế:** Overlapping rules, missing price, read-only historical version.
+- **Khối UI:** Bảng PriceRule theo scope Buổi/Lớp/Khóa, VND, cửa sổ ngày hiệu lực `[from,to)`, timezone tenant đã freeze, version và trạng thái; ví dụ ngày bắt đầu buổi so với ngày tạo draft.
+- **Thao tác & luồng:** Tạo rule có ngày hiệu lực hợp lệ; hiển thị thứ tự Session→Class→Course. Giá buổi chọn theo local date của **session start**, không theo ngày nhập phí/draft/issue; không backdate giá đã có buổi bắt đầu hoặc cập nhật ngầm invoice ISSUED. Calculation policy pin riêng với ngày chọn PriceRule.
+- **Trạng thái cần thiết kế:** Overlapping rules, missing price, mutation hồi tố bị chặn, read-only historical version.
 
 **BL02 — Xác minh và áp dụng ưu đãi anh/chị/em [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/discount-eligibility` · `Actor thường gặp:` Accountant/Manager có quyền · `Nguồn trace:` UC-22 · Q-02 · Q-09 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
@@ -286,11 +288,12 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 - **Thao tác & luồng:** Approve eligibility dựa vào chứng cứ, không dựa chung parent/name; chỉ một loại ưu đãi P0, không hiển thị combo P1.
 - **Trạng thái cần thiết kế:** Unverified, verified, revoked, enrollment inactive.
 
-**BL03 — Kỳ học phí & lần tính [P0]**  
+**BL03 — Kỳ học phí & generation tính [P0]**
+
 `UI route đề xuất:` `/app/:tenantId/finance/billing-periods` · `Actor thường gặp:` Accountant/Manager · `Nguồn trace:` UC-23 · BR-04 · Q-08 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Chọn tháng; tiến độ data đủ hay chưa; số học sinh đủ tính, thiếu finalization, billing run status; action tính lại draft hợp lệ.
-- **Thao tác & luồng:** Tạo draft sau kỳ tháng khi dữ liệu đầy đủ; NEEDS_INFORMATION nếu thiếu điểm danh; tránh lặp theo operation.
-- **Trạng thái cần thiết kế:** Not ready, running, needs information, completed, failed.
+- **Khối UI:** Chọn kỳ tháng theo local session-start date tại timezone tenant đã freeze; tiến độ nguồn, billing run và current generation, policy pin, lý do/diff khi tính lại draft.
+- **Thao tác & luồng:** Tạo draft sau kỳ khi đủ dữ liệu; thiếu giá/điểm danh đã xác nhận → NEEDS_INFORMATION, không mặc định giá 0. Retry cùng key/generation giữ kết quả; recompute có chủ đích cho DRAFT cần key/lý do/expected generation mới và giữ lịch sử G1/G2. Không recompute invoice ISSUED hoặc tự debit ví.
+- **Trạng thái cần thiết kế:** Not ready, running, needs information, completed, failed, stale generation/concurrent recompute.
 
 **BL04 — Danh sách hóa đơn dự thảo [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/drafts` · `Actor thường gặp:` Accountant/Manager · `Nguồn trace:` UC-23–24 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
@@ -300,57 +303,60 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 
 **BL05 — Rà soát và phát hành hóa đơn nội bộ [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/drafts/:draftId` · `Actor thường gặp:` Accountant/Manager có quyền phát hành · `Nguồn trace:` UC-23–24 · BR-13 · Q-08–09 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Student, kỳ, snapshot giá/chính sách; invoice line cho từng session: ATTENDED/UNEXCUSED=1, EXCUSED/CANCELLED=0; gross, sibling discount 10% nếu hợp lệ, total, due +7 ngày.
-- **Thao tác & luồng:** Chỉ phát hành sau xác nhận thủ công, kiểm tra eligibility/permissions/finalized attendance; dialog xác nhận rõ không sửa trực tiếp sau issue.
-- **Trạng thái cần thiết kế:** Incomplete attendance, discrepancy, approval needed, issue success.
+- **Khối UI:** Student, kỳ theo local start, current generation và snapshot từng session: source date/timezone, PriceRule/window/unit price, pinned calculation policy; ATTENDED/UNEXCUSED=1, EXCUSED/CANCELLED=0; gross, sibling 10% nếu hợp lệ, HALF_UP một lần cuối, total, due +7 ngày theo Backend. Cùng tháng có thể có nhiều đơn giá.
+- **Thao tác & luồng:** Chỉ phát hành sau xác nhận thủ công; kiểm quyền, nguồn và current generation lại trước issue; source/generation stale thì chặn và yêu cầu review, không reprice hoặc repin tại issue. Không tự trừ ví khi tạo draft/issue.
+- **Trạng thái cần thiết kế:** Incomplete attendance/price, discrepancy, approval needed, stale source/generation, issue success.
 
 
-- **Billing v1.1:** một hóa đơn nội bộ cho mỗi (tenant, student, month), dòng có thể đến từ nhiều lớp; số hóa đơn chỉ cấp lúc ISSUE. Mốc hạn 7 ngày hiển thị theo kết quả Backend, quy tắc thời điểm cụ thể thuộc slice Billing.
+- **Billing O-12:** một hóa đơn logic cho mỗi (tenant, student, local-start month), dòng có thể đến từ nhiều lớp/giá; số hóa đơn chỉ cấp lúc ISSUE. Hạn 7 ngày sau phát hành hiển thị theo kết quả Backend. ISSUED giữ line/claim lịch sử, điều chỉnh qua UC-26.
 
 **BL06 — Danh sách hóa đơn đã phát hành [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/invoices` · `Actor thường gặp:` Accountant/Manager; người xem theo scope · `Nguồn trace:` UC-24–26 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Bảng số hóa đơn nội bộ, Student, issued/due date, total, paid, outstanding, trạng thái; filter theo kỳ/hạn/đã thu.
+- **Khối UI:** Bảng số hóa đơn nội bộ, Student, issued/due date, total, paid, outstanding, trạng thái; filter theo kỳ/hạn/đã thu. Khi được phép xem, phân biệt Payment WALLET mới với CASH/BANK_TRANSFER legacy; balance ví chưa phân bổ không tính vào paid.
 - **Thao tác & luồng:** Mở chi tiết; request adjustment/cancel; không có action sửa thẳng tiền/line ISSUED.
 - **Trạng thái cần thiết kế:** ISSUED/settled/overdue/cancelled (nhãn thể hiện đúng domain), empty.
 
 **BL07 — Chi tiết hóa đơn & lịch sử thu [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/invoices/:invoiceId` · `Actor thường gặp:` Accountant/Manager; Student/Parent scope view · `Nguồn trace:` UC-24–26 · Q-10 · `Artboard đề xuất:` Desktop + Mobile · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Invoice ID nhãn HÓA ĐƠN NỘI BỘ; statement lines/snapshot; gross/discount/total, paid/outstanding, due date; payment history and adjustment timeline.
-- **Thao tác & luồng:** Có quyền: nhập khoản thu, yêu cầu điều chỉnh; Parent/Student chỉ read-only đúng người; không in nhãn hóa đơn điện tử hợp pháp.
-- **Trạng thái cần thiết kế:** Partially paid, fully paid, overdue, adjustment pending, cancelled.
+- **Khối UI:** Invoice ID nhãn HÓA ĐƠN NỘI BỘ; line snapshot gồm ngày buổi/giá áp dụng; original và adjusted obligation, WALLET payment, outstanding, due date và adjustment/refund timeline. Nhân sự có quyền xem allocation/signed releases để đối soát; Student/Parent chỉ thấy summary/history được phép. Balance ví tách khỏi tiền đã trả invoice và công nợ.
+- **Thao tác & luồng:** Nhân sự có financial permission đúng student/tenant scope mở BL08 để trả invoice từ ví hoặc BL10 để đề nghị điều chỉnh; Parent/Student chỉ read-only đúng người; không in nhãn hóa đơn điện tử hợp pháp.
+- **Trạng thái cần thiết kế:** Insufficient wallet balance, partially/fully paid, overdue, adjustment pending, APPROVED chưa execute, refunded/completed; legacy/mixed history vẫn đọc theo quyền, affected mutation thiếu policy thì blocked.
 
 
-- **Billing v1.1 bổ sung:** nếu invoice đã được thu rồi được điều chỉnh giảm và phát sinh khoản thu vượt, hiển thị `Khoản thu vượt đang chờ xử lý` **riêng** với công nợ, có trạng thái `PENDING_RESOLUTION`; không tự hoàn tiền/tạo credit. Parent/Student không thấy công cụ xử lý nội bộ.
+- **Wallet amendment:** với nguồn thuần Wallet, sau authorized execution của điều chỉnh/hủy đã duyệt, chỉ phần payment **ròng vượt nghĩa vụ mới** được release/credit vào ví và hiển thị receipt; APPROVED riêng COMPLETED. Legacy/mixed hoặc excess cũ thiếu policy/bằng chứng: chặn execution liên quan để đối soát, không tự chuyển ví. Parent/Student chỉ xem dữ liệu được phép, không thấy công cụ xử lý nội bộ.
 
-**BL08 — Ghi nhận thanh toán thủ công [P0]**  
-`UI route đề xuất:` `embedded: BL07 payment dialog` · `Actor thường gặp:` Accountant/Manager được cấp quyền · `Nguồn trace:` UC-25 · Q-10 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Invoice outstanding hiện tại, số tiền VND, phương thức Tiền mặt/Chuyển khoản, ngày thu, mã tham chiếu/note, người đối soát.
-- **Thao tác & luồng:** Submit kiểm tra amount >0 và ≤ outstanding, idempotency chống trùng; không kết nối bank/auto-confirm.
-- **Trạng thái cần thiết kế:** Overpayment error, duplicate submission, partial payment success, concurrent payment conflict.
+**BL08 — Nạp ví thủ công / thanh toán invoice từ ví [P0]**
 
-**BL09 — Công nợ & khoản thu [P0]**  
+`UI host đề xuất:` `embedded: BL09 student wallet panel; BL07 invoice payment dialog` · `Actor thường gặp:` nhân sự có financial permission hiện hành đúng student/tenant scope · `Nguồn trace:` UC-25 · FR-30 · Q-10 (Wallet) · `Artboard đề xuất:` Desktop + Mobile review · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
+- **Khối UI:** Hai hành động tách biệt. **Nạp ví:** chọn student, receipt đã xác minh ngoài hệ thống, CASH/BANK_TRANSFER, amount VND>0, receivedAt/reference/evidence; không cần invoice. **Trả invoice:** invoice ISSUED của cùng student/tenant, balance khả dụng, outstanding, amount nhập rõ (partial/full), xem trước balance/due sau thao tác. Không hiển thị CASH/BANK_TRANSFER là phương thức Payment của invoice mới.
+- **Thao tác & luồng:** Staff xác nhận nạp sau đối soát thủ công; TOP_UP tăng ví và không tạo invoice Payment/doanh thu. Staff chủ động trả một invoice bằng WALLET; yêu cầu `0<amount<=balance` và `<=outstanding`, không tự giảm amount thành partial. Chờ receipt/server state sau submit, cùng key/receipt không tăng ví hoặc debit lặp. Không tự debit khi draft/issue/recompute, Student/Parent không có mutation.
+- **Trạng thái cần thiết kế:** Receipt duplicate/key conflict, insufficient balance, over-outstanding, invoice draft/cancelled, partial/full success, concurrent/stale conflict, unknown commit cần tra receipt, forbidden; affected legacy/mixed collection thiếu policy thì blocked.
+
+**BL09 — Công nợ, ví & khoản thu [P0]**
+
 `UI route đề xuất:` `/app/:tenantId/finance/receivables` · `Actor thường gặp:` Accountant/Manager có quyền · `Nguồn trace:` UC-25 · Q-12 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Bảng student/invoice, outstanding, due date, overdue amount, filter; tổng công nợ đúng theo ISSUED invoices; tách tab thu và phải thu nếu cần.
-- **Thao tác & luồng:** Lọc, mở invoice, ghi nhận khoản thu từ invoice; hạn chế export nâng cao nếu chưa xác định.
-- **Trạng thái cần thiết kế:** No debt, overdue, partially paid, paid.
+- **Khối UI:** Bảng student/invoice, outstanding, due date, overdue; khu vực ví theo student với balance và lịch sử TOP_UP/debit/credit/reversal theo quyền. Tách rõ verified cash received, wallet balance, invoice allocated payments và công nợ; tổng công nợ chỉ ISSUED sau điều chỉnh/allocation hợp lệ.
+- **Thao tác & luồng:** Lọc, mở invoice; nhân sự đủ quyền mở BL08 nạp ví độc lập invoice hoặc trả invoice từ ví. Không tự lấy số dư ví để giảm công nợ; hạn chế export nâng cao nếu chưa xác định.
+- **Trạng thái cần thiết kế:** No debt, wallet no history/balance 0, overdue, partially paid, paid, legacy/mixed cần đối soát.
 
 
-- **Billing v1.1 bổ sung:** bảng đối soát nội bộ hiển thị chỉ số/danh sách khoản thu vượt đang chờ xử lý riêng; KPI công nợ P0 chỉ tổng phải thu không âm từ ISSUED invoices.
+- **Wallet amendment:** phần credit sau approved execution được thể hiện trong lịch sử ví và allocation release, không cộng thêm vào verified cash received. Excess legacy/mixed chưa có policy được gắn cờ cần đối soát riêng; KPI công nợ P0 chỉ tổng phải thu không âm từ ISSUED invoices, không tính unused wallet.
 
 **BL10 — Yêu cầu điều chỉnh/hủy hóa đơn [P0]**  
 `UI route đề xuất:` `/app/:tenantId/finance/invoices/:invoiceId/adjust` · `Actor thường gặp:` Accountant/Manager có quyền · `Nguồn trace:` UC-26 · BR-11 · Q-10 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Invoice original read-only; loại adjustment AMOUNT/CANCELLATION, đề xuất delta, lý do, evidence, cảnh báo khoản đã thu.
-- **Thao tác & luồng:** Tạo yêu cầu PENDING_APPROVAL; người có quyền review ở OP05; self-approval tài chính phải ghi flag lý do; không edit ISSUED directly.
-- **Trạng thái cần thiết kế:** Needs approval, rejected, applied, cash surplus after adjustment.
+- **Khối UI:** Invoice original read-only; loại AMOUNT/CANCELLATION, nghĩa vụ trước/sau, payment ròng còn allocate, phần refund dự kiến `max(P_before−N_after,0)` với `P_before` là net allocated payment hiện hành khi nguồn thuần Wallet, lý do/evidence và tác động balance/due dự kiến.
+- **Thao tác & luồng:** Tạo PENDING_APPROVAL; OP05 duyệt thủ công rồi authorized execution riêng kiểm lại điều kiện. Sau commit mới show COMPLETED và release/credit đúng net excess vào ví, receipt/audit; không edit ISSUED hoặc tự hoàn ra ngân hàng. Self-approval theo BR-11 cần lý do và SELF_APPROVED audit flag.
+- **Trạng thái cần thiết kế:** Needs approval, rejected, APPROVED chờ/thực thi lỗi, completed with/without wallet refund, stale payment, legacy/mixed blocked.
 
 
-- **Billing v1.1 bổ sung:** cảnh báo thu vượt có thể xảy ra **sau** duyệt điều chỉnh, dù thao tác nhập khoản thu ban đầu đã giới hạn `<= outstanding`. Không xóa bản ghi payment.
+- **Wallet amendment:** thu vượt có thể phát sinh khi nghĩa vụ giảm **sau** payment. Preview không phải credit đã commit; partial payment chưa vượt nghĩa vụ mới thì refund bằng 0. Không xóa Payment, không credit cùng phần đã release trước đó.
 
-**BL11 — Đảo khoản thu sai [P0]**  
-`UI route đề xuất:` `/app/:tenantId/finance/payments/:paymentId/reversal` · `Actor thường gặp:` Accountant/Manager có quyền · `Nguồn trace:` UC-25–26 · Q-10 · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Thông tin payment gốc, số tiền, thời gian, phương thức, hóa đơn, form lý do và bằng chứng.
-- **Thao tác & luồng:** Tạo reversal có kiểm soát quyền/lý do/audit; không xóa payment gốc; tính lại outstanding theo ledger.
-- **Trạng thái cần thiết kế:** Already reversed, permission blocked, approved/executed.
+**BL11 — Đảo nạp ví sai / đối soát đảo Payment [P0]**
+
+`UI host đề xuất:` `embedded: BL09/BL08 TOP_UP reversal; Payment reversal host NEEDS_DECISION` · `Actor thường gặp:` nhân sự có financial permission đúng scope · `Nguồn trace:` UC-25–26 · Q-10 (Wallet) · `Artboard đề xuất:` Desktop · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý). Route `/app/:tenantId/finance/payments/:paymentId/reversal` là mapping đề xuất lịch sử để review, chưa là route/API đã duyệt.
+- **Khối UI:** TOP_UP gốc, full original amount, balance khả dụng, lý do/evidence và cảnh báo nếu thiếu balance; Payment WALLET có lịch sử riêng, không trộn với TOP_UP reversal.
+- **Thao tác & luồng:** Chỉ đảo toàn bộ TOP_UP bằng compensating entry khi balance đủ và có permission/reason/audit; thiếu balance thì từ chối/đối soát, không đảo Payment đúng để tạo đủ tiền. Payment reversal là nghiệp vụ tách riêng theo UC-26; chi tiết full nominal/release net còn pending technical sign-off, không suy ra route/API đã có.
+- **Trạng thái cần thiết kế:** Already reversed, insufficient balance, permission blocked, legacy/mixed blocked, pending/failed execution; history gốc luôn còn.
 
 
 #### G. Assignments & Grading
@@ -427,11 +433,12 @@ Keep page shell reference `G01`, canonical data list `AC01`, complex form `SC03`
 - **Thao tác & luồng:** Đổi tab và đi tới trang đúng scope; ẩn grade chưa công bố, không xem dữ liệu học sinh khác.
 - **Trạng thái cần thiết kế:** No active enrollment, incomplete info, linked child only.
 
-**PO05 — Học phí của con / học sinh [P0]**  
+**PO05 — Học phí & ví của con / học sinh (chỉ xem) [P0]**
+
 `UI route đề xuất:` `/app/:tenantId/my/billing` · `Actor thường gặp:` Parent đã liên kết hoặc Student có quyền xem chính mình · `Nguồn trace:` UC-25 · Q-10 · Q-12 (quyền xem) · `Artboard đề xuất:` Desktop + Mobile · `Permission+scope:` kiểm tra theo Backend (role chỉ gợi ý)
-- **Khối UI:** Chọn child (Parent), danh sách invoice ISSUED và outstanding, due date, trạng thái thu, payment history read-only.
-- **Thao tác & luồng:** Mở BL07 ở chế độ xem; không có nút thanh toán tự động/credit card/bank connect ở P0.
-- **Trạng thái cần thiết kế:** No invoices, partially paid, overdue, out-of-scope.
+- **Khối UI:** Chọn child (Parent), danh sách invoice ISSUED/outstanding, due date, WALLET payment history và balance/lịch sử ví được cấp theo scope; nhãn rõ số dư ví khác tiền đã trả hóa đơn.
+- **Thao tác & luồng:** Mở BL07 ở chế độ xem; không có nút tự nạp/trả invoice/đảo giao dịch cho Student/Parent, không card/bank connect P0. Liên kết Parent hiện hành bị thu hồi thì chặn đọc.
+- **Trạng thái cần thiết kế:** No invoices nhưng có ví, balance 0, partially paid, overdue, out-of-scope/link revoked.
 
 
 ## C. P1 CONCEPTS — DO NOT IMPLEMENT OR MOUNT IN P0

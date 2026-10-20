@@ -2,6 +2,8 @@
 
 **Status:** APPROVED AS KIT v1.0 · 17/10/2026 · **No Git changes**.
 
+**Historical billing note:** Section 3 records the 17/10 Group A review. For new pure-Wallet sources, Requirements v5.1 and Decision Register §G (19/10) take precedence; legacy/mixed cases retain their original history and need separate policy. This note preserves the 17/10 findings as provenance.
+
 ## 1. Compare sources
 
 | Dimension | Previous v0.9 kit | Uploaded Stitch package | Merged v1.0 review |

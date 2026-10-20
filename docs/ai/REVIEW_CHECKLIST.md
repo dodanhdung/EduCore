@@ -5,7 +5,7 @@
 ## 1. Documentation quality / consistency
 
 - [ ] Root `AGENTS.md` is short and only contains durable rules (no full FR/UC copy).
-- [ ] Requirements v5 and UC v1.3 are named precisely; review compares actual branch content and PR #1 state.
+- [ ] Requirements v5.1 (v5 + O-12 + Wallet amendments) và UC v1.3 với amendments được đối chiếu với remote `main`/checkout thực tế.
 - [ ] Accepted business/architecture vs user-approved group A vs UI proposals are visibly differentiated.
 - [ ] Every core screen row has traceable UC and role/object scope; no fabricated implemented UI/API/Figma.
 - [ ] All 71 design units represented once (59 P0, 12 P1); AU06 group-A activation included.
@@ -25,8 +25,8 @@
 - [ ] P0-only external business exception OTP email; no Calendar/Gmail OAuth/payment/bank/notification email.
 - [ ] Schedule confirmation all-or-nothing, six months, teacher/room/student conflicts, half-open time windows, recheck on commit.
 - [ ] Attendance finalized to bill, locks at 48h/invoice issue, corrections audited.
-- [ ] Invoice draft auto generated **not issued automatically**, manual payment, 10% sibling; amounts as VND bigint string.
-- [ ] Paid invoice downward adjustment yields separately tracked excess without automatic credit/refund. BL07/BL09/BL10 show internal pending resolution separately.
+- [ ] Invoice draft được tạo nhưng không tự ISSUE; giao dịch mới dùng TOP_UP CASH/BANK_TRANSFER đã xác minh rồi staff chủ động trả invoice ISSUED bằng WALLET; sibling 10%, VND bigint string.
+- [ ] New pure-Wallet: approved adjustment/cancel chỉ credit net excess sau successful authorized execution; `APPROVED` riêng `COMPLETED`. Legacy/mixed/excess cũ giữ history và chặn affected mutation khi thiếu policy; không tự convert/RESOLVED.
 - [ ] Submission versions preserved, published grades only shared with Student/Parent; private upload limits; resubmission cutoff reviewed before implementation.
 - [ ] Workflow APPROVED different from COMPLETED; job/outbox retries idempotent; audit retention 24 months.
 
@@ -73,6 +73,6 @@
 - [ ] `STITCH_REUSE_REVIEW.md` reviewed (keep/change/remove rationale).
 - [ ] `DESIGN_TOKENS.md` palette, dimensions, typography approved or changed.
 - [ ] Canonical UI ID policy and route proposal approved or changed.
-- [ ] `SCREEN_SPECIFICATIONS.md` checked for AU06 and BL07/BL09/BL10 corrections.
-- [ ] `SCREEN_FLOWS.md` F01 activation and F05 pending excess paths reviewed.
+- [ ] `SCREEN_SPECIFICATIONS.md` checked for AU06 and BL07–BL11 Wallet/legacy corrections.
+- [ ] `SCREEN_FLOWS.md` F01 activation and F05 TOP_UP → WALLET payment → approved execution/legacy paths reviewed.
 - [ ] One-screen workflow demonstrated with G01 or AU06 before any large-scale design.

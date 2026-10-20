@@ -15,7 +15,9 @@
 - Lớp: `ENG-A2-01 · Tiếng Anh A2`, `MATH-07A · Toán lớp 7`; Subject/Level hợp lệ trong demo.
 - Calendar demo: `Thứ Ba, 13/10/2026`, `18:00–19:30`, Phòng `P.201`, teacher `Trần Minh Anh`; không dùng sự kiện trùng vừa hiển thị như đã `CONFIRMED` trừ khi đang mô phỏng conflict preview.
 - Dashboard demo minh họa rõ nhãn `Dữ liệu mẫu`: `126` học sinh ACTIVE (distinct), `14` lớp ACTIVE, `28.450.000 ₫` tổng công nợ ISSUED; **không claim đây là dữ liệu trung tâm thật**.
-- Invoice demo: `INV-2026-00001` (nội bộ), 4 buổi `ATTENDED` + 1 buổi `EXCUSED` không thu, đơn giá `250.000 ₫`/buổi, gross `1.000.000 ₫`, discount sibling verified `100.000 ₫`, total `900.000 ₫`, paid `400.000 ₫`, outstanding `500.000 ₫`.
+- Invoice demo — `Dữ liệu mẫu` Wallet mới: `INV-2026-00001` (nội bộ), 4 buổi `ATTENDED` + 1 buổi `EXCUSED` không thu, đơn giá `250.000 ₫`/buổi, gross `1.000.000 ₫`, discount sibling verified `100.000 ₫`, total `900.000 ₫`. TOP_UP đã xác minh `500.000 ₫` có thể có trước invoice; staff chủ động trả `400.000 ₫` từ ví sau ISSUE → balance `100.000 ₫`, paid `400.000 ₫`, outstanding `500.000 ₫`. TOP_UP tự nó không giảm outstanding.
+- Refund demo — `Dữ liệu mẫu`: obligation `800.000 ₫`, WALLET payment đã phân bổ `800.000 ₫`; adjustment được duyệt giảm obligation còn `700.000 ₫`. Trước execution: `APPROVED`, refund dự kiến `100.000 ₫`; chỉ sau commit: `COMPLETED`, allocation release `100.000 ₫` và credit ví `100.000 ₫`.
+- Legacy demo — `Dữ liệu mẫu` riêng: Payment CASH/BANK_TRANSFER cũ giữ phương thức gốc; không tự tạo opening wallet balance hoặc đánh dấu excess cũ đã giải quyết.
 - Assignment demo: `Ôn tập Unit 5`, deadline `20/10/2026 21:00`, priority `★★★★☆`, 1 submission `LATE` nếu đúng trường hợp; điểm chỉ hiện với Student/Parent nếu trạng thái công bố.
 - Notification demo P0: `Buổi học ENG-A2-01 đổi sang 18:30` và `Bạn có bài tập mới: Ôn tập Unit 5`; **không** thêm nhắc hạn tự động nếu đang ở mock P0.
 

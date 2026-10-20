@@ -20,7 +20,7 @@ This guide merges the **tool-neutral detailed Stitch screen inventory** with the
 
 ## 2. Approved kit usage — separate review before implementation and Git writes
 
-1. **Verify current repo ref:** v5/group-A docs were previously prepared in PR #1; this local package does not assume that PR is merged. Requirements v5 + UC v1.3 + approved group A remain the intended source; inspect the actual checked-out versions.
+1. **Verify current repo ref:** use the actual remote `main` SHA and checkout. Requirements v5.1 (v5 + O-12 + Wallet amendments), UC v1.3 with amendments and Decision Register §G are current business sources; code/test do not imply technical or screen sign-off.
 2. **Kit-wide review is complete.** Canonical IDs, visual tokens, tenant-scoped UI navigation pattern and approved screen inventory are the starting baseline. Still do **not** copy to GitHub, write Figma or change application code without separate explicit authorization. Each screen/feature needs its own implementation sign-off.
 3. **One design unit:** pick screen ID, trace its FR/UC/Q, permission and object scope. Fill `SCREEN_REVIEW_TEMPLATE.md`; attach any Figma frame if one already exists/was explicitly approved. Figma is optional.
 4. **One vertical slice:** pick feature with its API/DB contract, prepare feature spec; implement only after feature and screen spec approval. Without backend, a prototype must visibly say `Dữ liệu mẫu`.
@@ -28,7 +28,7 @@ This guide merges the **tool-neutral detailed Stitch screen inventory** with the
 
 **Recommended first UI references (one at a time):** `G01` (shell and 3 KPI), `AC01` (DataTable), `SC03`+embedded `SC04` (form/conflict), `AT02` or `AS07` (mobile). This order is for *design references*; implementation should still follow approved vertical-slice dependencies, beginning with Tenant/IAM onboarding.
 
-**Authority & scope:** Requirements v5 → UC v1.3 → Accepted Architecture → Database v1.1 / Detailed Design / API (only versions verified on checked-out ref) → screen specs/tokens. Canonical frontend route pattern and token palette are approved UI defaults; each route/action still needs per-screen review and must not be mistaken for a live endpoint. Backend applies tenant+permission+scope. `EX01`–`EX12` are P1 concepts only and never mounted in P0.
+**Authority & scope:** Requirements v5.1 → UC v1.3 with amendments → Decision Register §G → Accepted Architecture → Database/Detailed/API contracts at verified status → screen specs/tokens. Canonical frontend route pattern and token palette are approved UI defaults; each route/action still needs per-screen review and is not automatically a live endpoint. Backend applies tenant+permission+scope. `EX01`–`EX12` are P1 concepts only.
 
 ## 3. Model selection: quality vs efficiency (as verified 17/10/2026)
 
@@ -195,6 +195,6 @@ Official workflow references:
 
 - Never paste 740 lines of `design.md` into every Codex turn. Pick ONE card by canonical ID. `DESIGN_TOKENS.md` holds the reusable visual rules; `UI_GUIDELINES.md` the interaction behavior.
 - `STITCH_START_HERE.md` and Stitch batch prompts no longer serve as run instructions. `UI_PROMPTS.md` gives shorter review-first design/React prompts.
-- Never treat `SCREEN_MAP` as an API specification. Detailed request/response lives in `docs/design/api_spec.md` when verified in current branch.
-- Group A adjustments already reflected: `AU06` account activation, `AU04` atomic OTP reset, `BL07/BL09/BL10` pending excess reconciliation, one invoice per student/month, fixed P0 permission catalog.
+- Never treat `SCREEN_MAP` as an API specification. Proposed request/response contracts are in `docs/design/api_specification.md`; verify review and implementation status for each slice.
+- Historical Group A corrections include `AU06`, `AU04`, one invoice per student/month and fixed P0 permission catalog. Wallet B1–B5 limited-supersede old pending-excess/no-credit presentation for new pure-Wallet sources; legacy/mixed history remains for reconciliation.
 - Follow `STITCH_REUSE_REVIEW.md` for the **approved kit-wide UI defaults**; review exceptions in a specific screen or feature slice before mass design production.

@@ -2,6 +2,8 @@
 
 > **Version:** 1.0 — approved visual/interaction baseline by owner on 17/10/2026; not an official trademark/logo approval. Derived from uploaded `DESIGN.md`; no Google Stitch dependency. Pair with `UI_GUIDELINES.md`, `SCREEN_MAP.md` and selected `SCREEN_SPECIFICATIONS.md` card. Language vi-VN. Only P0 unless P1 concept explicitly requested for review. Do not assume these tokens already exist in apps/web.
 
+**20/10/2026 content alignment:** O-12 và Wallet B1–B5 là business approved; các nhãn/component tài chính nêu dưới đây chỉ là đề xuất dùng token hiện có, chờ review từng màn hình. Không thêm màu/brand token hoặc xem đây là phê duyệt API/schema/implementation.
+
 ## Product & brand
 
 EduCore is an internal-first, multi-tenant training-center management SaaS. People using it include center managers, academic coordinators, accountants, teachers, students and parents. Experience should be calm, precise, friendly, modern and trustworthy. Prioritize readability, operational speed and explicit state. Use the wordmark `EduCore`; no logo has been formally approved. No glossy marketing pages, mascots, unrelated charts, neumorphism, glassmorphism or neon gradients.
@@ -47,7 +49,7 @@ Prefer `Be Vietnam Pro`; fallback `Inter, system-ui, sans-serif` with full Vietn
 - Academic: `StudentListRow`, `ClassCard`, `EnrollmentStatus`, `TeacherAssignmentList`.
 - Scheduling: weekly calendar / agenda, session chip, resource filter, conflict comparison panel.
 - Attendance: student list with clear `ATTENDED`, `EXCUSED`, `UNEXCUSED` choices and finalization state.
-- Billing: VND value summary, line items, snapshot rationale, issued-vs-draft callouts, cash/bank transfer **manual** record form.
+- Billing: VND value summary, line snapshot với local session-start date/giá, current generation/diff, issued-vs-draft callouts. Tách `TOP_UP` CASH/BANK_TRANSFER đã xác minh thủ công (student/tenant, không cần invoice) và `WALLET` payment cho một invoice ISSUED; balance, allocated payment, outstanding và net refund là các số khác nhau. Reuse `StatusBadge`, `ConfirmDialog`, `AuditTimeline`; pattern cụ thể còn per-screen review.
 - Assignments: 1–5 priority stars, upload with file type/size/count checks, submission version list, draft vs published grade.
 - Operations: approval evidence review, explicit `APPROVED` vs `COMPLETED`, job attempts, audit timeline.
 
@@ -61,11 +63,12 @@ Desktop Admin: fixed/collapsible sidebar, topbar, page header, compact tables an
 
 ## Content & compliance rules
 
-- All labels and sample records in natural Vietnamese. Show dates `dd/mm/yyyy`, times `HH:mm`, monetary amounts `1.250.000 ₫`, timezone `Asia/Ho_Chi_Minh`.
+- All labels and sample records in natural Vietnamese. Show dates `dd/mm/yyyy`, times `HH:mm`, monetary amounts `1.250.000 ₫`; hiển thị timezone tenant thực tế (ví dụ `Asia/Ho_Chi_Minh`) và phân biệt ngày bắt đầu buổi với ngày tạo draft/issue khi xem giá/kỳ.
 - Mark seed values and dummy records as `Dữ liệu mẫu` where appropriate; do not imply live services are connected.
 - P0 manager Dashboard has **exactly three** KPIs: distinct ACTIVE-enrolled students, ACTIVE classes, ISSUED-invoice outstanding receivables. No revenue chart, attendance analytics or forecast.
 - P0 notifications are **in-app** only for confirmed changed/cancelled schedules and published/assigned new assignments; no automatic deadline reminders, SMS, email business alerts or external pushes.
-- P0 financial UI: invoice means **internal statement**, manually issued, payments entered after cash/bank reconciliation, no online gateway. P0 sibling discount 10% only (verified). Never include prepaid combo 5% as a P0 control.
+- P0 financial UI: invoice means **internal statement**, manually issued. Với giao dịch mới, CASH/BANK_TRANSFER là nguồn nạp ví được staff xác minh thủ công; invoice Payment mới dùng WALLET sau hành động trả chủ động của staff. Payment CASH/BANK_TRANSFER lịch sử giữ nhãn nguồn cũ, không tự chuyển thành ví. TOP_UP chưa dùng không giảm công nợ hoặc thành doanh thu học phí; approved adjustment/cancel chỉ hoàn **net excess** vào ví khi execution có quyền commit. Không payment gateway/bank refund/cash-out. P0 sibling discount 10% only (verified); no prepaid combo 5% control.
+- Show `APPROVED` as a durable decision awaiting execution and `COMPLETED` only after effects commit. Use separate text for execution failure, legacy/mixed blocked and insufficient balance; no color alone implies wallet credit or successful payment.
 - Other P1-only features: makeup classes, suspension, teacher substitution, advanced reports, policy/permission editor, configurable workflows, platform tenant lifecycle. Do not show P1 nav or actions on P0 screens.
 - Authorization is enforced by Backend; UI may conditionally show actions but may not suggest bypassing tenant or class/student scopes.
 

@@ -8,7 +8,7 @@ Build EduCore P0 via **one approved vertical slice per task**. Treat every reque
 
 ## Sources and precedence
 
-1. `docs/requirements/requirements_analysis.md` **v5** (FR/BR/NFR, Q-01–Q-15).
+1. `docs/requirements/requirements_analysis.md` **v5.1** (v5 + O-12/Wallet amendments; FR/BR/NFR, Q-01–Q-15).
 2. `docs/requirements/usecase/specification.md` v1.3 (UC-01–UC-37 + AC).
 3. `docs/architectural/architectural_design.md` (Accepted ADRs).
 4. `docs/design/database_design.md` v1.1 after group-A approval; `docs/design/class design/` module file; `docs/design/detailed_design.md`; `docs/design/api_specification.md` — **only those versions actually present in the working branch**.
@@ -18,7 +18,7 @@ If missing, outdated, conflicting, or not merged: **report it**. Do not claim th
 
 ## Hard boundaries
 
-- P0 is **Internal-first**; external business integration ONLY OTP-email delivery. No payments gateway, bank reconciliation API, email business notifications, SMS/Zalo, Google login/calendar/drive, push, refund automation. P1 features such as makeup/suspension/substitution/prepaid/deadline reminders/advanced reporting are out of scope unless explicitly opened.
+- P0 is **Internal-first**; external business integration ONLY OTP-email delivery. No payments gateway, bank reconciliation API, email business notifications, SMS/Zalo, Google login/calendar/drive, push or external refund automation. Wallet B1 permits only internal net-excess credit during successful authorized execution of an approved invoice adjustment/cancellation; it does not permit automatic approval or bank refund. P1 features such as makeup/suspension/substitution/prepaid/deadline reminders/advanced reporting are out of scope unless explicitly opened.
 - Modular monolith NestJS + React/Vite TypeScript + PostgreSQL/Prisma + REST/OpenAPI, pnpm workspace. Separate tenant + permission + resource scope **server-side**, not by hiding UI.
 - Critical mutations: transaction, correct locks/constraints, audit, policy version + correlation; jobs and outbox persisted and idempotent. `APPROVED` ≠ `COMPLETED`.
 - VND as bigint/decimal strings over JSON; UTC storage and tenant timezone display; `[start,end)` intervals. Immutable issued invoice/payment history/submission versions/grades/audit: append adjustment/reversal/revision.
