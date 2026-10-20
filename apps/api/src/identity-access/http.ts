@@ -15,6 +15,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
@@ -75,6 +76,7 @@ export function correlation(req: Request) {
 }
 @Catch()
 export class R4ErrorFilter implements ExceptionFilter {
+  private readonly logger = new Logger(R4ErrorFilter.name);
   catch(error: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp(),
       res = ctx.getResponse<Response>(),
@@ -121,13 +123,21 @@ export class R4ErrorFilter implements ExceptionFilter {
           429: 'RATE_LIMITED',
         } as Record<number, string>
       )[status] ?? 'INTERNAL_ERROR';
-    res
-      .status(status)
-      .json({
-        code,
-        message: code,
-        correlationId: res.getHeader('X-Request-Id') ?? correlation(req),
-      });
+    const correlationId = res.getHeader('X-Request-Id') ?? correlation(req);
+    if (status >= 500)
+      this.logger.error(
+        JSON.stringify({
+          event: 'HTTP_REQUEST_FAILED',
+          status,
+          correlationId,
+          ...(sql && /^[0-9A-Z]{5}$/.test(sql) ? { sqlState: sql } : {}),
+        }),
+      );
+    res.status(status).json({
+      code,
+      message: code,
+      correlationId,
+    });
   }
 }
 @Controller('api/v1/auth')
@@ -158,7 +168,13 @@ export class AuthController {
       .filter((c) => c.startsWith('educore_refresh='));
     if (raw?.length !== 1 || raw[0].length > 256)
       throw new UnauthorizedException();
-    return decodeURIComponent(raw[0].slice('educore_refresh='.length));
+    try {
+      return decodeURIComponent(raw[0].slice('educore_refresh='.length));
+    } catch (error) {
+      if (error instanceof URIError)
+        throw new UnauthorizedException('AUTH_REQUIRED');
+      throw error;
+    }
   }
   @Post('login')
   @HttpCode(200)
