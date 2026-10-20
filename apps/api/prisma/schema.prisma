@@ -645,16 +645,17 @@ model Class {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant             Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  course             Course                   @relation(fields: [tenantId, courseId], references: [tenantId, id], onDelete: Restrict)
-  teacherAssignments ClassTeacherAssignment[]
-  enrollments        Enrollment[]
-  targetTransfers    EnrollmentTransfer[]
-  accessScopes       AccessScope[]            @relation("ClassAccessScope")
-  scheduleSeries     ScheduleSeries[]
-  classSessions      ClassSession[]
-  priceRules         PriceRule[]
-  assignments        Assignment[]
+  tenant               Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  course               Course                   @relation(fields: [tenantId, courseId], references: [tenantId, id], onDelete: Restrict)
+  teacherAssignments   ClassTeacherAssignment[]
+  enrollments          Enrollment[]
+  targetTransfers      EnrollmentTransfer[]
+  accessScopes         AccessScope[]            @relation("ClassAccessScope")
+  scheduleSeries       ScheduleSeries[]
+  classSessions        ClassSession[]
+  priceRules           PriceRule[]
+  assignments          Assignment[]
+  assignmentRecipients AssignmentRecipient[]    @relation("RecipientClass")
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -1517,6 +1518,7 @@ model AssignmentRecipient {
   assignmentId       String    @map("assignment_id") @db.Uuid
   studentId          String    @map("student_id") @db.Uuid
   enrollmentId       String?   @map("enrollment_id") @db.Uuid
+  classId            String?   @map("class_id") @db.Uuid
   assignedAt         DateTime  @map("assigned_at") @db.Timestamptz(6)
   revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(6)
   deadlineOverrideAt DateTime? @map("deadline_override_at") @db.Timestamptz(6)
@@ -1527,7 +1529,9 @@ model AssignmentRecipient {
   assignment Assignment     @relation(fields: [tenantId, assignmentId], references: [tenantId, id], onDelete: Restrict)
   student    StudentProfile @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Restrict)
   enrollment Enrollment?    @relation(fields: [tenantId, studentId, enrollmentId], references: [tenantId, studentId, id], onDelete: Restrict)
+  class      Class?         @relation("RecipientClass", fields: [tenantId, classId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict, map: "r5_recipient_class_fk")
   submission Submission?
+  uploads    StoredFile[]   @relation("FileRecipient")
 
   @@unique([tenantId, id])
   @@unique([tenantId, assignmentId, studentId])
@@ -1559,16 +1563,17 @@ model Submission {
 
 // Append-only answer snapshot. A resubmission creates the next version, never overwrites this row.
 model SubmissionVersion {
-  id           String                  @id @default(uuid()) @db.Uuid
-  tenantId     String                  @map("tenant_id") @db.Uuid
-  submissionId String                  @map("submission_id") @db.Uuid
-  versionNo    Int                     @map("version_no")
-  submittedAt  DateTime                @map("submitted_at") @db.Timestamptz(6)
-  answerText   String?                 @map("answer_text") @db.Text
-  isLate       Boolean                 @map("is_late")
-  status       SubmissionVersionStatus
-  contentHash  String?                 @map("content_hash") @db.Text
-  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                  String                  @id @default(uuid()) @db.Uuid
+  tenantId            String                  @map("tenant_id") @db.Uuid
+  submissionId        String                  @map("submission_id") @db.Uuid
+  versionNo           Int                     @map("version_no")
+  submittedAt         DateTime                @map("submitted_at") @db.Timestamptz(6)
+  effectiveDeadlineAt DateTime?               @map("effective_deadline_at") @db.Timestamptz(6)
+  answerText          String?                 @map("answer_text") @db.Text
+  isLate              Boolean                 @map("is_late")
+  status              SubmissionVersionStatus
+  contentHash         String?                 @map("content_hash") @db.Text
+  createdAt           DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
 
   tenant               Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   submission           Submission       @relation("SubmissionVersions", fields: [tenantId, submissionId], references: [tenantId, id], onDelete: Restrict)
@@ -1585,17 +1590,19 @@ model SubmissionVersion {
 
 // File bytes live on a private volume; this table stores only ownership and validated metadata.
 model StoredFile {
-  id                     String           @id @default(uuid()) @db.Uuid
-  tenantId               String           @map("tenant_id") @db.Uuid
-  uploadedByMembershipId String           @map("uploaded_by_membership_id") @db.Uuid
-  privateStorageKey      String           @map("private_storage_key") @db.Text
-  originalFilename       String           @map("original_filename") @db.Text
-  mimeType               String           @map("mime_type") @db.Text
-  sizeBytes              BigInt           @map("size_bytes") @db.BigInt
-  sha256                 String           @db.Text
-  storageStatus          StoredFileStatus @map("storage_status")
-  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                     String               @id @default(uuid()) @db.Uuid
+  tenantId               String               @map("tenant_id") @db.Uuid
+  uploadedByMembershipId String               @map("uploaded_by_membership_id") @db.Uuid
+  recipientId            String?              @map("recipient_id") @db.Uuid
+  recipient              AssignmentRecipient? @relation("FileRecipient", fields: [tenantId, recipientId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict, map: "r5_file_recipient_fk")
+  privateStorageKey      String               @unique(map: "r5_physical_file_key") @map("private_storage_key") @db.Text
+  originalFilename       String               @map("original_filename") @db.Text
+  mimeType               String               @map("mime_type") @db.Text
+  sizeBytes              BigInt               @map("size_bytes") @db.BigInt
+  sha256                 String               @db.Text
+  storageStatus          StoredFileStatus     @map("storage_status")
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   uploadedBy  TenantMembership @relation("FileUploader", fields: [tenantId, uploadedByMembershipId], references: [tenantId, id], onDelete: Restrict)
@@ -1623,6 +1630,7 @@ model SubmissionFile {
 
   @@unique([tenantId, id])
   @@unique([tenantId, submissionVersionId, fileId])
+  @@unique([tenantId, submissionVersionId, sortOrder], map: "r5_version_file_slot")
   @@index([tenantId, fileId])
   @@map("submission_files")
 }
@@ -1633,13 +1641,14 @@ model Grade {
   tenantId            String      @map("tenant_id") @db.Uuid
   submissionVersionId String      @map("submission_version_id") @db.Uuid
   revisionNo          Int         @map("revision_no")
-  score               Decimal     @db.Decimal(3, 1)
+  score               Decimal     @db.Decimal
   feedback            String?     @db.Text
   gradedByTeacherId   String      @map("graded_by_teacher_id") @db.Uuid
   gradedAt            DateTime    @map("graded_at") @db.Timestamptz(6)
   status              GradeStatus
   publishedAt         DateTime?   @map("published_at") @db.Timestamptz(6)
   reasonForRevision   String?     @map("reason_for_revision") @db.Text
+  cancelledAt         DateTime?   @map("cancelled_at") @db.Timestamptz(6)
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 

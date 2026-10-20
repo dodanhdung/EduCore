@@ -8,6 +8,17 @@ import { RuntimeController } from '../workflow-approval/runtime.controller.js';
 import { R4Worker } from '../automation-jobs/worker.js';
 import { requestTrace } from './request-context.js';
 import { SessionGuard } from './session.guard.js';
+import { AssignmentService } from '../assignments-grading/assignment.service.js';
+import {
+  AssignmentController,
+  SubmissionController,
+  GradingController,
+} from '../assignments-grading/learning.controller.js';
+import { SubmissionService } from '../assignments-grading/submission.service.js';
+import { GradingService } from '../assignments-grading/grading.service.js';
+import type { FileStoragePort } from '../file-management/private-volume.adapter.js';
+import { FileService } from '../file-management/file.service.js';
+import { FileController } from '../file-management/file.controller.js';
 
 @Module({})
 export class R4Module {
@@ -16,10 +27,18 @@ export class R4Module {
     config: AuthConfig,
     delivery: OtpDeliveryPort,
     workerEnabled = false,
+    storage?: FileStoragePort,
   ): DynamicModule {
     return {
       module: R4Module,
-      controllers: [AuthController, RuntimeController],
+      controllers: [
+        AuthController,
+        RuntimeController,
+        AssignmentController,
+        SubmissionController,
+        GradingController,
+        FileController,
+      ],
       providers: [
         { provide: R4Repository, useValue: repository },
         {
@@ -36,6 +55,27 @@ export class R4Module {
           useFactory: () => new R4Worker(repository, workerEnabled),
         },
         SessionGuard,
+        {
+          provide: AssignmentService,
+          inject: [AuthService],
+          useFactory: (auth: AuthService) => new AssignmentService(auth),
+        },
+        {
+          provide: SubmissionService,
+          inject: [AuthService],
+          useFactory: (auth: AuthService) =>
+            new SubmissionService(auth, storage),
+        },
+        {
+          provide: GradingService,
+          inject: [AuthService],
+          useFactory: (auth: AuthService) => new GradingService(auth),
+        },
+        {
+          provide: FileService,
+          inject: [AuthService],
+          useFactory: (auth: AuthService) => new FileService(auth, storage),
+        },
       ],
       exports: [AuthService, R4Repository],
     };
@@ -52,6 +92,7 @@ export function configureR4Http(app: INestApplication, config: AuthConfig) {
       'Idempotency-Key',
       'X-CSRF-Token',
       'X-Request-Id',
+      'If-Match',
     ],
     exposedHeaders: ['X-Request-Id'],
   });

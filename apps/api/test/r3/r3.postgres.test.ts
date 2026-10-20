@@ -418,57 +418,83 @@ async function seedGrade(
     publishedAt?: string | null;
   } = {},
 ) {
-  let versionId = options.versionId;
-  if (!versionId) {
-    const assignment = await put(admin as unknown as Query, 'assignments', {
-      tenant_id: c.f.tenant,
-      class_id: options.classId ?? c.f.classId,
-      created_by_teacher_id: c.f.teacher,
-      title: 'Published subject assessment',
-      description:
-        'Synthetic existing grading evidence; no R5 application code',
-      priority: 1,
-      deadline_at: '2026-09-01',
-      status: 'PUBLISHED',
-      published_at: '2026-08-01',
-      revision: 1,
-    });
-    const recipient = await put(
-      admin as unknown as Query,
-      'assignment_recipients',
-      {
+  // Import synthetic pre-R5 history under the disposable DB owner. Only the
+  // server-time insertion trigger is suspended during this fixture transaction;
+  // FKs, recipient lineage, current pointer and all Grade guards stay active.
+  // Runtime regression operations below execute with every trigger enabled.
+  return admin.begin(async (legacy) => {
+    const q = legacy as unknown as Query;
+    let versionId = options.versionId;
+    if (!versionId) {
+      const classId = options.classId ?? c.f.classId,
+        studentId = options.studentId ?? c.f.student;
+      const existing =
+        await legacy`SELECT id FROM enrollments WHERE tenant_id=${c.f.tenant} AND student_id=${studentId} AND class_id=${classId} LIMIT 1`;
+      const enrollmentId =
+        existing[0]?.id ??
+        (await put(q, 'enrollments', {
+          tenant_id: c.f.tenant,
+          student_id: studentId,
+          class_id: classId,
+          status: 'COMPLETED',
+          effective_from: '2026-01-01',
+          effective_to: '2026-12-31',
+          created_by_membership_id: c.f.member,
+        }));
+      const assignment = await put(q, 'assignments', {
+        tenant_id: c.f.tenant,
+        class_id: options.classId ?? c.f.classId,
+        created_by_teacher_id: c.f.teacher,
+        title: 'Published subject assessment',
+        description:
+          'Synthetic existing grading evidence; no R5 application code',
+        priority: 1,
+        deadline_at: '2026-09-01',
+        status: 'PUBLISHED',
+        published_at: '2026-08-01',
+        revision: 1,
+      });
+      const recipient = await put(q, 'assignment_recipients', {
         tenant_id: c.f.tenant,
         assignment_id: assignment,
         student_id: options.studentId ?? c.f.student,
+        class_id: classId,
+        enrollment_id: enrollmentId,
         assigned_at: '2026-08-01',
-      },
-    );
-    const submission = await put(admin as unknown as Query, 'submissions', {
+      });
+      const submission = await put(q, 'submissions', {
+        tenant_id: c.f.tenant,
+        recipient_id: recipient,
+        status: 'SUBMITTED',
+      });
+      await legacy`ALTER TABLE submission_versions DISABLE TRIGGER r5_version_immutable`;
+      versionId = await put(q, 'submission_versions', {
+        tenant_id: c.f.tenant,
+        submission_id: submission,
+        version_no: 1,
+        submitted_at: '2026-08-10',
+        is_late: false,
+        status: 'SUBMITTED',
+      });
+      await legacy`UPDATE submissions SET current_version_id=${versionId} WHERE id=${submission}`;
+      await legacy`SET CONSTRAINTS ALL IMMEDIATE`;
+      await legacy`ALTER TABLE submission_versions ENABLE TRIGGER r5_version_immutable`;
+    }
+    const gradeId = await put(q, 'grades', {
       tenant_id: c.f.tenant,
-      recipient_id: recipient,
-      status: 'SUBMITTED',
+      submission_version_id: versionId,
+      revision_no: options.revision ?? 1,
+      score: options.score ?? '8.5',
+      reason_for_revision:
+        (options.revision ?? 1) > 1 ? 'R3 legacy correction fixture' : null,
+      graded_by_teacher_id: c.f.teacher,
+      graded_at: options.gradedAt ?? '2026-08-11',
+      status: options.status ?? 'PUBLISHED',
+      published_at:
+        options.publishedAt === undefined ? '2026-08-12' : options.publishedAt,
     });
-    versionId = await put(admin as unknown as Query, 'submission_versions', {
-      tenant_id: c.f.tenant,
-      submission_id: submission,
-      version_no: 1,
-      submitted_at: '2026-08-10',
-      is_late: false,
-      status: 'SUBMITTED',
-    });
-  }
-  const gradeId = await put(admin as unknown as Query, 'grades', {
-    tenant_id: c.f.tenant,
-    submission_version_id: versionId,
-    revision_no: options.revision ?? 1,
-    score: options.score ?? '8.5',
-    graded_by_teacher_id: c.f.teacher,
-    graded_at: options.gradedAt ?? '2026-08-11',
-    status: options.status ?? 'PUBLISHED',
-    published_at:
-      options.publishedAt === undefined ? '2026-08-12' : options.publishedAt,
+    return { gradeId, versionId };
   });
-  return { gradeId, versionId };
 }
 async function gradePlacement(
   c: Context,
@@ -793,56 +819,7 @@ describe('R3-A Academic', () => {
           )
         ).state,
       ).toBe('FALLBACK_AVAILABLE');
-      const assignment = await put(admin as unknown as Query, 'assignments', {
-        tenant_id: c.f.tenant,
-        class_id: c.f.classId,
-        created_by_teacher_id: c.f.teacher,
-        title: 'Assessment',
-        description: 'Synthetic subject-level evidence',
-        priority: 1,
-        deadline_at: '2026-10-01',
-        status: 'PUBLISHED',
-        published_at: '2026-09-01',
-        revision: 1,
-      });
-      const recipient = await put(
-        admin as unknown as Query,
-        'assignment_recipients',
-        {
-          tenant_id: c.f.tenant,
-          assignment_id: assignment,
-          student_id: c.f.student,
-          enrollment_id: c.f.enrollment,
-          assigned_at: '2026-09-01',
-        },
-      );
-      const submission = await put(admin as unknown as Query, 'submissions', {
-        tenant_id: c.f.tenant,
-        recipient_id: recipient,
-        status: 'SUBMITTED',
-      });
-      const version = await put(
-        admin as unknown as Query,
-        'submission_versions',
-        {
-          tenant_id: c.f.tenant,
-          submission_id: submission,
-          version_no: 1,
-          submitted_at: '2026-09-10',
-          is_late: false,
-          status: 'SUBMITTED',
-        },
-      );
-      await put(admin as unknown as Query, 'grades', {
-        tenant_id: c.f.tenant,
-        submission_version_id: version,
-        revision_no: 1,
-        score: '8.5',
-        graded_by_teacher_id: c.f.teacher,
-        graded_at: '2026-09-11',
-        status: 'PUBLISHED',
-        published_at: '2026-09-12',
-      });
+      await seedGrade(c, { gradedAt: '2026-09-11', publishedAt: '2026-09-12' });
       const context = await c.academic.placementContext(
         c.f.tenant,
         c.f.student,
@@ -995,7 +972,7 @@ describe('R3-A Academic', () => {
           intent(),
         ),
       ).rejects.toThrow();
-      await preserveFixtureManager(admin as unknown as Query,c.f);
+      await preserveFixtureManager(admin as unknown as Query, c.f);
       await admin.unsafe(
         'UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',
         [c.f.membershipRole],
@@ -1204,7 +1181,7 @@ describe('R3 follow-up leave claim guard', () => {
         expect(
           await c.leave.decide(c.f.tenant, c.pendingLeave, approve, key),
         ).toEqual(decision);
-        await preserveFixtureManager(admin as unknown as Query,c.f);
+        await preserveFixtureManager(admin as unknown as Query, c.f);
         await admin.unsafe(
           'UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',
           [c.f.membershipRole],
@@ -1257,7 +1234,7 @@ describe('R3 follow-up leave claim guard', () => {
         [c.f.session, c.f.participant],
       );
       expect(proof).toMatchObject({ time_locked: false, claims: 1 });
-      await changeFixtureRole(admin,c.f,'TEACHER');
+      await changeFixtureRole(admin, c.f, 'TEACHER');
       await expect(
         c.attendance.mark(
           c.f.tenant,
@@ -1448,10 +1425,17 @@ describe('R3 follow-up grade-backed placement', () => {
       const c = await fixture(),
         grade = await seedGrade(c),
         old = await gradePlacement(c);
-      await admin.unsafe(
-        'UPDATE grades SET score=7.0,updated_at=clock_timestamp() WHERE id=$1',
-        [grade.gradeId],
-      );
+      await expect(
+        admin.unsafe(
+          'UPDATE grades SET score=7.0,updated_at=clock_timestamp() WHERE id=$1',
+          [grade.gradeId],
+        ),
+      ).rejects.toThrow(/GRADE_HISTORY_IMMUTABLE/);
+      await seedGrade(c, {
+        versionId: grade.versionId,
+        revision: 2,
+        score: '7.0',
+      });
       await expect(
         c.academic.enroll(
           c.f.tenant,
@@ -1465,7 +1449,7 @@ describe('R3 follow-up grade-backed placement', () => {
       const current = await gradePlacement(c);
       await seedGrade(c, {
         versionId: grade.versionId,
-        revision: 2,
+        revision: 3,
         score: '8.0',
       });
       await expect(
@@ -1551,9 +1535,21 @@ describe('R3 follow-up grade-backed placement', () => {
         [c.f.tenant],
       );
       expect(audit.after_json.result.placementEvidence).toEqual(snapshot);
-      await admin.unsafe('UPDATE grades SET score=5.0 WHERE id=$1', [
-        valid.grades[0].gradeId,
-      ]);
+      await expect(
+        admin.unsafe('UPDATE grades SET score=5.0 WHERE id=$1', [
+          valid.grades[0].gradeId,
+        ]),
+      ).rejects.toThrow(/GRADE_HISTORY_IMMUTABLE/);
+      await seedGrade(c, {
+        versionId: (
+          await admin.unsafe(
+            'SELECT submission_version_id FROM grades WHERE id=$1',
+            [valid.grades[0].gradeId],
+          )
+        )[0].submission_version_id as string,
+        revision: 2,
+        score: '5.0',
+      });
       expect(
         await c.academic.enroll(
           c.f.tenant,
@@ -1683,6 +1679,7 @@ describe('R3 follow-up grade-backed placement', () => {
             submission_version_id: grade.versionId,
             revision_no: 2,
             score: '9.0',
+            reason_for_revision: 'R3 concurrent correction fixture',
             graded_by_teacher_id: c.f.teacher,
             graded_at: '2026-09-01',
             published_at: '2026-09-02',
@@ -1851,7 +1848,7 @@ describe('R3-B Scheduling', () => {
           ),
         ).toHaveLength(0);
       }
-      await preserveFixtureManager(admin as unknown as Query,c.f);
+      await preserveFixtureManager(admin as unknown as Query, c.f);
       await admin.unsafe(
         "UPDATE access_scopes SET scope_kind='CLASS',class_id=$2 WHERE id=$1",
         [c.f.scope, c.f.classId],
@@ -2954,7 +2951,7 @@ describe('R3-D observed independent-connection concurrency', () => {
     'X10 staff permission revoke wins before schedule confirmation',
     async () => {
       const c = await fixture();
-      await preserveFixtureManager(admin as unknown as Query,c.f);
+      await preserveFixtureManager(admin as unknown as Query, c.f);
       await assigned(c);
       const s = await session(c);
       const outcome = await race(
