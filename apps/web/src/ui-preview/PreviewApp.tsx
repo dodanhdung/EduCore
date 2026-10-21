@@ -66,6 +66,10 @@ export function PreviewApp({ screenId }: { screenId: string }) {
   const id = screenId as PreviewScreenId
   const selectedTenant = sampleTenants.find((tenant) => tenant.id === selectedTenantId) ?? sampleTenants[0]
   const navigate = (path: string) => { window.location.assign(path) }
+  const query = new URLSearchParams(window.location.search)
+  const selectedId = id === 'AC02' ? (query.get('studentId') ?? academicFixtures.students[0].id)
+    : id === 'AC04' ? (query.get('teacherId') ?? academicFixtures.teachers[0].id)
+      : (query.get('classId') ?? academicMoreFixtures.classes[0].code)
 
   return <main className={`ui-preview${id.startsWith('AC') ? ' ui-preview-academic' : ''}`}>
     <header className="ui-preview-banner">
@@ -87,8 +91,8 @@ export function PreviewApp({ screenId }: { screenId: string }) {
       {id === 'GL01' && <NotificationScreen items={sampleNotifications} />}
       {id.startsWith('AC') && <AppShell route={routes.find((route) => route.id === (id === 'AC09' ? 'AC08' : id))!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
         {(['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(id)
-          ? <AcademicScreen id={id as AcademicId} data={academicFixtures} preview tenantId={selectedTenant.id} navigate={navigate} pathForDetail={(detailId) => `/__ui-preview/${detailId}`} />
-          : <AcademicMoreScreen id={(id === 'AC09' ? 'AC08' : id) as MoreId} data={academicMoreFixtures} preview tenantId={selectedTenant.id} navigate={navigate} initialSheet={id === 'AC09'} pathForDetail={(detailId) => `/__ui-preview/${detailId}`} pathForStudent={() => '/__ui-preview/AC02'} />}
+          ? <AcademicScreen id={id as AcademicId} data={academicFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} pathForDetail={(detailId, personId) => `/__ui-preview/${detailId}?${detailId === 'AC02' ? 'studentId' : 'teacherId'}=${encodeURIComponent(personId)}`} />
+          : <AcademicMoreScreen id={(id === 'AC09' ? 'AC08' : id) as MoreId} data={academicMoreFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} initialSheet={id === 'AC09'} pathForDetail={(detailId, classId) => `/__ui-preview/${detailId}?classId=${encodeURIComponent(classId)}`} pathForStudent={(studentId) => `/__ui-preview/AC02?studentId=${encodeURIComponent(studentId)}`} />}
       </AppShell>}
     </div>
   </main>

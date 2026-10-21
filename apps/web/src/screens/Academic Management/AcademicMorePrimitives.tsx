@@ -16,8 +16,8 @@ export function Tabs({ items, value, onChange, label }: { items: string[]; value
     ;(event.currentTarget.parentElement?.querySelectorAll('[role=tab]')[items.indexOf(next)] as HTMLElement)?.focus()
   }}>{item}</button>)}</div>
 }
-export function Field({ label, value, onChange, placeholder, error }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; error?: boolean }) {
-  return <label className="academic-field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-invalid={error || undefined} /></label>
+export function Field({ label, value, onChange, placeholder, error, errorId }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; error?: boolean; errorId?: string }) {
+  return <label className="academic-field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-invalid={error || undefined} aria-describedby={error ? errorId : undefined} /></label>
 }
 export function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) {
   return <label className="academic-field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>

@@ -112,9 +112,9 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
   const screen = result.route.id === 'AU05'
     ? <ProfileScreen session={session!} tenant={tenant} onLogout={onLogout} />
     : result.route.id === 'GL01' ? <NotificationScreen /> : (['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(result.route.id)
-      ? <AcademicScreen id={result.route.id as AcademicId} tenantId={tenant.id} navigate={navigate} />
+      ? <AcademicScreen id={result.route.id as AcademicId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.studentId ?? result.params.teacherId} />
       : (['AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
-        ? <AcademicMoreScreen id={result.route.id as MoreId} tenantId={tenant.id} navigate={navigate} />
+        ? <AcademicMoreScreen id={result.route.id as MoreId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.classId} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}

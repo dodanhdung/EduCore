@@ -21,7 +21,7 @@ const { AcademicMoreScreen } = await vite.ssrLoadModule('/src/screens/Academic M
 const { academicMoreFixtures } = await vite.ssrLoadModule('/src/ui-preview/academicMoreFixtures.ts')
 const { PreviewApp } = await vite.ssrLoadModule('/src/ui-preview/PreviewApp.tsx')
 
-function mount(id, navigate = () => {}) {
+function mount(id, navigate = () => {}, selectedId = undefined, data = academicFixtures) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' })
   globalThis.window = dom.window
   globalThis.document = dom.window.document
@@ -29,7 +29,7 @@ function mount(id, navigate = () => {}) {
   return {
     dom,
     document: dom.window.document,
-    render: async () => act(async () => root.render(React.createElement(AcademicScreen, { id, data: academicFixtures, preview: true, navigate, pathForDetail: (target) => `/__ui-preview/${target}` }))),
+    render: async () => act(async () => root.render(React.createElement(AcademicScreen, { id, data, preview: true, navigate, selectedId: selectedId ?? (id === 'AC02' ? data.students[0].id : id === 'AC04' ? data.teachers[0].id : undefined), pathForDetail: (target, personId) => `/__ui-preview/${target}?${target === 'AC02' ? 'studentId' : 'teacherId'}=${encodeURIComponent(personId)}` }))),
     close: async () => { await act(async () => root.unmount()); dom.window.close() },
   }
 }
@@ -42,7 +42,7 @@ function mountMore(id, props = {}) {
   return {
     dom,
     document: dom.window.document,
-    render: async () => act(async () => root.render(React.createElement(AcademicMoreScreen, { id, data: academicMoreFixtures, preview: true, ...props }))),
+    render: async () => act(async () => root.render(React.createElement(AcademicMoreScreen, { id, data: academicMoreFixtures, preview: true, selectedId: academicMoreFixtures.classes[0].code, ...props }))),
     close: async () => { await act(async () => root.unmount()); dom.window.close() },
   }
 }
@@ -66,7 +66,7 @@ test('AC01 search, filter, empty state and preview navigation', async () => {
     await act(async () => { const input = view.document.querySelector('input'); const set = Object.getOwnPropertyDescriptor(view.dom.window.HTMLInputElement.prototype, 'value').set; set.call(input, 'Minh Anh'); input.dispatchEvent(new view.dom.window.Event('input', { bubbles: true })) })
     assert.equal(view.document.querySelectorAll('tbody tr').length, 1)
     await act(async () => view.document.querySelector('.academic-link').click())
-    assert.equal(path, '/__ui-preview/AC02')
+    assert.equal(path, '/__ui-preview/AC02?studentId=HS-1028')
   } finally { await view.close() }
 })
 
@@ -78,7 +78,7 @@ test('AC02 tabs and edit dialog validation never claim save', async () => {
     assert.equal(view.document.querySelector('[role="tab"][aria-selected="true"]').textContent, 'Ghi danh')
     await act(async () => view.document.querySelector('.academic-heading button').click())
     assert.ok(view.document.querySelector('[role="dialog"]'))
-    await act(async () => view.document.querySelector('.academic-dialog-actions .academic-primary').click())
+    await act(async () => view.document.querySelector('.academic-dialog-actions button:nth-child(2)').click())
     assert.equal(view.document.querySelector('input[aria-invalid="true"]') !== null, true)
     assert.doesNotMatch(view.document.body.textContent, /đã lưu thành công/i)
     await act(async () => view.document.querySelector('[aria-label="Đóng hộp thoại"]').click())
@@ -94,7 +94,7 @@ test('AC05 catalog tabs, no-results and form validation work locally', async () 
     await act(async () => view.document.querySelector('[role="tab"]:nth-child(2)').click())
     assert.equal(view.document.querySelectorAll('tbody tr').length, 3)
     await act(async () => view.document.querySelector('.academic-heading button').click())
-    await act(async () => view.document.querySelector('.academic-form .academic-primary').click())
+    await act(async () => view.document.querySelector('.academic-form-actions button:nth-child(2)').click())
     assert.match(view.document.body.textContent, /Vui lòng nhập mã, tên/)
     assert.doesNotMatch(view.document.body.textContent, /đã lưu thành công/i)
   } finally { await view.close() }
@@ -105,7 +105,7 @@ test('AC06 course form and AC07 class navigation remain preview-only', async () 
   try {
     await course.render()
     await act(async () => course.document.querySelector('.academic-heading button').click())
-    await act(async () => course.document.querySelector('.academic-form .academic-primary').click())
+    await act(async () => course.document.querySelector('.academic-form-actions button:nth-child(2)').click())
     assert.match(course.document.body.textContent, /Vui lòng nhập mã và tên khóa/)
   } finally { await course.close() }
   let path = ''
@@ -126,7 +126,9 @@ test('AC08 opens embedded AC09; validation and conflict states do not claim enro
     assert.match(view.document.querySelector('[role="dialog"]').textContent, /Ghi danh \/ chuyển lớp/)
     await act(async () => { const select = view.document.querySelector('.academic-sheet select'); select.value = 'Lớp đã đủ chỗ'; select.dispatchEvent(new view.dom.window.Event('change', { bubbles: true })) })
     assert.match(view.document.querySelector('[role="dialog"]').textContent, /Lớp đã đủ chỗ/)
-    await act(async () => view.document.querySelector('.academic-steps button:last-child').click())
+    assert.equal(view.document.querySelector('.academic-steps button:last-child').disabled, true)
+    await act(async () => view.document.querySelector('.academic-sheet-actions button:last-child').click())
+    await act(async () => view.document.querySelector('.academic-sheet-actions button:last-child').click())
     assert.equal(view.document.querySelector('.academic-sheet-actions button:last-child').disabled, true)
     await act(async () => view.document.querySelector('.academic-sheet-head button').click())
     assert.equal(view.document.querySelector('[role="dialog"]'), null)
@@ -138,4 +140,96 @@ test('Preview includes AC01–AC09 while AC09 has no business route', () => {
   for (let i = 1; i <= 9; i++) assert.match(html, new RegExp('/__ui-preview/AC0' + i))
   assert.match(html, /role="dialog"/)
   assert.equal(routes.some((route) => route.id === 'AC09'), false)
+})
+
+test('detail screens use the selected ID and never substitute the first fixture', async () => {
+  for (const [id, selected, expected, wrong] of [
+    ['AC02', 'HS-1031', 'Trần Bảo Ngọc', 'Nguyễn Minh Anh'],
+    ['AC04', 'GV-023', 'Mai Phương', 'Đặng Văn Trân'],
+  ]) {
+    const view = mount(id, undefined, selected)
+    try { await view.render(); assert.match(view.document.querySelector('.academic-heading').textContent, new RegExp(expected)); assert.doesNotMatch(view.document.querySelector('.academic-heading').textContent, new RegExp(wrong)) } finally { await view.close() }
+    const invalid = mount(id, undefined, 'INVALID-ID')
+    try { await invalid.render(); assert.match(invalid.document.body.textContent, /Không tìm thấy hồ sơ mẫu/); assert.equal(invalid.document.querySelector('.academic-heading button'), null) } finally { await invalid.close() }
+  }
+  const chosen = mountMore('AC08', { selectedId: academicMoreFixtures.classes[1].code })
+  try { await chosen.render(); assert.match(chosen.document.querySelector('.academic-heading').textContent, new RegExp(academicMoreFixtures.classes[1].code)); assert.doesNotMatch(chosen.document.querySelector('.academic-heading').textContent, new RegExp(academicMoreFixtures.classes[0].code)) } finally { await chosen.close() }
+  const invalidClass = mountMore('AC08', { selectedId: 'INVALID-ID' })
+  try { await invalidClass.render(); assert.equal(invalidClass.document.querySelector('.academic-heading button'), null); assert.equal(invalidClass.document.querySelector('.academic-tabs'), null) } finally { await invalidClass.close() }
+})
+
+test('AC01 filters active class IDs, including multiple classes, immediately', async () => {
+  const data = { ...academicFixtures, students: academicFixtures.students.map((student) => student.id === 'HS-1031' ? { ...student, activeClasses: [...student.activeClasses, { id: 'IELTS-03', name: 'IELTS Master 6.5+' }] } : student) }
+  const view = mount('AC01', undefined, undefined, data)
+  try {
+    await view.render()
+    assert.equal(view.document.querySelector('button')?.textContent === 'Áp dụng', false)
+    const select = view.document.querySelectorAll('.academic-filters select')[0]
+    assert.equal(select.querySelector('option[value="IELTS-03"]').textContent, 'IELTS Master 6.5+')
+    await act(async () => { select.value = 'IELTS-03'; select.dispatchEvent(new view.dom.window.Event('change', { bubbles: true })) })
+    assert.equal(view.document.querySelectorAll('tbody tr').length, 2)
+    assert.match(view.document.querySelector('tbody').textContent, /HS-1031/)
+    assert.doesNotMatch(view.document.querySelector('tbody').textContent, /HS-1042/)
+  } finally { await view.close() }
+})
+
+test('immediate filters have no Apply button and pending saves stay disabled', async () => {
+  for (const id of ['AC05', 'AC06', 'AC07']) {
+    const view = mountMore(id)
+    try {
+      await view.render()
+      assert.equal([...view.document.querySelectorAll('button')].some((button) => button.textContent === 'Áp dụng'), false)
+      await act(async () => view.document.querySelector('.academic-heading button').click())
+      assert.ok([...view.document.querySelectorAll('button')].some((button) => button.textContent === 'Kiểm tra biểu mẫu'))
+      assert.equal(view.document.querySelector('.academic-primary[disabled]')?.disabled, true)
+    } finally { await view.close() }
+  }
+})
+
+test('AC09 guards steps and preserves values when returning', async () => {
+  const view = mountMore('AC08')
+  try {
+    await view.render()
+    await act(async () => view.document.querySelector('.academic-heading button').click())
+    const steps = view.document.querySelectorAll('.academic-steps button')
+    assert.equal(steps[1].disabled, true)
+    assert.equal(steps[2].disabled, true)
+    await act(async () => view.document.querySelector('.academic-sheet-actions button:last-child').click())
+    assert.equal(steps[1].disabled, false)
+    assert.equal(steps[2].disabled, true)
+    await act(async () => steps[0].click())
+    assert.equal(view.document.querySelector('.academic-form input').value, academicMoreFixtures.wizard.student)
+    assert.match(view.document.querySelector('[role="dialog"]').textContent, /Biến thể minh họa bằng dữ liệu mẫu/)
+  } finally { await view.close() }
+})
+
+test('preview query IDs select the requested record and reject explicit bad IDs', () => {
+  for (const [screen, query, selected] of [
+    ['AC02', 'studentId=HS-1031', 'Trần Bảo Ngọc'],
+    ['AC04', 'teacherId=GV-023', 'Mai Phương'],
+    ['AC08', `classId=${encodeURIComponent(academicMoreFixtures.classes[1].code)}`, academicMoreFixtures.classes[1].name],
+  ]) {
+    initialDom.window.history.replaceState(null, '', `/__ui-preview/${screen}?${query}`)
+    globalThis.window = initialDom.window
+    const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: screen }))
+    assert.match(html, new RegExp(selected))
+  }
+  initialDom.window.history.replaceState(null, '', '/__ui-preview/AC02?studentId=INVALID-ID')
+  const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'AC02' }))
+  assert.match(html, /Không tìm thấy hồ sơ mẫu/)
+  assert.doesNotMatch(html, /Nguyễn Minh Anh/)
+})
+
+test('AC09 requires all fields before advancing and never enables confirmation', async () => {
+  const view = mountMore('AC08', { data: { ...academicMoreFixtures, wizard: undefined } })
+  try {
+    await view.render()
+    await act(async () => view.document.querySelector('.academic-heading button').click())
+    const next = view.document.querySelector('.academic-sheet-actions button:last-child')
+    await act(async () => next.click())
+    assert.equal(view.document.querySelector('.academic-steps button:nth-child(2)').disabled, true)
+    assert.match(view.document.querySelector('[role="alert"]').textContent, /Vui lòng nhập học sinh/)
+    assert.equal(view.document.querySelector('input[aria-invalid="true"]').getAttribute('aria-describedby'), 'enrollment-error')
+    assert.equal(view.document.querySelector('.academic-sheet-actions button:last-child').disabled, false)
+  } finally { await view.close() }
 })

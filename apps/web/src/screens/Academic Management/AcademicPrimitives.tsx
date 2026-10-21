@@ -28,7 +28,8 @@ export function EditDialog({ title, onClose }: { title: string; onClose: () => v
       <p className="academic-hint">Biểu mẫu xem trước. Thao tác lưu đang chờ API và quyền hiệu lực.</p>
       <label className="academic-field"><span>Họ và tên</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-invalid={attempted && !name.trim()} aria-describedby={attempted && !name.trim() ? 'academic-name-error' : undefined} /></label>
       {attempted && !name.trim() && <p className="academic-error" id="academic-name-error">Vui lòng nhập họ và tên.</p>}
-      <div className="academic-dialog-actions"><button onClick={onClose}>Hủy</button><button className="academic-primary" onClick={() => setAttempted(true)} disabled={!!name.trim()}>Lưu · Chờ API</button></div>
+      {attempted && !!name.trim() && <p role="status" className="academic-hint">Biểu mẫu hợp lệ. Lưu hồ sơ sẽ khả dụng sau khi kết nối API.</p>}
+      <div className="academic-dialog-actions"><button onClick={onClose}>Hủy</button><button onClick={() => setAttempted(true)}>Kiểm tra biểu mẫu</button><button className="academic-primary" disabled>Lưu · Chờ API</button></div>
     </div>
   </div>
 }

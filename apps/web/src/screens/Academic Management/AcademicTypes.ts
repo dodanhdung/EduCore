@@ -1,7 +1,10 @@
 export type AcademicId = 'AC01' | 'AC02' | 'AC03' | 'AC04'
-export type AcademicPerson = { id: string; name: string; subject: string; level: string; status: string; classes: string; detail?: { secondary: string; inset: string[]; summary: string[]; next: string } }
+type PersonBase = { id: string; name: string; level: string; status: string; detail?: { secondary: string; inset: string[]; summary: string[]; next: string } }
+export type AcademicStudent = PersonBase & { kind: 'student'; activeClasses: { id: string; name: string }[] }
+export type AcademicTeacher = PersonBase & { kind: 'teacher'; subject: string; classes: string }
+export type AcademicPerson = AcademicStudent | AcademicTeacher
 export type Metric = [label: string, value: string, note: string]
-export type AcademicData = { students: AcademicPerson[]; teachers: AcademicPerson[]; studentMetrics: Metric[]; teacherMetrics: Metric[] }
+export type AcademicData = { students: AcademicStudent[]; teachers: AcademicTeacher[]; studentMetrics: Metric[]; teacherMetrics: Metric[] }
 
 export type CatalogItem = { code: string; name: string; order: string; status: string; kind: 'Môn học' | 'Trình độ' }
 export type CourseItem = { code: string; name: string; subject: string; level: string; status: string }

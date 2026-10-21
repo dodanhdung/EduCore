@@ -17,7 +17,7 @@
 .academic-card > .academic-hint { margin-bottom: 18px; }
 .academic-card > .academic-hint:last-child { margin-bottom: 0; }
 .academic-card > .academic-hint + .academic-hint { margin-top: 12px; }
-.academic-filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr auto; align-items: end; gap: 12px; }
+.academic-filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr; align-items: end; gap: 12px; }
 .academic-filters > .academic-primary { min-width: 130px; }
 .academic-field { display: grid; gap: 6px; min-width: 0; }
 .academic-field span { color: var(--ec-muted); font-size: 12px; font-weight: 650; }
