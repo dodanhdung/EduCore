@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { SchedulingData } from '../SchedulingTypes.ts'
-import { formatDate, shortDate, tenantTimezone } from '../SchedulingDates.ts'
+import { formatDate, shortDate, timezoneLabel } from '../SchedulingDates.ts'
 import { candidateDates, validateDraft } from '../SchedulingLogic.ts'
 import type { DraftErrors, ScheduleDraft } from '../SchedulingLogic.ts'
 import { Panel, PendingAction } from '../SchedulingPrimitives.tsx'
@@ -12,8 +12,8 @@ const weekdays = [[1, 'Thứ 2'], [2, 'Thứ 3'], [3, 'Thứ 4'], [4, 'Thứ 5']
 const blankDraft: ScheduleDraft = { classId: '', teacherId: '', roomId: '', format: 'IN_PERSON', date: '', start: '', end: '', repeat: 'SINGLE', weekdays: [], repeatUntil: '' }
 const sampleDraft: ScheduleDraft = { classId: 'ENG-C1', teacherId: 'GV-018', roomId: 'P.304', format: 'IN_PERSON', date: '2026-10-23', start: '17:00', end: '18:30', repeat: 'WEEKLY', weekdays: [5], repeatUntil: '2026-12-11' }
 
-export function CreateScheduleScreen({ data, preview = false, conflicts = [], race = false, initialConflictOpen = false, initialRepeat = 'WEEKLY' }: {
-  data?: SchedulingData; preview?: boolean; conflicts?: readonly ScheduleConflict[]; race?: boolean; initialConflictOpen?: boolean; initialRepeat?: 'SINGLE' | 'WEEKLY'
+export function CreateScheduleScreen({ data, preview = false, timeZone, conflicts = [], race = false, initialConflictOpen = false, initialRepeat = 'WEEKLY' }: {
+  data?: SchedulingData; preview?: boolean; timeZone?: string; conflicts?: readonly ScheduleConflict[]; race?: boolean; initialConflictOpen?: boolean; initialRepeat?: 'SINGLE' | 'WEEKLY'
 }) {
   const [draft, setDraft] = useState<ScheduleDraft>(preview ? { ...sampleDraft, repeat: initialRepeat } : blankDraft)
   const [errors, setErrors] = useState<DraftErrors>({})
@@ -33,10 +33,10 @@ export function CreateScheduleScreen({ data, preview = false, conflicts = [], ra
   const openConflict = () => setConflictOpen(true)
 
   return <div className="scheduling-page">
-    <div className="scheduling-heading"><div><h1>Tạo lịch / buổi học</h1><p>{preview ? `${className || 'Chọn lớp'} · Dữ liệu mẫu` : 'Chưa kết nối dữ liệu lớp và tài nguyên'} · {tenantTimezone}</p></div></div>
+    <div className="scheduling-heading"><div><h1>Tạo lịch / buổi học</h1><p>{preview ? `${className || 'Chọn lớp'} · Dữ liệu mẫu` : 'Chưa kết nối dữ liệu lớp và tài nguyên'} · {timezoneLabel(timeZone)}</p></div></div>
     <div className="scheduling-steps" role="tablist" aria-label="Bước tạo lịch">{[[1, 'Thông tin buổi'], [2, 'Xem trước'], [3, 'Xác nhận']] .map(([value, label]) => <button type="button" role="tab" aria-selected={step === value} disabled={Number(value) > step} key={value} onClick={() => setStep(value as 1 | 2 | 3)}>{value} · {label}</button>)}</div>
     {!data && <p role="alert" className="scheduling-pending">Chưa có dữ liệu lớp, giáo viên và phòng từ dịch vụ. Không thể tạo hoặc xác nhận lịch.</p>}
-    {step === 1 && <div className="scheduling-create-grid"><Panel title="Chọn lớp và tài nguyên" hint={`Thời gian theo ${tenantTimezone}.`}><div className="scheduling-fields">
+    {step === 1 && <div className="scheduling-create-grid"><Panel title="Chọn lớp và tài nguyên" hint={`Thời gian theo ${timezoneLabel(timeZone)}.`}><div className="scheduling-fields">
       <label className="scheduling-field">Lớp<select value={draft.classId} aria-invalid={Boolean(errors.classId)} onChange={(event) => set('classId', event.target.value)}><option value="">Chọn lớp</option>{classes.map((item) => <option value={item.id} key={item.id}>{item.id} · {item.name}</option>)}</select>{err('classId')}</label>
       <label className="scheduling-field">Giáo viên<select value={draft.teacherId} aria-invalid={Boolean(errors.teacherId)} onChange={(event) => set('teacherId', event.target.value)}><option value="">Chọn giáo viên</option>{teachers.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select>{err('teacherId')}</label>
       <label className="scheduling-field">Hình thức<select value={draft.format} onChange={(event) => set('format', event.target.value as ScheduleDraft['format'])}><option value="IN_PERSON">Học trực tiếp</option><option value="ONLINE">Học trực tuyến</option></select></label>

@@ -20,7 +20,8 @@ const { CreateScheduleScreen } = await vite.ssrLoadModule('/src/screens/Scheduli
 const { SessionDetailScreen } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx')
 const { PersonalScheduleScreen } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx')
 const { validateDraft, candidateDates, sixMonthLimit } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SchedulingLogic.ts')
-const { schedulingFixtures, schedulingConflictFixtures, personalScheduleScopes } = await vite.ssrLoadModule('/src/ui-preview/schedulingFixtures.ts')
+const { tenantLocalDate, formatInstant } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SchedulingDates.ts')
+const { schedulingFixtures, schedulingConflictFixtures, personalScheduleScopes, schedulingPreviewClock } = await vite.ssrLoadModule('/src/ui-preview/schedulingFixtures.ts')
 const { PreviewApp } = await vite.ssrLoadModule('/src/ui-preview/PreviewApp.tsx')
 
 function mount(Component, props, url = 'http://localhost/') {
@@ -58,7 +59,7 @@ test('canonical routes remain tenant guarded and SC04 has no business route', ()
 })
 
 test('SC01 changes calendar modes, periods and today; a non-first event opens its own details', async () => {
-  const view = mount(CentralScheduleScreen, { data: schedulingFixtures, preview: true })
+  const view = mount(CentralScheduleScreen, { data: schedulingFixtures, preview: true, ...schedulingPreviewClock })
   try {
     await view.render()
     assert.match(view.document.body.textContent, /19\/10–25\/10/)
@@ -82,7 +83,7 @@ test('SC01 changes calendar modes, periods and today; a non-first event opens it
 })
 
 test('SC01 filters and empty period preserve clear status', async () => {
-  const view = mount(CentralScheduleScreen, { data: schedulingFixtures, preview: true })
+  const view = mount(CentralScheduleScreen, { data: schedulingFixtures, preview: true, ...schedulingPreviewClock })
   try {
     await view.render()
     await change(view, '.scheduling-filters label:nth-child(1) select', 'ENG-B2')
@@ -207,13 +208,13 @@ test('SC04 is embedded for zero, one, multiple and race conflicts; never enables
 
 test('SC05 explicit unknown ID, cancelled and read-only views fail closed', async () => {
   for (const [selectedId, canEdit, expected] of [['unknown-session', true, /Không tìm thấy buổi học/], ['session-cancelled-21', true, /Buổi đã hủy/], ['session-eng-26', false, /Chế độ chỉ xem/]]) {
-    const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId, canEdit, preview: true, today: '2026-10-21' })
+    const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId, canEdit, preview: true, ...schedulingPreviewClock })
     try { await view.render(); assert.match(view.document.body.textContent, expected); assert.equal(view.document.querySelector('.scheduling-action-stack'), null) } finally { await view.close() }
   }
 })
 
 test('SC05 validates cancellation and reschedule locally; fixture status is unchanged', async () => {
-  const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId: 'session-eng-26', canEdit: true, preview: true, today: '2026-10-21', conflicts: schedulingConflictFixtures.one })
+  const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId: 'session-eng-26', canEdit: true, preview: true, ...schedulingPreviewClock, conflicts: schedulingConflictFixtures.one })
   try {
     await view.render()
     await click(view, '.scheduling-action-stack button:last-child')
@@ -235,7 +236,7 @@ test('SC05 validates cancellation and reschedule locally; fixture status is unch
 })
 
 test('SC06 teacher, student, parent and empty scopes show only explicit fixture sessions', async () => {
-  const teacher = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher, preview: true })
+  const teacher = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher, preview: true, ...schedulingPreviewClock })
   try {
     await teacher.render()
     assert.match(teacher.document.querySelector('.scheduling-table').textContent, /ENG-C1/)
@@ -243,7 +244,7 @@ test('SC06 teacher, student, parent and empty scopes show only explicit fixture 
     await click(teacher, '[aria-label="Tuần sau"]')
     assert.match(teacher.document.body.textContent, /26\/10–01\/11/)
   } finally { await teacher.close() }
-  const parent = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.parent, preview: true })
+  const parent = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.parent, preview: true, ...schedulingPreviewClock })
   try {
     await parent.render()
     assert.match(parent.document.querySelector('.scheduling-table').textContent, /ENG-B2/)
@@ -251,15 +252,15 @@ test('SC06 teacher, student, parent and empty scopes show only explicit fixture 
     assert.match(parent.document.querySelector('.scheduling-table').textContent, /Nhật N4/)
     assert.doesNotMatch(parent.document.querySelector('.scheduling-table').textContent, /ENG-B2/)
   } finally { await parent.close() }
-  const invalid = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.parent, preview: true, initialChildId: 'other-child' })
+  const invalid = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.parent, preview: true, ...schedulingPreviewClock, initialChildId: 'other-child' })
   try { await invalid.render(); assert.match(invalid.document.querySelector('[role="alert"]').textContent, /không nằm trong danh sách liên kết/) } finally { await invalid.close() }
-  const empty = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: { ...personalScheduleScopes.student, allowedSessionIds: [] }, preview: true })
+  const empty = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: { ...personalScheduleScopes.student, allowedSessionIds: [] }, preview: true, ...schedulingPreviewClock })
   try { await empty.render(); assert.match(empty.document.body.textContent, /Chưa có buổi học trong tuần này/) } finally { await empty.close() }
 })
 
 test('SC06 carries a non-first session ID to its detail callback', async () => {
   let opened = ''
-  const view = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher, preview: true, onOpenSession: (id) => { opened = id } })
+  const view = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher, preview: true, ...schedulingPreviewClock, onOpenSession: (id) => { opened = id } })
   try {
     await view.render()
     await click(view, '.scheduling-table tbody tr:nth-child(2) button')
@@ -276,4 +277,123 @@ test('preview exposes SC03/SC05/SC06 and SC04 only as a hosted conflict state', 
     assert.match(view.document.querySelector('.scheduling-sheet').textContent, /Xung đột lịch học/)
   } finally { await view.close() }
   assert.equal(routes.some((route) => route.id === 'SC04'), false)
+})
+
+test('tenant calendar date follows an IANA timezone across UTC midnight', () => {
+  const nearMidnight = new Date('2026-10-20T18:30:00Z')
+  assert.equal(tenantLocalDate('UTC', nearMidnight), '2026-10-20')
+  assert.equal(tenantLocalDate('Asia/Ho_Chi_Minh', nearMidnight), '2026-10-21')
+  assert.equal(tenantLocalDate('America/Los_Angeles', new Date('2026-10-21T03:00:00Z')), '2026-10-20')
+  assert.equal(tenantLocalDate('Not/A_Timezone', nearMidnight), null)
+  assert.equal(tenantLocalDate(undefined, nearMidnight), null)
+  assert.match(formatInstant('2026-10-20T18:30:00Z', 'Asia/Ho_Chi_Minh'), /21\/10\/2026/)
+})
+
+test('SC01 Today follows tenant date while preview stays fixed', async () => {
+  const instant = new Date('2026-10-18T18:30:00Z')
+  const hcm = mount(CentralScheduleScreen, { data: schedulingFixtures, timeZone: 'Asia/Ho_Chi_Minh', now: instant })
+  try { await hcm.render(); assert.match(hcm.document.querySelector('.scheduling-period').textContent, /19\/10–25\/10/) } finally { await hcm.close() }
+  const behind = mount(CentralScheduleScreen, { data: schedulingFixtures, timeZone: 'America/Los_Angeles', now: instant })
+  try { await behind.render(); assert.match(behind.document.querySelector('.scheduling-period').textContent, /12\/10–18\/10/); await click(behind, '[aria-label="Kỳ sau"]'); await click(behind, '.scheduling-toolbar > button:last-child'); assert.match(behind.document.querySelector('.scheduling-period').textContent, /12\/10–18\/10/) } finally { await behind.close() }
+  const preview = mount(PreviewApp, { screenId: 'SC01' }, 'http://localhost/__ui-preview/SC01')
+  try { await preview.render(); assert.match(preview.document.querySelector('.scheduling-period').textContent, /19\/10–25\/10/) } finally { await preview.close() }
+  const missing = mount(CentralScheduleScreen, { data: schedulingFixtures })
+  try { await missing.render(); assert.match(missing.document.querySelector('[role="alert"]').textContent, /múi giờ tenant hợp lệ/) } finally { await missing.close() }
+})
+
+test('SC05 history belongs to the selected session and missing history remains empty', async () => {
+  const expected = [
+    ['session-eng-26', /Nguyễn Văn An xác nhận/, /Mai Phương rà soát/],
+    ['session-ielts-20', /Mai Phương rà soát/, /Nguyễn Văn An xác nhận/],
+    ['session-cancelled-21', /Buổi học bị hủy/, /Mai Phương rà soát/],
+  ]
+  for (const [selectedId, included, excluded] of expected) {
+    const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId, preview: true, ...schedulingPreviewClock })
+    try { await view.render(); const history = view.document.querySelector('.scheduling-timeline').textContent; assert.match(history, included); assert.doesNotMatch(history, excluded) } finally { await view.close() }
+  }
+  const unknown = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId: 'unknown-session', ...schedulingPreviewClock })
+  try { await unknown.render(); assert.equal(unknown.document.querySelector('.scheduling-timeline'), null); assert.doesNotMatch(unknown.document.body.textContent, /Nguyễn Văn An|Mai Phương rà soát/) } finally { await unknown.close() }
+  const noHistory = mount(SessionDetailScreen, { data: { ...schedulingFixtures, historyBySessionId: undefined }, selectedId: 'session-cancelled-21', timeZone: 'Asia/Ho_Chi_Minh' })
+  try { await noHistory.render(); assert.match(noHistory.document.body.textContent, /Chưa có dữ liệu lịch sử/); assert.doesNotMatch(noHistory.document.body.textContent, /Nguyễn Văn An xác nhận|Buổi học bị hủy\. Dữ liệu mẫu/) } finally { await noHistory.close() }
+})
+
+test('SC05 future actions use tenant-local today and fail closed without timezone', async () => {
+  const now = new Date('2026-10-21T03:00:00Z')
+  for (const [timeZone, editable] of [['Asia/Ho_Chi_Minh', false], ['America/Los_Angeles', true], [undefined, false]]) {
+    const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId: 'session-eng-21', canEdit: true, timeZone, now })
+    try { await view.render(); assert.equal(Boolean(view.document.querySelector('.scheduling-action-stack')), editable) } finally { await view.close() }
+  }
+})
+
+test('SC06 defaults to runtime tenant week; preview week remains deterministic', async () => {
+  const now = new Date('2026-10-28T03:00:00Z')
+  const runtime = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher, timeZone: 'America/Los_Angeles', now })
+  try { await runtime.render(); assert.match(runtime.document.querySelector('.scheduling-period').textContent, /26\/10–01\/11/) } finally { await runtime.close() }
+  const preview = mount(PreviewApp, { screenId: 'SC06' }, 'http://localhost/__ui-preview/SC06')
+  try { await preview.render(); assert.match(preview.document.querySelector('.scheduling-period').textContent, /19\/10–25\/10/) } finally { await preview.close() }
+  const missing = mount(PersonalScheduleScreen, { data: schedulingFixtures, scope: personalScheduleScopes.teacher })
+  try { await missing.render(); assert.match(missing.document.querySelector('[role="alert"]').textContent, /múi giờ tenant hợp lệ/) } finally { await missing.close() }
+})
+
+test('SC01 and SC02 filters apply immediately without Apply controls or stale selection', async () => {
+  const schedule = mount(CentralScheduleScreen, { data: schedulingFixtures, preview: true, ...schedulingPreviewClock })
+  try {
+    await schedule.render()
+    assert.doesNotMatch(schedule.document.querySelector('.scheduling-filters').textContent, /Áp dụng/)
+    await click(schedule, '.scheduling-event')
+    assert.ok(schedule.document.querySelector('[role="dialog"]'))
+    await change(schedule, '.scheduling-filters select', 'IELTS-03')
+    assert.equal(schedule.document.querySelector('[role="dialog"]'), null)
+    assert.equal(schedule.document.querySelectorAll('.scheduling-event').length, 2)
+  } finally { await schedule.close() }
+  const resources = mount(ResourcesScreen, { data: schedulingFixtures, preview: true })
+  try {
+    await resources.render()
+    assert.doesNotMatch(resources.document.querySelector('.scheduling-filters').textContent, /Áp dụng/)
+    await click(resources, '.scheduling-table tbody tr:first-child button')
+    assert.match(resources.document.querySelector('.scheduling-detail-grid').textContent, /Phòng Giao tiếp/)
+    await change(resources, '.scheduling-filters input:first-child', 'P.302')
+    assert.match(resources.document.querySelector('.scheduling-table').textContent, /Phòng IELTS/)
+    assert.doesNotMatch(resources.document.querySelector('.scheduling-detail-grid').textContent, /Sức chứa 20/)
+  } finally { await resources.close() }
+})
+
+test('SC02 create, edit and block dialogs start with their own values and never mutate fixtures', async () => {
+  const original = JSON.stringify(schedulingFixtures.rooms)
+  const view = mount(ResourcesScreen, { data: schedulingFixtures, preview: true, initialRoomId: 'P.201' })
+  try {
+    await view.render()
+    await click(view, '.scheduling-detail-grid .scheduling-card:first-child button')
+    assert.match(view.document.querySelector('[role="dialog"]').getAttribute('aria-label'), /Sửa phòng P.201/)
+    assert.equal(view.document.querySelector('.scheduling-form input').value, 'P.201')
+    assert.equal(view.document.querySelector('.scheduling-form input').readOnly, true)
+    await click(view, '.scheduling-form-actions button:first-child')
+    await click(view, '.scheduling-table tbody tr:nth-child(2) button')
+    await click(view, '.scheduling-detail-grid .scheduling-card:first-child button')
+    assert.equal(view.document.querySelector('.scheduling-form input').value, 'P.302')
+    assert.equal(view.document.querySelector('.scheduling-form label:nth-child(2) input').value, 'Phòng IELTS')
+    await click(view, '.scheduling-form-actions button:first-child')
+    await click(view, '.scheduling-heading button')
+    assert.match(view.document.querySelector('[role="dialog"]').getAttribute('aria-label'), /Thêm phòng học/)
+    assert.deepEqual([...view.document.querySelectorAll('.scheduling-form input')].map((item) => item.value), ['', '', ''])
+    await change(view, '.scheduling-form label:nth-child(1) input', 'P.999')
+    await click(view, '.scheduling-form-actions button:last-child')
+    assert.ok(view.document.querySelector('[role="alert"]'))
+    await click(view, '.scheduling-form-actions button:first-child')
+    await click(view, '.scheduling-heading button')
+    assert.deepEqual([...view.document.querySelectorAll('.scheduling-form input')].map((item) => item.value), ['', '', ''])
+    assert.equal(view.document.querySelector('.scheduling-form [role="alert"]'), null)
+    await click(view, '.scheduling-form-actions button:first-child')
+    await click(view, '.scheduling-detail-grid .scheduling-card:nth-child(2) button')
+    assert.deepEqual([...view.document.querySelectorAll('.scheduling-form input')].map((item) => item.value), ['', '', ''])
+    await change(view, '.scheduling-form label:nth-child(2) input', '2026-10-21T12:00')
+    await change(view, '.scheduling-form label:nth-child(3) input', '2026-10-21T11:00')
+    await click(view, '.scheduling-form-actions button:last-child')
+    assert.ok(view.document.querySelector('.scheduling-form [role="alert"]'))
+    await click(view, '.scheduling-form-actions button:first-child')
+    await click(view, '.scheduling-detail-grid .scheduling-card:nth-child(2) button')
+    assert.deepEqual([...view.document.querySelectorAll('.scheduling-form input')].map((item) => item.value), ['', '', ''])
+    assert.equal(JSON.stringify(schedulingFixtures.rooms), original)
+    assert.doesNotMatch(view.document.body.textContent, /đã lưu thành công/i)
+  } finally { await view.close() }
 })

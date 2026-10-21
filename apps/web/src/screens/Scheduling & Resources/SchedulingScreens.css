@@ -20,7 +20,7 @@
 .scheduling-card > .scheduling-hint { margin: 0 0 18px; }
 .scheduling-card > .scheduling-hint:last-child { margin: 0; }
 .scheduling-card > .scheduling-hint + .scheduling-hint { margin-top: 12px; }
-.scheduling-filters { align-items: end; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; }
+.scheduling-filters { align-items: end; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .scheduling-filters label, .scheduling-field { color: var(--ec-muted); display: grid; gap: 6px; font-size: 12px; font-weight: 650; min-width: 0; }
 .scheduling-filters input, .scheduling-filters select, .scheduling-field input, .scheduling-field select { background: white; border: 1px solid var(--ec-border); border-radius: 8px; color: var(--ec-foreground); font: inherit; min-height: 40px; padding: 9px 12px; width: 100%; }
 .scheduling-calendar-scroll, .scheduling-table-scroll { max-width: 100%; overflow-x: auto; }

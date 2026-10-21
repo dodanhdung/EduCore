@@ -2,6 +2,7 @@ import type { PersonalScheduleScope, SchedulingData } from '../screens/Schedulin
 import type { ScheduleConflict } from '../screens/Scheduling & Resources/SC04/ConflictPanel.tsx'
 
 // Dữ liệu minh họa chỉ được import bởi UI Preview trong môi trường phát triển.
+export const schedulingPreviewClock = { today: '2026-10-21', timeZone: 'Asia/Ho_Chi_Minh' } as const
 export const schedulingFixtures: SchedulingData = {
   sessions: [
     { id: 'session-eng-19', date: '2026-10-19', start: '18:00', end: '19:30', classId: 'ENG-B2', className: 'ENG-B2', teacherId: 'GV-018', teacherName: 'Đặng Văn Trần', roomId: 'P.201', status: 'CONFIRMED' },
@@ -40,6 +41,14 @@ export const schedulingFixtures: SchedulingData = {
       { id: 'HS-1031', name: 'Trần Bảo Ngọc', enrolledAt: '2026-09-15' },
       { id: 'HS-1042', name: 'Phạm Khánh Linh', enrolledAt: '2026-10-01' },
     ],
+  },
+  historyBySessionId: {
+    'session-eng-26': [{ id: 'history-eng-26-created', occurredAt: '2026-10-17T03:15:00Z', description: 'Nguyễn Văn An xác nhận buổi học. Dữ liệu mẫu.' }],
+    'session-cancelled-21': [
+      { id: 'history-cancelled-21-created', occurredAt: '2026-10-17T03:15:00Z', description: 'Nguyễn Văn An xác nhận buổi học. Dữ liệu mẫu.' },
+      { id: 'history-cancelled-21-cancelled', occurredAt: '2026-10-21T04:20:00Z', description: 'Buổi học bị hủy. Dữ liệu mẫu.' },
+    ],
+    'session-ielts-20': [{ id: 'history-ielts-20-created', occurredAt: '2026-10-18T08:40:00Z', description: 'Mai Phương rà soát buổi IELTS. Dữ liệu mẫu.' }],
   },
   blocks: [
     { id: 'block-room-302', resourceId: 'P.302', resourceName: 'P.302 · Phòng IELTS', date: '2026-10-21', start: '08:00', end: '12:00', reason: 'Bảo trì thiết bị', status: 'CONFIRMED' },
