@@ -12,6 +12,10 @@ import { ProfileScreen } from './screens/Authentication & Shared/AU05/ProfileScr
 import { ActivationScreen } from './screens/Authentication & Shared/AU06/ActivationScreen.tsx'
 import { NotificationScreen } from './screens/Authentication & Shared/GL01/NotificationScreen.tsx'
 import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.tsx'
+import { AcademicScreen } from './screens/Academic Management/AcademicScreens.tsx'
+import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
+import { AcademicMoreScreen } from './screens/Academic Management/AcademicMoreScreens.tsx'
+import type { MoreId } from './screens/Academic Management/AcademicMoreScreens.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -66,24 +70,24 @@ function PublicLayout({ route, navigate }: { route: ScreenRoute; navigate: (path
   </div>
 }
 
-function AppShell({ route, tenant, navigate, onLogout, children }: {
+export function AppShell({ route, tenant, navigate, onLogout, children, preview = false, previewNavigation }: {
   route: ScreenRoute; tenant: Tenant; navigate: (path: string) => void;
-  onLogout: () => void; children: React.ReactNode
+  onLogout: () => void; children: React.ReactNode; preview?: boolean; previewNavigation?: React.ReactNode
 }) {
   const profile = tenantPath(tenant.id, '/me')
   return <div className="app-shell">
     <aside className="sidebar"><div className="wordmark">EduCore</div>
       <div className="sidebar-caption">Không gian trung tâm</div>
-      <nav aria-label="Điều hướng chính"><Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link></nav>
+      <nav aria-label="Điều hướng chính">{preview ? previewNavigation : <Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link>}</nav>
       <p className="sidebar-note">Các mục nghiệp vụ sẽ xuất hiện khi có hợp đồng quyền hiệu lực và màn hình được triển khai.</p>
     </aside>
     <div className="shell-body">
       <header className="topbar"><span className="mobile-brand wordmark">EduCore</span>
         <div className="tenant-context"><span className="eyebrow">Trung tâm đang chọn</span><strong>{tenant.name}</strong></div>
-        <div className="top-actions"><Link to="/select-tenant" navigate={navigate}>Đổi trung tâm</Link><button onClick={onLogout}>Đăng xuất</button></div>
+        {!preview && <div className="top-actions"><Link to="/select-tenant" navigate={navigate}>Đổi trung tâm</Link><button onClick={onLogout}>Đăng xuất</button></div>}
       </header>
       <main className="content"><p className="breadcrumb">{tenant.name} / {route.name}</p>{children}</main>
-      <nav className="mobile-nav" aria-label="Điều hướng di động"><Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link></nav>
+      <nav className="mobile-nav" aria-label="Điều hướng di động">{preview ? previewNavigation : <Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link>}</nav>
     </div>
   </div>
 }
@@ -107,7 +111,11 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
   if (!tenant) return <ErrorScreen code="403" navigate={navigate} />
   const screen = result.route.id === 'AU05'
     ? <ProfileScreen session={session!} tenant={tenant} onLogout={onLogout} />
-    : result.route.id === 'GL01' ? <NotificationScreen /> : <ScreenPlaceholder route={result.route} />
+    : result.route.id === 'GL01' ? <NotificationScreen /> : (['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(result.route.id)
+      ? <AcademicScreen id={result.route.id as AcademicId} tenantId={tenant.id} navigate={navigate} />
+      : (['AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
+        ? <AcademicMoreScreen id={result.route.id as MoreId} tenantId={tenant.id} navigate={navigate} />
+      : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
   </AppShell>

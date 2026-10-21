@@ -11,7 +11,7 @@ function mountApp() {
 }
 
 if (import.meta.env.DEV) {
-  const previewPath = /^\/__ui-preview\/(AU02|AU05|GL01)\/?$/.exec(window.location.pathname)
+  const previewPath = /^\/__ui-preview\/(AU02|AU05|GL01|AC01|AC02|AC03|AC04|AC05|AC06|AC07|AC08|AC09)\/?$/.exec(window.location.pathname)
   if (previewPath) {
     void import('./ui-preview/PreviewApp.tsx').then(({ PreviewApp }) => {
       root.render(<StrictMode><PreviewApp screenId={previewPath[1]} /></StrictMode>)

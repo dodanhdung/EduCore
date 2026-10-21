@@ -1,0 +1,17 @@
+import { useState } from 'react'
+import type { AcademicMoreData } from '../AcademicTypes.ts'
+import { Header, Card, Metrics, Tabs, Empty } from '../AcademicMorePrimitives.tsx'
+import { EnrollmentSheet } from '../AC09/EnrollmentSheet.tsx'
+
+export function ClassDetailScreen({ data, preview, navigate, tenantId, initialSheet = false, pathForStudent }: { data?: AcademicMoreData; preview: boolean; navigate: (path: string) => void; tenantId: string; initialSheet?: boolean; pathForStudent?: (studentId: string) => string }) {
+  const [tab, setTab] = useState('Tổng quan')
+  const [sheet, setSheet] = useState(initialSheet)
+  const item = data?.classes[0]
+  return <div className="academic-page"><Header title="Chi tiết lớp & học sinh ghi danh" subtitle={`${item ? `${item.code} · ${item.name}` : 'Đang chờ dữ liệu lớp'}${preview ? ' · Dữ liệu mẫu' : ''}`} action={preview ? 'Ghi danh học sinh' : undefined} onAction={() => setSheet(true)} />
+    {!item ? <Card title="Thông tin lớp"><Empty preview={preview} /></Card> : <><Tabs items={['Tổng quan', 'Học sinh', 'Lịch học', 'Giáo viên', 'Lịch sử']} value={tab} onChange={setTab} label="Chi tiết lớp" /><Metrics items={[["SĨ SỐ HIỆN TẠI", item.capacity, item.detail?.availability ?? 'Chờ API'], ['TRẠNG THÁI', item.status, 'Trạng thái lớp'], ['BUỔI TIẾP THEO', item.detail?.nextDate ?? '—', item.detail?.nextTime ?? 'Chờ API']]} />
+      <div role="tabpanel" className="academic-detail-grid"><Card title={tab === 'Tổng quan' ? item.name : tab} hint={`Mã lớp ${item.code} · Khóa ${item.detail?.courseCode ?? '—'}`}><div className="academic-fields"><div className="academic-field"><span>Môn / trình độ</span><div>{item.detail?.subjectLevel ?? '—'}</div></div><div className="academic-field"><span>Sức chứa</span><div>{item.detail?.capacityTotal ?? '—'}</div></div></div><p className="academic-hint">Phạm vi dữ liệu: lớp {item.code} · {item.detail?.scope ?? 'Chờ API'}</p></Card><Card title="Phân công hiện hành"><p><strong>Giáo viên chính: {item.teacher}</strong></p><p className="academic-hint">{item.detail?.schedule ?? 'Chờ API'}</p><button className="academic-link" onClick={() => setTab('Lịch học')}>Xem lịch học</button></Card></div>
+      <Card title="Học sinh ghi danh" hint="Chỉ hiển thị thông tin trong phạm vi được cấp quyền.">{!item.detail?.enrollments.length ? <Empty preview={preview} /> : <div className="academic-table-scroll"><table className="academic-table"><thead><tr><th>MÃ / HỌC SINH</th><th>HIỆU LỰC</th><th>TRẠNG THÁI</th><th>LỚP TRƯỚC</th><th>THAO TÁC</th></tr></thead><tbody>{item.detail.enrollments.map((row) => <tr key={row.studentId}><th scope="row">{row.studentId} · {row.studentName}</th><td>{row.effective}</td><td>{row.status}</td><td>{row.previousClass}</td><td><button className="academic-link" onClick={() => navigate(pathForStudent?.(row.studentId) ?? `/app/${encodeURIComponent(tenantId)}/students/${encodeURIComponent(row.studentId)}`)}>Xem hồ sơ</button></td></tr>)}</tbody></table></div>}</Card>
+      <Card title="Điều kiện thao tác"><p className="academic-hint">Chuyển lớp cần xác nhận thủ công và chọn hiệu lực từ buổi tương lai chưa diễn ra. Giữ lịch sử enrollment cũ; tác động hóa đơn đã phát hành đi qua luồng điều chỉnh riêng.</p></Card>
+    </>}{sheet && <EnrollmentSheet onClose={() => setSheet(false)} sample={data?.wizard} initialMode={initialSheet ? 'Chuyển lớp' : 'Ghi danh'} />}
+  </div>
+}
