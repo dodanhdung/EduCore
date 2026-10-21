@@ -25,6 +25,9 @@ import { AttendanceSessionListScreen } from './screens/Attendance & Leave/AT01/A
 import { AttendanceSheetScreen } from './screens/Attendance & Leave/AT02/AttendanceSheetScreen.tsx'
 import { LeaveRequestFormScreen } from './screens/Attendance & Leave/AT03/LeaveRequestFormScreen.tsx'
 import { LeaveRequestListScreen } from './screens/Attendance & Leave/AT04/LeaveRequestListScreen.tsx'
+import { PriceRulesScreen } from './screens/Billing & Receivables/BL01/PriceRulesScreen.tsx'
+import { SiblingDiscountScreen } from './screens/Billing & Receivables/BL02/SiblingDiscountScreen.tsx'
+import { BillingPeriodsScreen } from './screens/Billing & Receivables/BL03/BillingPeriodsScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -133,6 +136,9 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'AT02' ? <AttendanceSheetScreen sessionId={result.params.sessionId} onBack={() => navigate(tenantPath(tenant.id, '/attendance'))} />
       : result.route.id === 'AT03' ? <LeaveRequestFormScreen onViewRequests={() => navigate(tenantPath(tenant.id, '/leave-requests'))} />
       : result.route.id === 'AT04' ? <LeaveRequestListScreen onCreate={() => navigate(tenantPath(tenant.id, '/leave-requests/new'))} />
+      : result.route.id === 'BL01' ? <PriceRulesScreen />
+      : result.route.id === 'BL02' ? <SiblingDiscountScreen />
+      : result.route.id === 'BL03' ? <BillingPeriodsScreen onOpenDrafts={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
