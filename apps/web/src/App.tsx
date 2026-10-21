@@ -4,6 +4,14 @@ import { resolveRoute, SessionController } from './auth.ts'
 import type { AuthState, Tenant } from './auth.ts'
 import type { ScreenRoute } from './routes.ts'
 import { tenantPath } from './routes.ts'
+import { LoginScreen } from './screens/Authentication & Shared/AU01/LoginScreen.tsx'
+import { TenantSelectionScreen } from './screens/Authentication & Shared/AU02/TenantSelectionScreen.tsx'
+import { RecoveryRequestScreen } from './screens/Authentication & Shared/AU03/RecoveryRequestScreen.tsx'
+import { ResetPasswordScreen } from './screens/Authentication & Shared/AU04/ResetPasswordScreen.tsx'
+import { ProfileScreen } from './screens/Authentication & Shared/AU05/ProfileScreen.tsx'
+import { ActivationScreen } from './screens/Authentication & Shared/AU06/ActivationScreen.tsx'
+import { NotificationScreen } from './screens/Authentication & Shared/GL01/NotificationScreen.tsx'
+import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -82,17 +90,26 @@ function AppShell({ route, tenant, navigate, onLogout, children }: {
 
 export function AppView({ state, path, navigate, onLogout }: { state: AuthState; path: string; navigate: (path: string) => void; onLogout: () => void }) {
   const result = resolveRoute(path, state)
-  if (result.kind === 'not-found') return <StatePage code="404" title="Không tìm thấy trang" detail="Đường dẫn này chưa có trong ứng dụng." navigate={navigate} />
-  if (result.kind === 'public') return <PublicLayout route={result.route} navigate={navigate} />
+  if (result.kind === 'not-found') return <ErrorScreen code="404" navigate={navigate} />
+  if (result.kind === 'public') {
+    if (result.route.id === 'AU01') return <LoginScreen navigate={navigate} />
+    if (result.route.id === 'AU03') return <RecoveryRequestScreen navigate={navigate} />
+    if (result.route.id === 'AU04') return <ResetPasswordScreen navigate={navigate} />
+    if (result.route.id === 'AU06') return <ActivationScreen navigate={navigate} />
+    return <PublicLayout route={result.route} navigate={navigate} />
+  }
   if (result.kind === 'checking') return <StatePage code="Đang kiểm tra" title="Đang kiểm tra phiên" detail="Vui lòng chờ trong giây lát." navigate={navigate} />
   if (result.kind === 'unauthenticated') return <StatePage code="Chưa đăng nhập" title="Cần đăng nhập" detail="Phiên không còn sẵn có trên trình duyệt này." navigate={navigate} to="/login" />
-  if (result.kind === 'tenant-selection') return <PublicLayout route={result.route} navigate={navigate} />
-  if (result.kind === 'forbidden') return <StatePage code="403" title="Không đủ quyền" detail="Không thể hiển thị nội dung ở phạm vi này." navigate={navigate} />
+  if (result.kind === 'tenant-selection') return <TenantSelectionScreen tenants={state.status === 'authenticated' ? state.session.principal.allowedTenants : []} onSelect={(id) => sessions.selectTenant(id)} navigate={navigate} />
+  if (result.kind === 'forbidden') return <ErrorScreen code="403" navigate={navigate} />
   const session = state.status === 'authenticated' ? state.session : null
   const tenant = session?.principal.allowedTenants.find((item) => item.id === result.tenantId)
-  if (!tenant) return <StatePage code="403" title="Không đủ quyền" detail="Trung tâm này không thuộc phạm vi phiên hiện tại." navigate={navigate} />
+  if (!tenant) return <ErrorScreen code="403" navigate={navigate} />
+  const screen = result.route.id === 'AU05'
+    ? <ProfileScreen session={session!} tenant={tenant} onLogout={onLogout} />
+    : result.route.id === 'GL01' ? <NotificationScreen /> : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
-    <ScreenPlaceholder route={result.route} />
+    {screen}
   </AppShell>
 }
 

@@ -15,6 +15,14 @@
   --ec-secondary: #475569;
   --ec-muted: #64748b;
   --ec-focus: #2563eb;
+  --ec-login-bg: #f8f9ff;
+  --ec-label: #334155;
+  --ec-placeholder: #94a3b8;
+  --ec-danger: #b91c1c;
+  --ec-primary-soft: #eff6ff;
+  --ec-primary-halo: #eef2ff80;
+  --ec-brand-shadow: #c7d2fecc;
+  --ec-panel-shadow: #f1f5f999;
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }

@@ -179,6 +179,9 @@ export async function seed(
     firstSource?: 'series' | 'session' | 'period';
     sessionStatus?: 'DRAFT' | 'CANCELLED';
     enrollmentFrom?: string;
+    policyEffectiveFrom?: string;
+    periodStart?: string;
+    periodEnd?: string;
   } = {},
 ): Promise<Fixture> {
   const start = opts.start ?? '2099-09-30T16:30:00.000000Z';
@@ -304,7 +307,7 @@ export async function seed(
   const policy = await put(q, 'policy_versions', {
     tenant_id: tenant,
     version_code: 'TEST1',
-    effective_from: '2090-01-01T00:00:00Z',
+    effective_from: opts.policyEffectiveFrom ?? '2090-01-01T00:00:00Z',
     config_snapshot: JSON.stringify({ fixtureOnly: true }),
     content_hash: 'fixture-known-policy',
   });
@@ -324,8 +327,8 @@ export async function seed(
     opts.firstSource === 'period'
       ? await put(q, 'billing_periods', {
           tenant_id: tenant,
-          month_start: '2099-09-01',
-          month_end: '2099-10-01',
+          month_start: opts.periodStart ?? '2099-09-01',
+          month_end: opts.periodEnd ?? '2099-10-01',
           status: 'OPEN',
         })
       : undefined;
@@ -350,8 +353,8 @@ export async function seed(
   });
   period ??= await put(q, 'billing_periods', {
     tenant_id: tenant,
-    month_start: '2099-09-01',
-    month_end: '2099-10-01',
+    month_start: opts.periodStart ?? '2099-09-01',
+    month_end: opts.periodEnd ?? '2099-10-01',
     status: 'OPEN',
   });
   const run = await put(q, 'billing_runs', {

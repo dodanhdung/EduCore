@@ -29,7 +29,8 @@
     "test:r3:native": "vitest run --config ./vitest.config.r3.ts",
     "test:r4:native": "vitest run --config ./vitest.config.r4.ts",
     "test:r5:native": "vitest run --config ./vitest.config.r5.ts",
-    "test:r5:files": "vitest run test/r5/files.spec.ts"
+    "test:r5:files": "vitest run test/r5/files.spec.ts",
+    "seed:demo": "node --experimental-transform-types scripts/seed-demo.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",
