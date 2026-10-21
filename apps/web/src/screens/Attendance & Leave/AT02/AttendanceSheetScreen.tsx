@@ -1,0 +1,39 @@
+import { useState } from 'react'
+import type { AttendanceData, AttendanceRecord, AttendanceStatus } from '../AttendanceTypes.ts'
+import { approvedLeave, canChooseStatus, sessionById } from '../AttendanceLogic.ts'
+import { AttendanceBadge, AttendanceCard, AttendanceHeading, AttendancePending, AttendanceState } from '../AttendancePrimitives.tsx'
+import { attendanceLabels, formatAttendanceDate } from '../AttendanceText.ts'
+import { AttendanceCorrectionSheet } from '../AT05/AttendanceCorrectionSheet.tsx'
+import '../AttendanceScreens.css'
+
+export function AttendanceSheetScreen({ data, sessionId, preview = false, canEdit = false, initialCorrection = false, onBack }: {
+  data?: AttendanceData; sessionId?: string; preview?: boolean; canEdit?: boolean; initialCorrection?: boolean; onBack?: () => void
+}) {
+  const [edits, setEdits] = useState<Record<string, AttendanceRecord>>({})
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [correctionId, setCorrectionId] = useState<string | null>(null)
+  const [showInitialCorrection, setShowInitialCorrection] = useState(initialCorrection)
+  const [notice, setNotice] = useState(false)
+  const [error, setError] = useState('')
+  const session = sessionById(data, sessionId)
+  if (!data) return <div className="attendance-page"><AttendanceHeading title="Điểm danh buổi học" subtitle="Chờ dữ liệu buổi học" /><AttendanceState title="Chưa thể tải điểm danh" alert>API và quyền điểm danh chưa được kết nối.</AttendanceState></div>
+  if (!session) return <div className="attendance-page"><AttendanceHeading title="Không tìm thấy buổi học" subtitle="Mã buổi không hợp lệ hoặc nằm ngoài phạm vi." /><AttendanceState title="Không có dữ liệu phù hợp" alert>Không hiển thị bảng điểm danh của buổi khác.</AttendanceState>{onBack && <button type="button" onClick={onBack}>Quay lại danh sách</button>}</div>
+  const roster = (data.rosters[session.id] ?? []).map((id) => data.students.find((student) => student.id === id)).filter((student) => student !== undefined)
+  const original = data.records[session.id] ?? []
+  const current = (studentId: string) => edits[studentId] ?? original.find((record) => record.studentId === studentId) ?? { studentId }
+  const editable = canEdit && session.phase !== 'FINALIZED' && session.phase !== 'LOCKED'
+  const marked = roster.filter((student) => current(student.id).status).length
+  const choose = (studentId: string, status: AttendanceStatus) => { setEdits({ ...edits, [studentId]: { ...current(studentId), status } }); setError(''); setNotice(false) }
+  const correctionStudent = correctionId ?? (showInitialCorrection ? roster.find((student) => original.some((record) => record.studentId === student.id && record.status))?.id ?? null : null)
+  return <div className="attendance-page attendance-sheet-page">
+    <AttendanceHeading title={`Điểm danh ${session.classId}`} subtitle={`${formatAttendanceDate(session.date)} · ${session.start}–${session.end} · ${marked}/${roster.length} đã chọn · ${session.teacherName}`} action={onBack && <button type="button" className="attendance-secondary" onClick={onBack}>Về danh sách</button>} />
+    <div className="attendance-meta"><AttendanceBadge value={session.phase} /><span>{data.timeZone}</span>{session.lockAt && <span>Khóa sửa thường: {session.lockAt} (dữ liệu mẫu)</span>}</div>
+    {session.phase === 'LOCKED' && <AttendanceState title="Bảng điểm danh đã khóa">{session.lockReason ? `${session.lockReason}${preview ? ' · Dữ liệu mẫu' : ''}` : 'Chỉ có thể gửi đề nghị điều chỉnh theo quyền được cấp.'}</AttendanceState>}
+    {session.phase === 'FINALIZED' && <AttendanceState title="Đã xác nhận điểm danh">Kết quả chỉ để xem; chỉnh sửa thông thường không khả dụng.</AttendanceState>}
+    <div className="attendance-metrics"><div><small>HỌC SINH</small><strong>{roster.length}</strong><span>Trong danh sách buổi</span></div><div><small>ĐÃ CHỌN TRÊN MÀN HÌNH</small><strong>{marked}</strong><span>Chưa lưu lên dịch vụ</span></div><div><small>CHƯA CHỌN</small><strong>{roster.length - marked}</strong><span>Cần hoàn tất trước xác nhận</span></div></div>
+    <AttendanceCard title="Danh sách học sinh" hint="Chọn một kết quả cho mỗi học sinh. Có mặt vẫn hợp lệ khi đã được duyệt nghỉ.">{roster.length ? <div className="attendance-roster">{roster.map((student) => { const record = current(student.id); const approved = approvedLeave(data, session.id, student.id); const leave = data.leaveRequests.find((request) => request.sessionId === session.id && request.studentId === student.id); return <div className="attendance-student" key={student.id}><div className="attendance-student-head"><div><strong>{student.name}</strong><small>{student.id} · Ghi danh {student.enrollmentId}</small></div>{leave && <AttendanceBadge value={leave.status} label={`Đơn nghỉ: ${leave.status === 'APPROVED' ? 'Đã duyệt' : leave.status === 'PENDING' ? 'Chờ duyệt' : leave.status === 'REJECTED' ? 'Bị từ chối' : 'Cần bổ sung'}`} />}</div><fieldset disabled={!editable} className="attendance-statuses"><legend>Kết quả của {student.name}</legend>{(['ATTENDED', 'EXCUSED', 'UNEXCUSED'] as const).map((status) => <label key={status} className={record.status === status ? 'selected' : ''}><input type="radio" name={`attendance-${student.id}`} value={status} checked={record.status === status} disabled={!editable || !canChooseStatus(status, !!approved)} onChange={() => choose(student.id, status)} />{attendanceLabels[status]}</label>)}</fieldset>{!approved && <p className="attendance-help">Nghỉ có phép chỉ khả dụng sau khi đơn nghỉ được duyệt.</p>}<label className="attendance-field">Ghi chú<input value={record.note ?? ''} disabled={!editable} onChange={(event) => { setEdits({ ...edits, [student.id]: { ...record, note: event.target.value } }); setNotice(false) }} placeholder="Ghi chú tại buổi học" /></label>{(session.phase === 'LOCKED' || session.phase === 'FINALIZED') && record.status && <button className="attendance-link" type="button" onClick={() => setCorrectionId(student.id)}>Xem đề nghị điều chỉnh</button>}</div> })}</div> : <AttendanceState title="Chưa có học sinh trong buổi">Danh sách sẽ xuất hiện khi có ghi danh hợp lệ.</AttendanceState>}</AttendanceCard>
+    {editable && <AttendanceCard title="Hoàn tất điểm danh" hint="Bản nháp và xác nhận là hai bước riêng."><div className="attendance-actions"><button type="button" className="attendance-secondary" onClick={() => { setNotice(true); setError('') }}>Lưu bản nháp</button><button type="button" className="attendance-primary" onClick={() => { if (marked !== roster.length || !roster.length) { setError('Vui lòng chọn kết quả cho tất cả học sinh trước khi xác nhận.'); return } setConfirmOpen(true); setError('') }}>Xác nhận điểm danh</button></div>{error && <p role="alert" className="attendance-error">{error}</p>}{notice && <AttendancePending>Bản nháp đang chờ API; lựa chọn chỉ được giữ trên màn hình này.</AttendancePending>}</AttendanceCard>}
+    {confirmOpen && <div className="attendance-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmOpen(false) }}><div role="dialog" aria-modal="true" aria-labelledby="attendance-confirm-title" className="attendance-dialog" onKeyDown={(event) => { if (event.key === 'Escape') setConfirmOpen(false) }}><h2 id="attendance-confirm-title">Xác nhận toàn bộ điểm danh?</h2><p>{marked}/{roster.length} học sinh đã chọn. Việc xác nhận cần API kiểm tra quyền, đơn nghỉ và mốc khóa.</p><AttendancePending /><div className="attendance-actions"><button type="button" className="attendance-secondary" autoFocus onClick={() => setConfirmOpen(false)}>Đóng</button><button type="button" className="attendance-primary" onClick={() => setConfirmOpen(false)}>Đã hiểu</button></div></div></div>}
+    {correctionStudent && <AttendanceCorrectionSheet data={data} session={session} studentId={correctionStudent} onClose={() => { setCorrectionId(null); setShowInitialCorrection(false) }} />}
+  </div>
+}

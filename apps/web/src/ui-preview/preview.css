@@ -30,6 +30,11 @@
 .ui-preview-academic .ui-preview-content { padding: 0; }
 .ui-preview-variants { background: #fffdf2; border-bottom: 1px solid #ead58a; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
 .ui-preview-variants a { color: #473b13; font-size: 12px; padding: 5px 8px; }
+.ui-preview-attendance .ui-preview-banner { position: static; }
+.ui-preview-attendance .ui-preview-banner nav { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+.ui-preview-attendance .ui-preview-banner nav a { flex: 0 0 auto; }
+.ui-preview-attendance .ui-preview-variants { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+.ui-preview-attendance .ui-preview-variants a { flex: 0 0 auto; }
 @media (max-width: 600px) {
   .ui-preview-banner { align-items: flex-start; }
   .ui-preview-banner nav { width: 100%; }

@@ -13,13 +13,18 @@ import { ResourcesScreen } from '../screens/Scheduling & Resources/SC02/Resource
 import { CreateScheduleScreen } from '../screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
 import { SessionDetailScreen } from '../screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx'
 import { PersonalScheduleScreen } from '../screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx'
+import { AttendanceSessionListScreen } from '../screens/Attendance & Leave/AT01/AttendanceSessionListScreen.tsx'
+import { AttendanceSheetScreen } from '../screens/Attendance & Leave/AT02/AttendanceSheetScreen.tsx'
+import { LeaveRequestFormScreen } from '../screens/Attendance & Leave/AT03/LeaveRequestFormScreen.tsx'
+import { LeaveRequestListScreen } from '../screens/Attendance & Leave/AT04/LeaveRequestListScreen.tsx'
+import { attendanceFixtures } from './attendanceFixtures.ts'
 import { AcademicMoreScreen } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import type { MoreId } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import { AppShell } from '../App.tsx'
 import { routes } from '../routes.ts'
 import './preview.css'
 
-type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06'
+type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05'
 
 const sampleTenants: Tenant[] = [
   { id: 'demo-hcm-01', name: 'EduCore Quận 1' },
@@ -65,7 +70,7 @@ const sampleNotifications = [
 
 export function PreviewApp({ screenId }: { screenId: string }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
-  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as string[]).includes(screenId)) {
+  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05'] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
   }
 
@@ -80,15 +85,20 @@ export function PreviewApp({ screenId }: { screenId: string }) {
   const selectedId = id === 'AC02' ? (query.get('studentId') ?? academicFixtures.students[0].id)
     : id === 'AC04' ? (query.get('teacherId') ?? academicFixtures.teachers[0].id)
       : (query.get('classId') ?? academicMoreFixtures.classes[0].code)
+  const attendanceRole = query.get('role') === 'parent' || query.get('role') === 'student' || query.get('role') === 'staff' ? query.get('role') as 'parent' | 'student' | 'staff' : 'teacher'
+  const attendanceState = previewState === 'loading' || previewState === 'forbidden' || previewState === 'error' ? previewState : 'ready'
+  const attendanceData = previewState === 'empty' ? { ...attendanceFixtures, sessions: [], leaveRequests: [] } : previewState === 'finalized' || previewState === 'approved' ? { ...attendanceFixtures, sampleNow: previewState === 'approved' ? '2026-10-21T12:00:00+07:00' : attendanceFixtures.sampleNow, sessions: attendanceFixtures.sessions.map((item) => item.id === 'session-eng-19' ? { ...item, phase: previewState === 'approved' ? 'LOCKED' as const : 'FINALIZED' as const, ...(previewState === 'approved' ? { lockReason: 'Đã quá 48 giờ từ cuối buổi (dữ liệu mẫu).' } : {}) } : item) } : attendanceFixtures
+  const leaveFormData = previewState === 'duplicate' ? attendanceFixtures : { ...attendanceFixtures, sampleNow: previewState === 'late' ? '2026-10-26T10:00:00+07:00' : attendanceFixtures.sampleNow, leaveRequests: attendanceFixtures.leaveRequests.filter((item) => item.id !== 'leave-01') }
+  const attendanceSessionId = query.get('sessionId') ?? (previewState === 'approved' ? 'session-eng-19' : id === 'AT05' || previewState === 'locked' ? 'session-ielts-20' : previewState === 'finalized' ? 'session-eng-19' : previewState === 'draft' ? 'session-eng-26' : 'session-eng-21')
 
-  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') ? ' ui-preview-academic' : ''}`}>
+  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}`}>
     <header className="ui-preview-banner">
       <div>
         <strong>Dữ liệu mẫu — UI Preview</strong>
         <span>Chỉ để xem giao diện · Không gọi API · Không tạo phiên đăng nhập</span>
       </div>
       <nav aria-label="Chọn màn hình preview">
-        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
         <a href="/__ui-preview/SC03?state=conflict" aria-current={id === 'SC03' && previewState === 'conflict' ? 'page' : undefined}>SC04</a>
       </nav>
     </header>
@@ -97,6 +107,12 @@ export function PreviewApp({ screenId }: { screenId: string }) {
       {id === 'SC03' && <><a href="/__ui-preview/SC03?state=single">Một buổi</a><a href="/__ui-preview/SC03?state=zero">Không xung đột</a><a href="/__ui-preview/SC03?state=one">Một xung đột</a><a href="/__ui-preview/SC03?state=conflict">Nhiều xung đột</a><a href="/__ui-preview/SC03?state=race">Xung đột lúc xác nhận</a></>}
       {id === 'SC05' && <><a href="/__ui-preview/SC05?state=cancelled">Buổi đã hủy</a><a href="/__ui-preview/SC05?state=read-only">Chỉ xem</a></>}
       {id === 'SC06' && <><a href="/__ui-preview/SC06?role=teacher">Giáo viên</a><a href="/__ui-preview/SC06?role=student">Học viên</a><a href="/__ui-preview/SC06?role=parent">Phụ huynh</a><a href="/__ui-preview/SC06?state=empty">Lịch trống</a></>}
+    </nav>}
+    {id.startsWith('AT') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của điểm danh và nghỉ học">
+      <a href="/__ui-preview/AT01?state=empty">Danh sách rỗng</a><a href="/__ui-preview/AT01?state=loading">Đang tải</a><a href="/__ui-preview/AT01?state=forbidden">Không có quyền</a>
+      <a href="/__ui-preview/AT02?state=draft">Bản nháp</a><a href="/__ui-preview/AT02?state=finalized">Đã xác nhận</a><a href="/__ui-preview/AT02?state=locked">Đã khóa</a><a href="/__ui-preview/AT05">Correction bị từ chối</a><a href="/__ui-preview/AT05?state=approved">Correction đã duyệt</a>
+      <a href="/__ui-preview/AT03?role=parent">Phụ huynh</a><a href="/__ui-preview/AT03?role=student">Học sinh</a><a href="/__ui-preview/AT03?state=late">Nộp muộn</a><a href="/__ui-preview/AT03?state=duplicate">Đơn trùng</a><a href="/__ui-preview/AT03?state=forbidden">Không có quyền</a>
+      <a href="/__ui-preview/AT04?role=staff">Nhân sự học vụ</a><a href="/__ui-preview/AT04?role=parent">Đơn phụ huynh</a><a href="/__ui-preview/AT04?role=student">Đơn học sinh</a>
     </nav>}
     <div className="ui-preview-content">
       {id === 'AU02' && <TenantSelectionScreen
@@ -117,6 +133,12 @@ export function PreviewApp({ screenId }: { screenId: string }) {
         {id === 'SC03' && <CreateScheduleScreen data={schedulingFixtures} preview timeZone={schedulingPreviewClock.timeZone} conflicts={conflictSet} race={previewState === 'race'} initialConflictOpen={['conflict', 'one', 'zero', 'race'].includes(previewState ?? '')} initialRepeat={previewState === 'single' ? 'SINGLE' : 'WEEKLY'} />}
         {id === 'SC05' && <SessionDetailScreen data={schedulingFixtures} selectedId={query.get('sessionId') ?? (previewState === 'cancelled' ? 'session-cancelled-21' : 'session-eng-26')} preview canEdit={previewState !== 'read-only'} {...schedulingPreviewClock} conflicts={conflictSet} onBack={() => navigate('/__ui-preview/SC01')} onOpenStudent={(studentId) => navigate(`/__ui-preview/AC02?studentId=${encodeURIComponent(studentId)}`)} />}
         {id === 'SC06' && <PersonalScheduleScreen data={schedulingFixtures} scope={personalScope} preview {...schedulingPreviewClock} initialChildId={query.get('childId') ?? undefined} onOpenSession={(sessionId) => navigate(`/__ui-preview/SC05?sessionId=${encodeURIComponent(sessionId)}`)} />}
+      </AppShell>}
+      {id.startsWith('AT') && <AppShell route={routes.find((route) => route.id === (id === 'AT05' ? 'AT02' : id))!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['AT01', 'AT02', 'AT03', 'AT04'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
+        {id === 'AT01' && <AttendanceSessionListScreen data={attendanceData} preview state={attendanceState} onOpenSession={(sessionId) => navigate(`/__ui-preview/AT02?sessionId=${encodeURIComponent(sessionId)}`)} />}
+        {(id === 'AT02' || id === 'AT05') && <AttendanceSheetScreen data={attendanceData} sessionId={attendanceSessionId} preview canEdit={attendanceRole === 'teacher' || attendanceRole === 'staff'} initialCorrection={id === 'AT05'} onBack={() => navigate('/__ui-preview/AT01')} />}
+        {id === 'AT03' && <LeaveRequestFormScreen data={leaveFormData} role={attendanceRole === 'teacher' || attendanceRole === 'staff' ? 'parent' : attendanceRole} preview state={attendanceState} onViewRequests={() => navigate('/__ui-preview/AT04?role=parent')} />}
+        {id === 'AT04' && <LeaveRequestListScreen data={attendanceData} role={attendanceRole === 'teacher' ? 'staff' : attendanceRole} preview canReview={attendanceRole === 'staff' || attendanceRole === 'teacher'} canApproveLate={false} state={attendanceState} onCreate={() => navigate('/__ui-preview/AT03?role=parent')} />}
       </AppShell>}
     </div>
   </main>
