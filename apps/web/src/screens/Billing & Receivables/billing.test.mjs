@@ -18,6 +18,10 @@ after(async () => { await vite.close(); initialDom.window.close() })
 const { PriceRulesScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL01/PriceRulesScreen.tsx')
 const { SiblingDiscountScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL02/SiblingDiscountScreen.tsx')
 const { BillingPeriodsScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL03/BillingPeriodsScreen.tsx')
+const { DraftInvoiceListScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL04/DraftInvoiceListScreen.tsx')
+const { DraftInvoiceReviewScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL05/DraftInvoiceReviewScreen.tsx')
+const { IssuedInvoiceListScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL06/IssuedInvoiceListScreen.tsx')
+const { InvoiceDetailScreen } = await vite.ssrLoadModule('/src/screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx')
 const { billingFixtures } = await vite.ssrLoadModule('/src/ui-preview/billingFixtures.ts')
 const { PreviewApp } = await vite.ssrLoadModule('/src/ui-preview/PreviewApp.tsx')
 
@@ -98,6 +102,82 @@ test('BL03 selects missing-data period and cannot fake a recompute', async () =>
 
 test('Preview BL01–BL03 use AppShell and display sample banner', () => {
   for (const id of ['BL01', 'BL02', 'BL03']) {
+    const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: id }))
+    assert.match(html, /Dữ liệu mẫu — UI Preview/)
+    assert.match(html, /class="app-shell"/)
+    assert.match(html, new RegExp(`data-screen-id="${id}"`))
+  }
+})
+
+test('BL04–BL07 tenant routes remain guarded and production has no sample finance data', () => {
+  for (const [id, path] of [['BL04', '/finance/drafts'], ['BL05', '/finance/drafts/D-1'], ['BL06', '/finance/invoices'], ['BL07', '/finance/invoices/I-1']]) {
+    assert.equal(matchRoute(`/app/demo${path}`)?.route.id, id)
+    assert.equal(resolveRoute(`/app/demo${path}`, { status: 'unauthenticated' }).kind, 'unauthenticated')
+  }
+  for (const Component of [DraftInvoiceListScreen, DraftInvoiceReviewScreen, IssuedInvoiceListScreen, InvoiceDetailScreen]) {
+    const html = renderToStaticMarkup(React.createElement(Component))
+    assert.match(html, /Chưa có dữ liệu/)
+    assert.doesNotMatch(html, /Nguyễn Minh Khôi|INV-2026-00001/)
+  }
+})
+
+test('BL04 preserves incomplete draft totals and navigates by draft ID', async () => {
+  let opened = ''
+  const view = mount(DraftInvoiceListScreen, { data: billingFixtures, onOpenDraft: (id) => { opened = id } })
+  try {
+    await view.render()
+    assert.match(view.document.body.textContent, /Chưa xác định/)
+    await view.click(view.document.querySelector('.billing-table tbody button'))
+    assert.equal(opened, 'D-0926-001')
+  } finally { await view.close() }
+})
+
+test('BL05 stale generation blocks issue and ready confirmation never creates invoice', async () => {
+  const stale = renderToStaticMarkup(React.createElement(DraftInvoiceReviewScreen, { data: billingFixtures, selectedId: 'D-0926-002' }))
+  assert.match(stale, /Generation cũ/)
+  assert.match(stale, /disabled=""/)
+  const before = billingFixtures.invoices.length
+  const view = mount(DraftInvoiceReviewScreen, { data: billingFixtures, selectedId: 'D-0926-001', preview: true, canIssue: true })
+  try {
+    await view.render()
+    await view.click([...view.document.querySelectorAll('button')].find((item) => item.textContent === 'Rà soát phát hành'))
+    const dialog = view.document.querySelector('[role="dialog"]')
+    assert.ok(dialog)
+    assert.equal(dialog.querySelector('button.billing-button:not(.billing-button-secondary)').disabled, true)
+    await act(async () => { const box = dialog.querySelector('input[type="checkbox"]'); box.click() })
+    await view.click(dialog.querySelector('button.billing-button:not(.billing-button-secondary)'))
+    assert.match(view.document.querySelector('.billing-pending').textContent, /PENDING_API/)
+    assert.equal(billingFixtures.invoices.length, before)
+  } finally { await view.close() }
+})
+
+test('BL06 and BL07 keep outstanding separate from wallet and parent read-only', () => {
+  const list = renderToStaticMarkup(React.createElement(IssuedInvoiceListScreen, { data: billingFixtures }))
+  assert.match(list, /5\.150\.000/)
+  const detail = renderToStaticMarkup(React.createElement(InvoiceDetailScreen, { data: billingFixtures, selectedId: 'invoice-hai-dang-0926' }))
+  assert.match(detail, /2\.150\.000/)
+  assert.match(detail, /1\.200\.000/)
+  assert.match(detail, /Chưa thực thi/)
+  assert.doesNotMatch(detail, /Thao tác nhân sự/)
+  assert.match(renderToStaticMarkup(React.createElement(InvoiceDetailScreen, { data: billingFixtures, selectedId: 'missing' })), /Không tìm thấy hóa đơn/)
+})
+
+test('Batch B sample invoice lines and receivables reconcile without using wallet balance', () => {
+  const keys = new Set()
+  for (const invoice of billingFixtures.invoices) {
+    const key = `${invoice.studentId}:${invoice.period}`
+    assert.equal(keys.has(key), false)
+    keys.add(key)
+    const gross = invoice.lines.reduce((sum, line) => sum + BigInt(line.amountVnd), 0n)
+    assert.ok(gross >= BigInt(invoice.originalObligationVnd))
+    assert.equal(BigInt(invoice.adjustedObligationVnd) - BigInt(invoice.allocatedVnd), BigInt(invoice.outstandingVnd))
+  }
+  assert.equal(billingFixtures.invoices.reduce((sum, item) => sum + BigInt(item.outstandingVnd), 0n), BigInt(billingFixtures.issuedOutstandingTotalVnd))
+  assert.equal(billingFixtures.drafts.filter((item) => item.netVnd !== undefined).reduce((sum, item) => sum + BigInt(item.netVnd), 0n), BigInt(billingFixtures.draftEstimatedTotalVnd))
+})
+
+test('Preview BL04–BL07 use AppShell and distinct finance snapshots', () => {
+  for (const id of ['BL04', 'BL05', 'BL06', 'BL07']) {
     const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: id }))
     assert.match(html, /Dữ liệu mẫu — UI Preview/)
     assert.match(html, /class="app-shell"/)

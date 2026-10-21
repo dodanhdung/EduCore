@@ -8,7 +8,7 @@
 .billing-metric { min-height: 142px; padding: 24px; display: flex; flex-direction: column; gap: 8px; }
 .billing-metric small { color: var(--ec-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
 .billing-metric strong { font-size: 25px; line-height: 1.1; }
-.billing-metric span { color: var(--ec-muted); font-size: 12px; line-height: 1.5; }
+.billing-metric > span { color: var(--ec-muted); font-size: 12px; line-height: 1.5; }
 .billing-card { padding: 24px; }
 .billing-card-head { margin-bottom: 16px; }
 .billing-card h2 { font-size: 18px; margin: 0; }
@@ -53,5 +53,15 @@
 .billing-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
 .billing-detail-grid > div { border: 1px solid var(--ec-border); border-radius: 8px; padding: 12px; }
 .billing-detail-grid small { color: var(--ec-muted); display: block; margin-bottom: 5px; }
+.billing-cell-sub { display: block; color: var(--ec-muted); font-size: 11px; font-weight: 400; margin-top: 4px; }
+.billing-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 16px; color: var(--ec-muted); font-size: 12px; }
+.billing-pagination > div { display: flex; gap: 8px; }
+.billing-pagination .billing-button { min-height: 36px; padding: 6px 12px; }
+.billing-detail-grid > p { margin: 0; padding: 12px; border: 1px solid var(--ec-border); border-radius: 8px; overflow-wrap: anywhere; }
+.billing-history { display: grid; gap: 12px; }
+.billing-history article { border: 1px solid var(--ec-border); border-radius: 8px; padding: 14px; }
+.billing-history article > span { display: block; color: var(--ec-muted); font-size: 12px; margin-top: 4px; }
+.billing-check { display: flex !important; flex-direction: row; align-items: center; }
+.billing-check input { width: 18px; min-height: 18px; height: 18px; }
 @media (max-width: 700px) { .billing-metrics, .billing-detail-grid { grid-template-columns: 1fr; } .billing-metric { min-height: 100px; } .billing-heading { flex-direction: column; } .billing-heading .billing-button { width: 100%; } .billing-card { padding: 18px; } }
 @media (max-width: 390px) { .billing-page { gap: 16px; } .billing-card { padding: 16px; } .billing-dialog { padding: 18px; } }

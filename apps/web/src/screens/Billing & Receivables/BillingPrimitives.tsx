@@ -16,7 +16,7 @@ export function BillingCard({ title, hint, children }: { title: string; hint?: s
   return <section className="billing-card"><div className="billing-card-head"><h2>{title}</h2>{hint && <p>{hint}</p>}</div>{children}</section>
 }
 
-export function BillingMetrics({ items }: { items: { label: string; value: string; hint: string }[] }) {
+export function BillingMetrics({ items }: { items: { label: string; value: ReactNode; hint: string }[] }) {
   return <div className="billing-metrics">{items.map((item) => <div className="billing-metric" key={item.label}><small>{item.label}</small><strong>{item.value}</strong><span>{item.hint}</span></div>)}</div>
 }
 

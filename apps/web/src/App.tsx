@@ -28,6 +28,10 @@ import { LeaveRequestListScreen } from './screens/Attendance & Leave/AT04/LeaveR
 import { PriceRulesScreen } from './screens/Billing & Receivables/BL01/PriceRulesScreen.tsx'
 import { SiblingDiscountScreen } from './screens/Billing & Receivables/BL02/SiblingDiscountScreen.tsx'
 import { BillingPeriodsScreen } from './screens/Billing & Receivables/BL03/BillingPeriodsScreen.tsx'
+import { DraftInvoiceListScreen } from './screens/Billing & Receivables/BL04/DraftInvoiceListScreen.tsx'
+import { DraftInvoiceReviewScreen } from './screens/Billing & Receivables/BL05/DraftInvoiceReviewScreen.tsx'
+import { IssuedInvoiceListScreen } from './screens/Billing & Receivables/BL06/IssuedInvoiceListScreen.tsx'
+import { InvoiceDetailScreen } from './screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -139,6 +143,10 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'BL01' ? <PriceRulesScreen />
       : result.route.id === 'BL02' ? <SiblingDiscountScreen />
       : result.route.id === 'BL03' ? <BillingPeriodsScreen onOpenDrafts={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
+      : result.route.id === 'BL04' ? <DraftInvoiceListScreen onOpenDraft={(id) => navigate(tenantPath(tenant.id, `/finance/drafts/${encodeURIComponent(id)}`))} />
+      : result.route.id === 'BL05' ? <DraftInvoiceReviewScreen selectedId={result.params.draftId} onBack={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
+      : result.route.id === 'BL06' ? <IssuedInvoiceListScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
+      : result.route.id === 'BL07' ? <InvoiceDetailScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, '/finance/invoices'))} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
