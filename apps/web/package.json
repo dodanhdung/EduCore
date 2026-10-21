@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types --test src/foundation.test.mjs \"src/screens/Authentication & Shared/AU01/login.test.mjs\" \"src/screens/Authentication & Shared/batch.test.mjs\"",
+    "test": "node --experimental-strip-types --test src/foundation.test.mjs \"src/screens/Authentication & Shared/AU01/login.test.mjs\" \"src/screens/Authentication & Shared/batch.test.mjs\" \"src/screens/Academic Management/academic.test.mjs\"",
     "preview": "vite preview"
   },
   "dependencies": {
