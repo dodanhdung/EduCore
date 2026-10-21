@@ -32,6 +32,8 @@ import { DraftInvoiceListScreen } from './screens/Billing & Receivables/BL04/Dra
 import { DraftInvoiceReviewScreen } from './screens/Billing & Receivables/BL05/DraftInvoiceReviewScreen.tsx'
 import { IssuedInvoiceListScreen } from './screens/Billing & Receivables/BL06/IssuedInvoiceListScreen.tsx'
 import { InvoiceDetailScreen } from './screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
+import { ReceivablesWalletScreen } from './screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
+import { InvoiceAdjustmentScreen } from './screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -146,7 +148,9 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'BL04' ? <DraftInvoiceListScreen onOpenDraft={(id) => navigate(tenantPath(tenant.id, `/finance/drafts/${encodeURIComponent(id)}`))} />
       : result.route.id === 'BL05' ? <DraftInvoiceReviewScreen selectedId={result.params.draftId} onBack={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
       : result.route.id === 'BL06' ? <IssuedInvoiceListScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
-      : result.route.id === 'BL07' ? <InvoiceDetailScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, '/finance/invoices'))} />
+      : result.route.id === 'BL07' ? <InvoiceDetailScreen selectedId={result.params.invoiceId} onOpenAdjustment={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}/adjust`))} onBack={() => navigate(tenantPath(tenant.id, '/finance/invoices'))} />
+      : result.route.id === 'BL09' ? <ReceivablesWalletScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
+      : result.route.id === 'BL10' ? <InvoiceAdjustmentScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(result.params.invoiceId ?? '')}`))} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}

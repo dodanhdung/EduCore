@@ -26,13 +26,16 @@ import { DraftInvoiceListScreen } from '../screens/Billing & Receivables/BL04/Dr
 import { DraftInvoiceReviewScreen } from '../screens/Billing & Receivables/BL05/DraftInvoiceReviewScreen.tsx'
 import { IssuedInvoiceListScreen } from '../screens/Billing & Receivables/BL06/IssuedInvoiceListScreen.tsx'
 import { InvoiceDetailScreen } from '../screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
+import { ReceivablesWalletScreen } from '../screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
+import { InvoiceAdjustmentScreen } from '../screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
+import type { WalletFeedback } from '../screens/Billing & Receivables/BL08/WalletOperationDialogs.tsx'
 import { AcademicMoreScreen } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import type { MoreId } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import { AppShell } from '../App.tsx'
 import { routes } from '../routes.ts'
 import './preview.css'
 
-type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07'
+type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07' | 'BL08' | 'BL09' | 'BL10' | 'BL11'
 
 const sampleTenants: Tenant[] = [
   { id: 'demo-hcm-01', name: 'EduCore Quận 1' },
@@ -78,7 +81,7 @@ const sampleNotifications = [
 
 export function PreviewApp({ screenId }: { screenId: string }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
-  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as string[]).includes(screenId)) {
+  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
   }
 
@@ -98,6 +101,9 @@ export function PreviewApp({ screenId }: { screenId: string }) {
   const attendanceData = previewState === 'empty' ? { ...attendanceFixtures, sessions: [], leaveRequests: [] } : previewState === 'finalized' || previewState === 'approved' ? { ...attendanceFixtures, sampleNow: previewState === 'approved' ? '2026-10-21T12:00:00+07:00' : attendanceFixtures.sampleNow, sessions: attendanceFixtures.sessions.map((item) => item.id === 'session-eng-19' ? { ...item, phase: previewState === 'approved' ? 'LOCKED' as const : 'FINALIZED' as const, ...(previewState === 'approved' ? { lockReason: 'Đã quá 48 giờ từ cuối buổi (dữ liệu mẫu).' } : {}) } : item) } : attendanceFixtures
   const leaveFormData = previewState === 'duplicate' ? attendanceFixtures : { ...attendanceFixtures, sampleNow: previewState === 'late' ? '2026-10-26T10:00:00+07:00' : attendanceFixtures.sampleNow, leaveRequests: attendanceFixtures.leaveRequests.filter((item) => item.id !== 'leave-01') }
   const attendanceSessionId = query.get('sessionId') ?? (previewState === 'approved' ? 'session-eng-19' : id === 'AT05' || previewState === 'locked' ? 'session-ielts-20' : previewState === 'finalized' ? 'session-eng-19' : previewState === 'draft' ? 'session-eng-26' : 'session-eng-21')
+  const billingReadOnly = query.get('role') === 'parent' || query.get('role') === 'student'
+  const billingScoped = billingReadOnly ? { ...billingFixtures, invoices: billingFixtures.invoices.filter((item) => item.studentId === 'student-hai-dang'), wallets: billingFixtures.wallets.filter((item) => item.studentId === 'student-hai-dang'), legacyReconciliations: [], issuedOutstandingTotalVnd: '2150000', overdueOutstandingTotalVnd: '2150000', legacyReconciliationVnd: '0', verifiedCashTotalVnd: '2200000', allocatedTotalVnd: '1000000' } : billingFixtures
+  const billingPaymentFeedback = ['duplicate', 'concurrent', 'unknown', 'forbidden'].includes(previewState ?? '') ? previewState as WalletFeedback : undefined
 
   return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}`}>
     <header className="ui-preview-banner">
@@ -106,7 +112,7 @@ export function PreviewApp({ screenId }: { screenId: string }) {
         <span>Chỉ để xem giao diện · Không gọi API · Không tạo phiên đăng nhập</span>
       </div>
       <nav aria-label="Chọn màn hình preview">
-        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
         <a href="/__ui-preview/SC03?state=conflict" aria-current={id === 'SC03' && previewState === 'conflict' ? 'page' : undefined}>SC04</a>
       </nav>
     </header>
@@ -122,7 +128,7 @@ export function PreviewApp({ screenId }: { screenId: string }) {
       <a href="/__ui-preview/AT03?role=parent">Phụ huynh</a><a href="/__ui-preview/AT03?role=student">Học sinh</a><a href="/__ui-preview/AT03?state=late">Nộp muộn</a><a href="/__ui-preview/AT03?state=duplicate">Đơn trùng</a><a href="/__ui-preview/AT03?state=forbidden">Không có quyền</a>
       <a href="/__ui-preview/AT04?role=staff">Nhân sự học vụ</a><a href="/__ui-preview/AT04?role=parent">Đơn phụ huynh</a><a href="/__ui-preview/AT04?role=student">Đơn học sinh</a>
     </nav>}
-    {id.startsWith('BL') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của học phí"><a href="/__ui-preview/BL01">Đơn giá</a><a href="/__ui-preview/BL02">Ưu đãi</a><a href="/__ui-preview/BL03">Kỳ 09/2026</a><a href="/__ui-preview/BL03?period=2026-08">Thiếu dữ liệu</a><a href="/__ui-preview/BL04">Dự thảo</a><a href="/__ui-preview/BL05?draftId=D-0926-002">Generation cũ</a><a href="/__ui-preview/BL05?draftId=D-0926-003">Thiếu nguồn</a><a href="/__ui-preview/BL06">Đã phát hành</a><a href="/__ui-preview/BL07?invoiceId=invoice-hai-dang-0926">Thanh toán một phần</a><a href="/__ui-preview/BL07?invoiceId=invoice-thao-vy-0926&amp;role=parent">Phụ huynh</a><a href="/__ui-preview/BL07?invoiceId=invoice-mai-an-0926">Đã hủy</a></nav>}
+    {id.startsWith('BL') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của học phí"><a href="/__ui-preview/BL01">Đơn giá</a><a href="/__ui-preview/BL02">Ưu đãi</a><a href="/__ui-preview/BL03">Kỳ 09/2026</a><a href="/__ui-preview/BL04">Dự thảo</a><a href="/__ui-preview/BL05?draftId=D-0926-002">Generation cũ</a><a href="/__ui-preview/BL06">Đã phát hành</a><a href="/__ui-preview/BL07?invoiceId=invoice-hai-dang-0926&amp;role=parent">Phụ huynh</a><a href="/__ui-preview/BL08?mode=payment">Trả ví</a><a href="/__ui-preview/BL08?mode=topup">Nạp ví</a><a href="/__ui-preview/BL08?mode=payment&amp;state=duplicate">Payment trùng</a><a href="/__ui-preview/BL08?mode=payment&amp;state=concurrent">Dữ liệu đổi</a><a href="/__ui-preview/BL09">Công nợ & ví</a><a href="/__ui-preview/BL09?state=empty">Không còn nợ</a><a href="/__ui-preview/BL10">Điều chỉnh</a><a href="/__ui-preview/BL10?invoiceId=invoice-thao-vy-0926">Legacy chặn</a><a href="/__ui-preview/BL11">Đảo TOP_UP</a><a href="/__ui-preview/BL11?state=insufficient">Ví thiếu</a><a href="/__ui-preview/BL11?state=already">Đã đảo</a></nav>}
     <div className="ui-preview-content">
       {id === 'AU02' && <TenantSelectionScreen
         tenants={sampleTenants}
@@ -149,14 +155,16 @@ export function PreviewApp({ screenId }: { screenId: string }) {
         {id === 'AT03' && <LeaveRequestFormScreen data={leaveFormData} role={attendanceRole === 'teacher' || attendanceRole === 'staff' ? 'parent' : attendanceRole} preview state={attendanceState} onViewRequests={() => navigate('/__ui-preview/AT04?role=parent')} />}
         {id === 'AT04' && <LeaveRequestListScreen data={attendanceData} role={attendanceRole === 'teacher' ? 'staff' : attendanceRole} preview canReview={attendanceRole === 'staff' || attendanceRole === 'teacher'} canApproveLate={false} state={attendanceState} onCreate={() => navigate('/__ui-preview/AT03?role=parent')} />}
       </AppShell>}
-      {id.startsWith('BL') && <AppShell route={routes.find((route) => route.id === id)!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
+      {id.startsWith('BL') && <AppShell route={routes.find((route) => route.id === (id === 'BL08' ? query.get('mode') === 'topup' ? 'BL09' : 'BL07' : id === 'BL11' ? 'BL09' : id))!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
         {id === 'BL01' && <PriceRulesScreen data={billingFixtures} preview />}
         {id === 'BL02' && <SiblingDiscountScreen data={billingFixtures} preview />}
         {id === 'BL03' && <BillingPeriodsScreen data={billingFixtures} preview initialPeriodId={query.get('period') ?? undefined} />}
         {id === 'BL04' && <DraftInvoiceListScreen data={previewState === 'empty' ? { ...billingFixtures, drafts: [], draftEstimatedTotalVnd: '0' } : billingFixtures} preview onOpenDraft={(draftId) => navigate(`/__ui-preview/BL05?draftId=${encodeURIComponent(draftId)}`)} />}
         {id === 'BL05' && <DraftInvoiceReviewScreen data={billingFixtures} selectedId={query.get('draftId') ?? billingFixtures.drafts[0].id} preview canIssue onBack={() => navigate('/__ui-preview/BL04')} />}
         {id === 'BL06' && <IssuedInvoiceListScreen data={previewState === 'empty' ? { ...billingFixtures, invoices: [], issuedOutstandingTotalVnd: '0' } : billingFixtures} preview onOpenInvoice={(invoiceId) => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(invoiceId)}`)} />}
-        {id === 'BL07' && <InvoiceDetailScreen data={billingFixtures} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canManage={query.get('role') !== 'parent' && query.get('role') !== 'student'} onBack={() => navigate('/__ui-preview/BL06')} />}
+        {(id === 'BL07' || id === 'BL08' && query.get('mode') !== 'topup') && <InvoiceDetailScreen data={billingScoped} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canManage={!billingReadOnly} initialPaymentOpen={id === 'BL08'} paymentFeedback={billingPaymentFeedback} onOpenAdjustment={(invoiceId) => navigate(`/__ui-preview/BL10?invoiceId=${encodeURIComponent(invoiceId)}`)} onBack={() => navigate('/__ui-preview/BL06')} />}
+        {(id === 'BL09' || id === 'BL11' || id === 'BL08' && query.get('mode') === 'topup') && <ReceivablesWalletScreen data={previewState === 'empty' ? { ...billingScoped, invoices: [], issuedOutstandingTotalVnd: '0', overdueOutstandingTotalVnd: '0' } : previewState === 'insufficient' ? { ...billingScoped, wallets: billingScoped.wallets.map((item) => item.studentId === 'student-hai-dang' ? { ...item, availableVnd: '300000' } : item) } : billingScoped} preview canManage={!billingReadOnly} initialStudentId={query.get('studentId') ?? undefined} initialTopUpOpen={id === 'BL08'} initialReversalOpen={id === 'BL11'} initialTopUpId={query.get('topUpId') ?? (previewState === 'already' ? 'TOP-2026-OLD' : undefined)} topUpFeedback={billingPaymentFeedback} onOpenInvoice={(invoiceId) => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(invoiceId)}`)} />}
+        {id === 'BL10' && <InvoiceAdjustmentScreen data={billingScoped} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canRequest={!billingReadOnly} onBack={() => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(query.get('invoiceId') ?? billingFixtures.invoices[0].id)}`)} />}
       </AppShell>}
     </div>
   </main>

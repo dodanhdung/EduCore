@@ -1,6 +1,6 @@
-# Billing & Receivables — Batch A + B review
+# Billing & Receivables — Batch A + B + C review
 
-Trạng thái: **BILLING_UI_PARTIAL**. Đã có BL01–BL07; BL08–BL11 còn chờ triển khai. Ánh xạ 88 frame Figma nằm trong [FIGMA_FRAME_MAP.md](FIGMA_FRAME_MAP.md). Page được xác nhận là `65:5 — F. Billing & Receivables`.
+Trạng thái: **BILLING_UI_PARTIAL**. Đã có UI BL01–BL11; tích hợp finance API và quyết định kỹ thuật Payment reversal còn chờ. Ánh xạ 88 frame Figma nằm trong [FIGMA_FRAME_MAP.md](FIGMA_FRAME_MAP.md). Page được xác nhận là `65:5 — F. Billing & Receivables`.
 
 | Screen | UC / quy tắc | Route | Thành phần | Trạng thái UI |
 |---|---|---|---|---|
@@ -10,7 +10,22 @@ Trạng thái: **BILLING_UI_PARTIAL**. Đã có BL01–BL07; BL08–BL11 còn ch
 | BL04 | UC-23/24, BR-04/06 | `/app/:tenantId/finance/drafts` | `BL04/DraftInvoiceListScreen.tsx` | Bảng, bộ lọc, phân trang, thiếu dữ liệu và điều hướng theo draft ID |
 | BL05 | UC-24, BR-04/06/08 | `/app/:tenantId/finance/drafts/:draftId` | `BL05/DraftInvoiceReviewScreen.tsx` | Snapshot buổi học, nguồn/policy/generation, cảnh báo và xác nhận phát hành PENDING_API |
 | BL06 | UC-24, BR-06/09 | `/app/:tenantId/finance/invoices` | `BL06/IssuedInvoiceListScreen.tsx` | Danh sách phát hành, thanh toán, quá hạn, hủy và điều hướng theo invoice ID |
-| BL07 | UC-24, BR-06/09/11 | `/app/:tenantId/finance/invoices/:invoiceId` | `BL07/InvoiceDetailScreen.tsx` | Snapshot bất biến, nghĩa vụ/phân bổ/ví tách riêng, lịch sử và thao tác chờ BL08/BL10 |
+| BL07 | UC-24, BR-06/09/11 | `/app/:tenantId/finance/invoices/:invoiceId` | `BL07/InvoiceDetailScreen.tsx` | Snapshot bất biến, nghĩa vụ/phân bổ/ví tách riêng, lịch sử, dialog BL08 và liên kết BL10 |
+| BL08 | UC-25, Wallet B1/B2 | Nhúng BL07/BL09 | `BL08/WalletOperationDialogs.tsx` | TOP_UP và WALLET Payment tách biệt; form, validation, review, pending/feedback; không ghi giao dịch |
+| BL09 | UC-25, Wallet B1–B5 | `/app/:tenantId/finance/receivables` | `BL09/ReceivablesWalletScreen.tsx` | Công nợ, ví theo student, lịch sử TOP_UP/debit/credit/reversal và legacy đối soát |
+| BL10 | UC-26/34, BR-11 | `/app/:tenantId/finance/invoices/:invoiceId/adjust` | `BL10/InvoiceAdjustmentScreen.tsx` | Hóa đơn gốc chỉ đọc, form yêu cầu, review, PENDING_API, decision/execution riêng |
+| BL11 | UC-25/26, Wallet B4 | Nhúng BL09 | `BL11/TopUpReversalDialog.tsx` | Đảo toàn phần TOP_UP, đủ/thiếu số dư, đã đảo, lý do/chứng cứ; Payment reversal NEEDS_DECISION |
+
+## Hợp đồng màn hình Batch C
+
+| ID | Actor và scope | Dữ liệu/điều hướng | Trạng thái UI và ranh giới |
+|---|---|---|---|
+| BL08 | Staff có financial permission đúng tenant/student; Parent/Student chỉ đọc | TOP_UP nhúng ví BL09; Payment WALLET nhúng hóa đơn ISSUED BL07 | Nhập, validation, review, `PENDING_API`; duplicate, concurrent, unknown, forbidden là feedback không thực thi; không tự debit hoặc tạo Payment |
+| BL09 | Người xem được API cấp đúng scope | Route sẵn có; chọn ví student, mở invoice bằng ID | No debt, zero balance, lịch sử rỗng, overdue/partial, legacy cần đối soát; ví không trừ công nợ, credit không cộng tiền nhận mới |
+| BL10 | Staff có quyền yêu cầu; người không có quyền chỉ xem | Route sẵn có với invoiceId; snapshot và history theo ID | Invalid/legacy/cancelled blocked; local review chỉ dẫn `PENDING_API`; APPROVED khác COMPLETED, lỗi thực thi không báo hoàn tiền |
+| BL11 | Staff có quyền đúng ví/student | Dialog từ TOP_UP gốc trong BL09; không route | Full-only, thiếu balance/đã đảo/chưa quyền blocked; Payment reversal chỉ ghi `NEEDS_DECISION`, không có form/route |
+
+**PROPOSED UI:** vị trí các dialog, tab, copy pending và dạng cảnh báo chờ owner review theo từng màn. Dữ liệu preview được gắn nhãn mẫu, chỉ có ở `import.meta.env.DEV`. Production chưa có finance read/permission API nên fail closed và không nhập fixture. Các nút xác nhận chỉ đổi bước local sang `PENDING_API`; kết quả, số dư, nghĩa vụ, receipt và audit phải do máy chủ trả.
 
 ## Hợp đồng màn hình Batch B
 
@@ -18,7 +33,7 @@ Trạng thái: **BILLING_UI_PARTIAL**. Đã có BL01–BL07; BL08–BL11 còn ch
 - Dự thảo chưa là công nợ. Thiếu nguồn không suy thành 0. BL05 trình bày buổi học, ngày nguồn theo tenant timezone, charge unit, PriceRule và cửa sổ `[from,to)`, generation và policy pin. Nút phát hành chỉ mở xác nhận local khi snapshot sẵn sàng; sau xác nhận chỉ báo `PENDING_API`, không tạo số hóa đơn.
 - BL06/07 chỉ đọc snapshot phát hành. Nghĩa vụ gốc, nghĩa vụ sau điều chỉnh, phân bổ, công nợ còn lại và số dư ví độc lập. `APPROVED` và `COMPLETED` hiện riêng trong lịch sử. Bản legacy/mixed được gắn nhãn nguồn.
 - `canManage` là bằng chứng quyền trình bày do host cấp, mặc định `false`; role trong URL preview chỉ minh họa Staff hoặc Parent/Student. Production chưa có finance read/permission API nên chỉ hiển thị trạng thái chờ dữ liệu, không nhập fixture.
-- BL08 và BL10 chưa triển khai; các nút chỉ báo `PENDING_SCREEN`, không tạo thanh toán hoặc điều chỉnh. **PROPOSED:** cách đặt thao tác nhân sự và nội dung pending chờ owner review. Figma có biến thể phát hành thành công; Batch B không giả lập thành công khi chưa có API.
+- BL08 và BL10 được nối trong Batch C. Figma có biến thể phát hành thành công; Batch B không giả lập thành công khi chưa có API.
 
 ## Hợp đồng màn hình Batch A
 
@@ -39,3 +54,7 @@ Trạng thái: **BILLING_UI_PARTIAL**. Đã có BL01–BL07; BL08–BL11 còn ch
 ## Nguồn Batch B
 
 `SCREEN_MAP.md` BL04–BL07; `SCREEN_SPECIFICATIONS.md` bốn card tương ứng; `SCREEN_FLOWS.md` F05/F07; Requirements v5.1 BR-04/06/08/09/11/13/14, O-12/Wallet; Usecase v1.3 UC-23/24; Billing class/API design; Figma frame 67:1668, 67:2219, 67:2848, 67:4099 cùng biến thể trong frame map.
+
+## Nguồn Batch C
+
+`SCREEN_MAP.md` BL08–BL11; `SCREEN_SPECIFICATIONS.md` bốn card tương ứng; `SCREEN_FLOWS.md` F05/F07; Requirements v5.1 Wallet B1–B5, BR-08/11/12/14; Usecase v1.3 UC-25/26/34; Figma frame 67:5182, 109:2, 67:4642, 67:5367, 67:5910 cùng biến thể trong frame map. Q1–Q8 kỹ thuật Wallet và Payment reversal còn chờ quyết định, không được coi là API đã duyệt.

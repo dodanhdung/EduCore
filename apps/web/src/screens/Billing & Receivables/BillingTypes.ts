@@ -56,8 +56,30 @@ export type BillingInvoice = {
   payments: BillingPayment[]; adjustments: BillingAdjustmentHistory[];
 }
 
+export type WalletTransaction = {
+  id: string; occurredAt: string; kind: 'TOP_UP' | 'WALLET_PAYMENT' | 'INTERNAL_REFUND' | 'TOP_UP_REVERSAL';
+  signedAmountVnd: string; sourceRef: string; invoiceNumber?: string; status: 'COMPLETED' | 'PENDING' | 'FAILED';
+}
+
+export type WalletTopUp = {
+  id: string; studentId: string; amountVnd: string; receivedAt: string;
+  source: 'CASH' | 'BANK_TRANSFER'; receiptRef: string; evidence: string;
+  status: 'COMPLETED' | 'REVERSED'; reversedAt?: string;
+}
+
+export type StudentWallet = {
+  studentId: string; studentName: string; availableVnd: string; verifiedCashVnd: string;
+  transactions: WalletTransaction[]; topUps: WalletTopUp[];
+}
+
+export type LegacyReconciliation = {
+  id: string; studentId: string; studentName: string; amountVnd: string; sourceRef: string; reason: string;
+}
+
 export type BillingData = {
   priceRules: PriceRule[]; priceMissingCount: string; latestPriceEffectiveDate: string; siblingEligibility: SiblingEligibility[];
   periods: BillingPeriod[]; generations: BillingGeneration[]; drafts: BillingDraft[]; invoices: BillingInvoice[];
   draftEstimatedTotalVnd: string; issuedOutstandingTotalVnd: string;
+  overdueOutstandingTotalVnd: string; legacyReconciliationVnd: string; verifiedCashTotalVnd: string;
+  allocatedTotalVnd: string; wallets: StudentWallet[]; legacyReconciliations: LegacyReconciliation[];
 }
