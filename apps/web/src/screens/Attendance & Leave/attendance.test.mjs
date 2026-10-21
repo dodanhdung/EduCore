@@ -18,22 +18,158 @@ const { AttendanceSessionListScreen } = await vite.ssrLoadModule('/src/screens/A
 const { AttendanceSheetScreen } = await vite.ssrLoadModule('/src/screens/Attendance & Leave/AT02/AttendanceSheetScreen.tsx')
 const { LeaveRequestFormScreen } = await vite.ssrLoadModule('/src/screens/Attendance & Leave/AT03/LeaveRequestFormScreen.tsx')
 const { LeaveRequestListScreen } = await vite.ssrLoadModule('/src/screens/Attendance & Leave/AT04/LeaveRequestListScreen.tsx')
+const { AttendanceCorrectionSheet } = await vite.ssrLoadModule('/src/screens/Attendance & Leave/AT05/AttendanceCorrectionSheet.tsx')
+const { leaveHoursBefore, sessionStartInstant } = await vite.ssrLoadModule('/src/screens/Attendance & Leave/AttendanceLogic.ts')
 const { attendanceFixtures } = await vite.ssrLoadModule('/src/ui-preview/attendanceFixtures.ts')
 const { schedulingFixtures } = await vite.ssrLoadModule('/src/ui-preview/schedulingFixtures.ts')
 const { academicFixtures } = await vite.ssrLoadModule('/src/ui-preview/academicFixtures.ts')
 const { PreviewApp } = await vite.ssrLoadModule('/src/ui-preview/PreviewApp.tsx')
 
+function sessionAt(date, start, id = 'timing-session') {
+  return { ...attendanceFixtures.sessions[0], id, date, start, phase: 'DRAFT' }
+}
+
+function formData(sessions, sampleNow, overrides = {}) {
+  return {
+    ...attendanceFixtures,
+    sessions,
+    sampleNow,
+    rosters: Object.fromEntries(sessions.map((session) => [session.id, ['HS-1031']])),
+    leaveRequests: [],
+    ...overrides,
+  }
+}
+
 function mount(Component, props, url = 'http://localhost/') {
   const dom = new JSDOM('<div id="root"></div>', { url })
   globalThis.window = dom.window; globalThis.document = dom.window.document
   const root = createRoot(dom.window.document.getElementById('root'))
-  return { dom, document: dom.window.document, render: async () => act(async () => root.render(React.createElement(Component, props))), close: async () => { await act(async () => root.unmount()); dom.window.close() } }
+  return { dom, document: dom.window.document, render: async () => act(async () => root.render(React.createElement(Component, props))), rerender: async (nextProps) => act(async () => root.render(React.createElement(Component, nextProps))), close: async () => { await act(async () => root.unmount()); dom.window.close() } }
 }
 async function click(view, element) { assert.ok(element); await act(async () => element.click()) }
 async function change(view, element, value) {
   assert.ok(element)
   await act(async () => { const proto = element.tagName === 'SELECT' ? view.dom.window.HTMLSelectElement.prototype : element.tagName === 'TEXTAREA' ? view.dom.window.HTMLTextAreaElement.prototype : view.dom.window.HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value); element.dispatchEvent(new view.dom.window.Event('input', { bubbles: true })); element.dispatchEvent(new view.dom.window.Event('change', { bubbles: true })) })
 }
+
+test('AT03 timing uses actual instants at the 24-hour boundary regardless of host timezone', () => {
+  const session = sessionAt('2026-10-22', '08:00')
+  const submitted = ['2026-10-21T08:00:00+07:00', '2026-10-21T08:01:00+07:00', '2026-10-21T07:59:00+07:00']
+  const previousZone = process.env.TZ
+  try {
+    for (const hostZone of ['UTC', 'America/Los_Angeles', 'Asia/Tokyo']) {
+      process.env.TZ = hostZone
+      const results = submitted.map((value) => leaveHoursBefore(session, value, 'Asia/Ho_Chi_Minh'))
+      assert.deepEqual(results.map((result) => result.kind), ['resolved', 'resolved', 'resolved'])
+      assert.deepEqual(results.map((result) => result.hours), [24, 24 - 1 / 60, 24 + 1 / 60])
+      assert.deepEqual(sessionStartInstant(session, 'Asia/Ho_Chi_Minh'), { kind: 'resolved', instantMs: Date.parse('2026-10-22T01:00:00Z') })
+    }
+  } finally {
+    if (previousZone === undefined) delete process.env.TZ
+    else process.env.TZ = previousZone
+  }
+})
+
+test('AT03 timing resolves spring and autumn DST using the session offset', () => {
+  const spring = leaveHoursBefore(sessionAt('2026-03-08', '03:30'), '2026-03-07T08:30:00Z', 'America/New_York')
+  assert.equal(spring.kind, 'resolved')
+  assert.equal(spring.instantMs, Date.parse('2026-03-08T07:30:00Z'))
+  assert.equal(spring.hours, 23)
+  const autumn = leaveHoursBefore(sessionAt('2026-11-01', '02:30'), '2026-10-31T06:30:00Z', 'America/New_York')
+  assert.equal(autumn.kind, 'resolved')
+  assert.equal(autumn.instantMs, Date.parse('2026-11-01T07:30:00Z'))
+  assert.equal(autumn.hours, 25)
+  assert.deepEqual(sessionStartInstant(sessionAt('2026-03-08', '02:30'), 'America/New_York'), { kind: 'unresolved', reason: 'nonexistent-local-time' })
+  assert.deepEqual(sessionStartInstant(sessionAt('2026-11-01', '01:30'), 'America/New_York'), { kind: 'unresolved', reason: 'ambiguous-local-time' })
+})
+
+test('AT03 timing leaves invalid inputs unresolved rather than guessing', () => {
+  assert.deepEqual(sessionStartInstant(sessionAt('2026-02-30', '08:00'), 'UTC'), { kind: 'unresolved', reason: 'invalid-local-time' })
+  assert.deepEqual(sessionStartInstant(sessionAt('2026-10-22', '24:00'), 'UTC'), { kind: 'unresolved', reason: 'invalid-local-time' })
+  assert.deepEqual(sessionStartInstant(sessionAt('2026-10-22', '08:00'), 'Not/A_Zone'), { kind: 'unresolved', reason: 'invalid-time-zone' })
+  assert.deepEqual(leaveHoursBefore(sessionAt('2026-10-22', '08:00'), '2026-10-21T08:00:00', 'UTC'), { kind: 'unresolved', reason: 'invalid-submitted-at' })
+  assert.equal(sessionStartInstant(sessionAt('2026-10-22', '08:00'), 'America/Los_Angeles').instantMs, Date.parse('2026-10-22T15:00:00Z'))
+})
+
+test('AT03 offers only sessions whose tenant-local start is future', async () => {
+  const sessions = [sessionAt('2026-10-20', '18:00', 'yesterday'), sessionAt('2026-10-21', '08:00', 'today-past'), sessionAt('2026-10-21', '15:00', 'now'), sessionAt('2026-10-21', '18:00', 'today-future'), sessionAt('2026-10-22', '15:00', 'exact-24')]
+  const view = mount(LeaveRequestFormScreen, { data: formData(sessions, '2026-10-21T15:00:00+07:00'), role: 'student' })
+  try {
+    await view.render()
+    const select = view.document.querySelector('select')
+    assert.deepEqual([...select.options].map((option) => option.value), ['', 'today-future', 'exact-24'])
+    await change(view, select, 'today-future')
+    assert.match(view.document.body.textContent, /Đơn nộp muộn/)
+    await change(view, select, 'exact-24')
+    assert.match(view.document.body.textContent, /Trong hạn thông thường/)
+    assert.doesNotMatch(view.document.body.textContent, /Đơn nộp muộn/)
+  } finally { await view.close() }
+})
+
+test('AT03 clears stale selection and review when time passes start, retaining reason', async () => {
+  const session = sessionAt('2026-10-21', '18:00', 'future')
+  const data = formData([session], '2026-10-21T15:00:00+07:00')
+  const view = mount(LeaveRequestFormScreen, { data, role: 'student' })
+  try {
+    await view.render()
+    await change(view, view.document.querySelector('select'), 'future')
+    await change(view, view.document.querySelector('textarea'), 'Lý do vẫn cần giữ')
+    await click(view, [...view.document.querySelectorAll('button')].find((item) => item.textContent === 'Xem lại đơn'))
+    assert.match(view.document.body.textContent, /Xem lại trước khi gửi/)
+    await view.rerender({ data: { ...data, sampleNow: '2026-10-21T18:00:00+07:00' }, role: 'student' })
+    assert.equal(view.document.querySelector('select').value, '')
+    assert.equal(view.document.querySelector('textarea').value, 'Lý do vẫn cần giữ')
+    assert.doesNotMatch(view.document.body.textContent, /Xem lại trước khi gửi/)
+    assert.match(view.document.body.textContent, /Không có buổi sắp tới/)
+  } finally { await view.close() }
+})
+
+test('AT03 parent switch recalculates sessions and ambiguous time stays unavailable', async () => {
+  const sessions = [sessionAt('2026-11-01', '01:30', 'ambiguous'), sessionAt('2026-11-01', '02:30', 'valid')]
+  const data = formData(sessions, '2026-10-31T06:30:00Z', {
+    timeZone: 'America/New_York', linkedChildIds: ['HS-1031', 'HS-1042'],
+    rosters: { ambiguous: ['HS-1031'], valid: ['HS-1042'] },
+  })
+  const view = mount(LeaveRequestFormScreen, { data, role: 'parent' })
+  try {
+    await view.render()
+    const [studentSelect, sessionSelect] = view.document.querySelectorAll('select')
+    await change(view, studentSelect, 'HS-1031')
+    assert.deepEqual([...sessionSelect.options].map((option) => option.value), [''])
+    assert.match(view.document.body.textContent, /Chưa xác định thời gian buổi/)
+    await change(view, studentSelect, 'HS-1042')
+    assert.deepEqual([...sessionSelect.options].map((option) => option.value), ['', 'valid'])
+    assert.doesNotMatch(view.document.body.textContent, /Chưa xác định thời gian buổi/)
+  } finally { await view.close() }
+})
+
+test('AT05 history label follows preview and empty history is neutral', async () => {
+  const session = attendanceFixtures.sessions.find((item) => item.id === 'session-ielts-20')
+  const data = { ...attendanceFixtures, corrections: attendanceFixtures.corrections.map((item) => ({ ...item })) }
+  const props = { data, session, studentId: 'HS-1028', onClose: () => {} }
+  const production = mount(AttendanceCorrectionSheet, props)
+  try {
+    await production.render()
+    const history = production.document.querySelector('.attendance-history')
+    assert.equal(history.querySelector('h3').textContent, 'Lịch sử điều chỉnh')
+    assert.equal(history.querySelectorAll('li').length, 1)
+    assert.doesNotMatch(history.textContent, /Dữ liệu mẫu/)
+  } finally { await production.close() }
+  const preview = mount(AttendanceCorrectionSheet, { ...props, preview: true })
+  try {
+    await preview.render()
+    assert.equal(preview.document.querySelector('.attendance-history h3').textContent, 'Lịch sử điều chỉnh · Dữ liệu mẫu')
+  } finally { await preview.close() }
+  const empty = mount(AttendanceCorrectionSheet, { ...props, data: { ...data, corrections: [] } })
+  try {
+    await empty.render()
+    const dialog = empty.document.querySelector('[role="dialog"]')
+    assert.match(dialog.textContent, /Chưa có lịch sử điều chỉnh/)
+    assert.equal(dialog.querySelector('.attendance-history'), null)
+    assert.doesNotMatch(dialog.textContent, /Dữ liệu mẫu/)
+    assert.equal(data.corrections.length, 2)
+  } finally { await empty.close() }
+})
 
 test('routes keep AT05 embedded and tenant guard intact', () => {
   assert.equal(matchRoute('/app/t/attendance')?.route.id, 'AT01')
