@@ -21,6 +21,10 @@ import { ResourcesScreen } from './screens/Scheduling & Resources/SC02/Resources
 import { CreateScheduleScreen } from './screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
 import { SessionDetailScreen } from './screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx'
 import { PersonalScheduleScreen } from './screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx'
+import { AttendanceSessionListScreen } from './screens/Attendance & Leave/AT01/AttendanceSessionListScreen.tsx'
+import { AttendanceSheetScreen } from './screens/Attendance & Leave/AT02/AttendanceSheetScreen.tsx'
+import { LeaveRequestFormScreen } from './screens/Attendance & Leave/AT03/LeaveRequestFormScreen.tsx'
+import { LeaveRequestListScreen } from './screens/Attendance & Leave/AT04/LeaveRequestListScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -125,6 +129,10 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'SC03' ? <CreateScheduleScreen />
       : result.route.id === 'SC05' ? <SessionDetailScreen selectedId={result.params.sessionId} />
       : result.route.id === 'SC06' ? <PersonalScheduleScreen />
+      : result.route.id === 'AT01' ? <AttendanceSessionListScreen onOpenSession={(id) => navigate(tenantPath(tenant.id, `/sessions/${encodeURIComponent(id)}/attendance`))} />
+      : result.route.id === 'AT02' ? <AttendanceSheetScreen sessionId={result.params.sessionId} onBack={() => navigate(tenantPath(tenant.id, '/attendance'))} />
+      : result.route.id === 'AT03' ? <LeaveRequestFormScreen onViewRequests={() => navigate(tenantPath(tenant.id, '/leave-requests'))} />
+      : result.route.id === 'AT04' ? <LeaveRequestListScreen onCreate={() => navigate(tenantPath(tenant.id, '/leave-requests/new'))} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
