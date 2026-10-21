@@ -16,6 +16,11 @@ import { AcademicScreen } from './screens/Academic Management/AcademicScreens.ts
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
 import { AcademicMoreScreen } from './screens/Academic Management/AcademicMoreScreens.tsx'
 import type { MoreId } from './screens/Academic Management/AcademicMoreScreens.tsx'
+import { CentralScheduleScreen } from './screens/Scheduling & Resources/SC01/CentralScheduleScreen.tsx'
+import { ResourcesScreen } from './screens/Scheduling & Resources/SC02/ResourcesScreen.tsx'
+import { CreateScheduleScreen } from './screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
+import { SessionDetailScreen } from './screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx'
+import { PersonalScheduleScreen } from './screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -115,6 +120,11 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       ? <AcademicScreen id={result.route.id as AcademicId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.studentId ?? result.params.teacherId} />
       : (['AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
         ? <AcademicMoreScreen id={result.route.id as MoreId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.classId} />
+      : result.route.id === 'SC01' ? <CentralScheduleScreen />
+      : result.route.id === 'SC02' ? <ResourcesScreen />
+      : result.route.id === 'SC03' ? <CreateScheduleScreen />
+      : result.route.id === 'SC05' ? <SessionDetailScreen selectedId={result.params.sessionId} />
+      : result.route.id === 'SC06' ? <PersonalScheduleScreen />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}

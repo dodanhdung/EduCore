@@ -7,13 +7,19 @@ import { AcademicScreen } from '../screens/Academic Management/AcademicScreens.t
 import type { AcademicId } from '../screens/Academic Management/AcademicScreens.tsx'
 import { academicFixtures } from './academicFixtures.ts'
 import { academicMoreFixtures } from './academicMoreFixtures.ts'
+import { personalScheduleScopes, schedulingConflictFixtures, schedulingFixtures, schedulingPreviewClock } from './schedulingFixtures.ts'
+import { CentralScheduleScreen } from '../screens/Scheduling & Resources/SC01/CentralScheduleScreen.tsx'
+import { ResourcesScreen } from '../screens/Scheduling & Resources/SC02/ResourcesScreen.tsx'
+import { CreateScheduleScreen } from '../screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
+import { SessionDetailScreen } from '../screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx'
+import { PersonalScheduleScreen } from '../screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx'
 import { AcademicMoreScreen } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import type { MoreId } from '../screens/Academic Management/AcademicMoreScreens.tsx'
 import { AppShell } from '../App.tsx'
 import { routes } from '../routes.ts'
 import './preview.css'
 
-type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09'
+type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06'
 
 const sampleTenants: Tenant[] = [
   { id: 'demo-hcm-01', name: 'EduCore Quận 1' },
@@ -59,7 +65,7 @@ const sampleNotifications = [
 
 export function PreviewApp({ screenId }: { screenId: string }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
-  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09'] as string[]).includes(screenId)) {
+  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
   }
 
@@ -67,20 +73,31 @@ export function PreviewApp({ screenId }: { screenId: string }) {
   const selectedTenant = sampleTenants.find((tenant) => tenant.id === selectedTenantId) ?? sampleTenants[0]
   const navigate = (path: string) => { window.location.assign(path) }
   const query = new URLSearchParams(window.location.search)
+  const previewState = query.get('state')
+  const conflictSet = previewState === 'one' || previewState === 'race' ? schedulingConflictFixtures[previewState] : previewState === 'conflict' ? schedulingConflictFixtures.many : []
+  const personalRole = query.get('role') === 'parent' || query.get('role') === 'student' ? query.get('role') as 'parent' | 'student' : 'teacher'
+  const personalScope = previewState === 'empty' ? { ...personalScheduleScopes[personalRole], allowedSessionIds: [], children: personalScheduleScopes[personalRole].children?.map((child) => ({ ...child, allowedSessionIds: [] })) } : personalScheduleScopes[personalRole]
   const selectedId = id === 'AC02' ? (query.get('studentId') ?? academicFixtures.students[0].id)
     : id === 'AC04' ? (query.get('teacherId') ?? academicFixtures.teachers[0].id)
       : (query.get('classId') ?? academicMoreFixtures.classes[0].code)
 
-  return <main className={`ui-preview${id.startsWith('AC') ? ' ui-preview-academic' : ''}`}>
+  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') ? ' ui-preview-academic' : ''}`}>
     <header className="ui-preview-banner">
       <div>
         <strong>Dữ liệu mẫu — UI Preview</strong>
         <span>Chỉ để xem giao diện · Không gọi API · Không tạo phiên đăng nhập</span>
       </div>
       <nav aria-label="Chọn màn hình preview">
-        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        <a href="/__ui-preview/SC03?state=conflict" aria-current={id === 'SC03' && previewState === 'conflict' ? 'page' : undefined}>SC04</a>
       </nav>
     </header>
+    {id.startsWith('SC') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của lịch">
+      {id === 'SC01' && <a href="/__ui-preview/SC01?state=empty">Lịch trống</a>}
+      {id === 'SC03' && <><a href="/__ui-preview/SC03?state=single">Một buổi</a><a href="/__ui-preview/SC03?state=zero">Không xung đột</a><a href="/__ui-preview/SC03?state=one">Một xung đột</a><a href="/__ui-preview/SC03?state=conflict">Nhiều xung đột</a><a href="/__ui-preview/SC03?state=race">Xung đột lúc xác nhận</a></>}
+      {id === 'SC05' && <><a href="/__ui-preview/SC05?state=cancelled">Buổi đã hủy</a><a href="/__ui-preview/SC05?state=read-only">Chỉ xem</a></>}
+      {id === 'SC06' && <><a href="/__ui-preview/SC06?role=teacher">Giáo viên</a><a href="/__ui-preview/SC06?role=student">Học viên</a><a href="/__ui-preview/SC06?role=parent">Phụ huynh</a><a href="/__ui-preview/SC06?state=empty">Lịch trống</a></>}
+    </nav>}
     <div className="ui-preview-content">
       {id === 'AU02' && <TenantSelectionScreen
         tenants={sampleTenants}
@@ -93,6 +110,13 @@ export function PreviewApp({ screenId }: { screenId: string }) {
         {(['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(id)
           ? <AcademicScreen id={id as AcademicId} data={academicFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} pathForDetail={(detailId, personId) => `/__ui-preview/${detailId}?${detailId === 'AC02' ? 'studentId' : 'teacherId'}=${encodeURIComponent(personId)}`} />
           : <AcademicMoreScreen id={(id === 'AC09' ? 'AC08' : id) as MoreId} data={academicMoreFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} initialSheet={id === 'AC09'} pathForDetail={(detailId, classId) => `/__ui-preview/${detailId}?classId=${encodeURIComponent(classId)}`} pathForStudent={(studentId) => `/__ui-preview/AC02?studentId=${encodeURIComponent(studentId)}`} />}
+      </AppShell>}
+      {id.startsWith('SC') && <AppShell route={routes.find((route) => route.id === id)!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={<>{(['SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{({ SC01: 'Lịch học', SC02: 'Phòng & tài nguyên', SC03: 'Tạo lịch', SC05: 'Chi tiết buổi', SC06: 'Lịch cá nhân' })[item]}</a>)}<a href="/__ui-preview/SC03?state=conflict">Xung đột mẫu</a></>}>
+        {id === 'SC01' && <CentralScheduleScreen data={previewState === 'empty' ? { ...schedulingFixtures, sessions: [] } : schedulingFixtures} state={previewState === 'loading' || previewState === 'error' ? previewState : 'ready'} preview {...schedulingPreviewClock} onCreate={() => navigate('/__ui-preview/SC03')} onOpenSession={(sessionId) => navigate(`/__ui-preview/SC05?sessionId=${encodeURIComponent(sessionId)}`)} />}
+        {id === 'SC02' && <ResourcesScreen data={schedulingFixtures} state={previewState === 'loading' || previewState === 'error' ? previewState : 'ready'} preview timeZone={schedulingPreviewClock.timeZone} initialRoomId={query.get('roomId') ?? 'P.302'} />}
+        {id === 'SC03' && <CreateScheduleScreen data={schedulingFixtures} preview timeZone={schedulingPreviewClock.timeZone} conflicts={conflictSet} race={previewState === 'race'} initialConflictOpen={['conflict', 'one', 'zero', 'race'].includes(previewState ?? '')} initialRepeat={previewState === 'single' ? 'SINGLE' : 'WEEKLY'} />}
+        {id === 'SC05' && <SessionDetailScreen data={schedulingFixtures} selectedId={query.get('sessionId') ?? (previewState === 'cancelled' ? 'session-cancelled-21' : 'session-eng-26')} preview canEdit={previewState !== 'read-only'} {...schedulingPreviewClock} conflicts={conflictSet} onBack={() => navigate('/__ui-preview/SC01')} onOpenStudent={(studentId) => navigate(`/__ui-preview/AC02?studentId=${encodeURIComponent(studentId)}`)} />}
+        {id === 'SC06' && <PersonalScheduleScreen data={schedulingFixtures} scope={personalScope} preview {...schedulingPreviewClock} initialChildId={query.get('childId') ?? undefined} onOpenSession={(sessionId) => navigate(`/__ui-preview/SC05?sessionId=${encodeURIComponent(sessionId)}`)} />}
       </AppShell>}
     </div>
   </main>

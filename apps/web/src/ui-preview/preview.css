@@ -28,6 +28,8 @@
 .ui-preview-banner nav a[aria-current="page"] { background: #473b13; color: white; }
 .ui-preview-content { padding: 24px clamp(16px, 4vw, 48px); }
 .ui-preview-academic .ui-preview-content { padding: 0; }
+.ui-preview-variants { background: #fffdf2; border-bottom: 1px solid #ead58a; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
+.ui-preview-variants a { color: #473b13; font-size: 12px; padding: 5px 8px; }
 @media (max-width: 600px) {
   .ui-preview-banner { align-items: flex-start; }
   .ui-preview-banner nav { width: 100%; }
