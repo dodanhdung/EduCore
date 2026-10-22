@@ -34,6 +34,13 @@ import { IssuedInvoiceListScreen } from './screens/Billing & Receivables/BL06/Is
 import { InvoiceDetailScreen } from './screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
 import { ReceivablesWalletScreen } from './screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
 import { InvoiceAdjustmentScreen } from './screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
+import { TeacherAssignmentListScreen } from './screens/Assignments & Grading/AS01/TeacherAssignmentListScreen.tsx'
+import { AssignmentEditorScreen } from './screens/Assignments & Grading/AS02/AssignmentEditorScreen.tsx'
+import { AssignmentDetailScreen } from './screens/Assignments & Grading/AS03/AssignmentDetailScreen.tsx'
+import { GradingQueueScreen } from './screens/Assignments & Grading/AS04/GradingQueueScreen.tsx'
+import { GradeSubmissionScreen } from './screens/Assignments & Grading/AS05/GradeSubmissionScreen.tsx'
+import { MyAssignmentsScreen } from './screens/Assignments & Grading/AS06/MyAssignmentsScreen.tsx'
+import { MyAssignmentDetailScreen } from './screens/Assignments & Grading/AS07/MyAssignmentDetailScreen.tsx'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -151,6 +158,13 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'BL07' ? <InvoiceDetailScreen selectedId={result.params.invoiceId} onOpenAdjustment={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}/adjust`))} onBack={() => navigate(tenantPath(tenant.id, '/finance/invoices'))} />
       : result.route.id === 'BL09' ? <ReceivablesWalletScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
       : result.route.id === 'BL10' ? <InvoiceAdjustmentScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(result.params.invoiceId ?? '')}`))} />
+      : result.route.id === 'AS01' ? <TeacherAssignmentListScreen onCreate={() => navigate(tenantPath(tenant.id, '/teaching/assignments/new'))} onOpen={(id) => navigate(tenantPath(tenant.id, `/teaching/assignments/${encodeURIComponent(id)}`))} />
+      : result.route.id === 'AS02' ? <AssignmentEditorScreen onBack={() => navigate(tenantPath(tenant.id, '/teaching/assignments'))} />
+      : result.route.id === 'AS03' ? <AssignmentDetailScreen selectedId={result.params.assignmentId} onBack={() => navigate(tenantPath(tenant.id, '/teaching/assignments'))} onGrade={(id) => navigate(tenantPath(tenant.id, `/teaching/submissions/${encodeURIComponent(id)}/grade`))} />
+      : result.route.id === 'AS04' ? <GradingQueueScreen onOpen={(id) => navigate(tenantPath(tenant.id, `/teaching/submissions/${encodeURIComponent(id)}/grade`))} />
+      : result.route.id === 'AS05' ? <GradeSubmissionScreen selectedId={result.params.submissionId} onBack={() => navigate(tenantPath(tenant.id, '/teaching/grading'))} />
+      : result.route.id === 'AS06' ? <MyAssignmentsScreen onOpen={(id) => navigate(tenantPath(tenant.id, `/my/assignments/${encodeURIComponent(id)}`))} />
+      : result.route.id === 'AS07' ? <MyAssignmentDetailScreen selectedId={result.params.assignmentId} onBack={() => navigate(tenantPath(tenant.id, '/my/assignments'))} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}

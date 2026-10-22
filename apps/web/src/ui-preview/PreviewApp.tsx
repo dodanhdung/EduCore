@@ -28,6 +28,14 @@ import { IssuedInvoiceListScreen } from '../screens/Billing & Receivables/BL06/I
 import { InvoiceDetailScreen } from '../screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
 import { ReceivablesWalletScreen } from '../screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
 import { InvoiceAdjustmentScreen } from '../screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
+import { TeacherAssignmentListScreen } from '../screens/Assignments & Grading/AS01/TeacherAssignmentListScreen.tsx'
+import { AssignmentEditorScreen } from '../screens/Assignments & Grading/AS02/AssignmentEditorScreen.tsx'
+import { AssignmentDetailScreen } from '../screens/Assignments & Grading/AS03/AssignmentDetailScreen.tsx'
+import { GradingQueueScreen } from '../screens/Assignments & Grading/AS04/GradingQueueScreen.tsx'
+import { GradeSubmissionScreen } from '../screens/Assignments & Grading/AS05/GradeSubmissionScreen.tsx'
+import { MyAssignmentsScreen } from '../screens/Assignments & Grading/AS06/MyAssignmentsScreen.tsx'
+import { MyAssignmentDetailScreen } from '../screens/Assignments & Grading/AS07/MyAssignmentDetailScreen.tsx'
+import { assignmentFixtures } from './assignmentFixtures.ts'
 import { TopUpReversalDialog } from '../screens/Billing & Receivables/BL11/TopUpReversalDialog.tsx'
 import type { WalletFeedback } from '../screens/Billing & Receivables/BL08/WalletOperationDialogs.tsx'
 import { AcademicMoreScreen } from '../screens/Academic Management/AcademicMoreScreens.tsx'
@@ -36,7 +44,7 @@ import { AppShell } from '../App.tsx'
 import { routes } from '../routes.ts'
 import './preview.css'
 
-type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07' | 'BL08' | 'BL09' | 'BL10' | 'BL11'
+type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07' | 'BL08' | 'BL09' | 'BL10' | 'BL11' | 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'
 
 const sampleTenants: Tenant[] = [
   { id: 'demo-hcm-01', name: 'EduCore Quận 1' },
@@ -82,7 +90,7 @@ const sampleNotifications = [
 
 export function PreviewApp({ screenId, navigation }: { screenId: string; navigation?: (path: string) => void }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
-  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as string[]).includes(screenId)) {
+  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07'] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
   }
 
@@ -113,14 +121,16 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
   const billingAdjustmentData = adjustmentVariant ? { ...billingScoped, invoices: billingScoped.invoices.map((invoice) => invoice.id !== 'invoice-hai-dang-0926' ? invoice : { ...invoice, ...(previewState === 'completed-credit' ? { adjustedObligationVnd: '900000', allocatedVnd: '900000', outstandingVnd: '0', walletAvailableVnd: '1300000', settlement: 'SETTLED' as const } : {}), adjustments: [{ id: 'ADJ-PREVIEW-014', kind: 'ADJUSTMENT' as const, occurredAt: '2026-10-16', ...adjustmentVariant }] }), wallets: previewState === 'completed-credit' ? billingScoped.wallets.map((wallet) => wallet.studentId !== 'student-hai-dang' ? wallet : { ...wallet, availableVnd: '1300000', transactions: [...wallet.transactions, { id: 'WT-PREVIEW-CREDIT', occurredAt: '2026-10-16', kind: 'INTERNAL_REFUND' as const, signedAmountVnd: '100000', sourceRef: 'ADJ-PREVIEW-014', invoiceNumber: 'INV-2026-00001', status: 'COMPLETED' as const }] }) : billingScoped.wallets } : billingScoped
   const adjustmentStateQuery = ['pending', 'rejected', 'failed', 'completed-credit', 'stale'].includes(previewState ?? '') ? `&state=${encodeURIComponent(previewState!)}` : ''
 
-  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}`}>
+  const assignmentData = previewState === 'empty' ? { ...assignmentFixtures, assignments: [], submissions: [] } : previewState === 'overdue' ? { ...assignmentFixtures, sampleNow: '2026-10-22T12:00:00+07:00' } : assignmentFixtures
+  const studentId = query.get('studentId') ?? assignmentFixtures.studentId!
+  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') || id.startsWith('AS') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}${id.startsWith('AS') ? ' ui-preview-assignments' : ''}`}>
     <header className="ui-preview-banner">
       <div>
         <strong>Dữ liệu mẫu — UI Preview</strong>
         <span>Chỉ để xem giao diện · Không gọi API · Không tạo phiên đăng nhập</span>
       </div>
       <nav aria-label="Chọn màn hình preview">
-        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
         <a href="/__ui-preview/SC03?state=conflict" aria-current={id === 'SC03' && previewState === 'conflict' ? 'page' : undefined}>SC04</a>
       </nav>
     </header>
@@ -137,6 +147,8 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
       <a href="/__ui-preview/AT04?role=staff">Nhân sự học vụ</a><a href="/__ui-preview/AT04?role=parent">Đơn phụ huynh</a><a href="/__ui-preview/AT04?role=student">Đơn học sinh</a>
     </nav>}
     {id.startsWith('BL') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của học phí"><a href="/__ui-preview/BL01">Đơn giá</a><a href="/__ui-preview/BL02">Ưu đãi</a><a href="/__ui-preview/BL03">Kỳ 09/2026</a><a href="/__ui-preview/BL04">Dự thảo</a><a href="/__ui-preview/BL05?draftId=D-0926-002">Generation cũ</a><a href="/__ui-preview/BL06">Đã phát hành</a><a href="/__ui-preview/BL07?invoiceId=invoice-hai-dang-0926&amp;role=parent">Phụ huynh</a><a href="/__ui-preview/BL08?mode=payment">Trả ví</a><a href="/__ui-preview/BL08?mode=topup">Nạp ví</a><a href="/__ui-preview/BL08?mode=payment&amp;state=duplicate">Payment trùng</a><a href="/__ui-preview/BL08?mode=payment&amp;state=concurrent">Dữ liệu đổi</a><a href="/__ui-preview/BL09">Công nợ & ví</a><a href="/__ui-preview/BL09?state=empty">Không còn nợ</a><a href="/__ui-preview/BL10">Điều chỉnh</a><a href="/__ui-preview/BL10?state=pending">Chờ duyệt</a><a href="/__ui-preview/BL10?state=rejected">Từ chối</a><a href="/__ui-preview/BL10?state=failed">Thực thi lỗi</a><a href="/__ui-preview/BL10?state=completed-credit">Đã credit ví</a><a href="/__ui-preview/BL10?state=stale">Payment đổi</a><a href="/__ui-preview/BL10?invoiceId=invoice-mai-an-0926">Hủy không credit</a><a href="/__ui-preview/BL10?invoiceId=invoice-thao-vy-0926">Legacy chặn</a><a href="/__ui-preview/BL11">Đảo TOP_UP</a><a href="/__ui-preview/BL11?state=insufficient">Ví thiếu</a><a href="/__ui-preview/BL11?state=already">Đã đảo</a><a href="/__ui-preview/BL11?state=forbidden">Không có quyền</a><a href="/__ui-preview/BL11?state=pending">Đang xử lý</a><a href="/__ui-preview/BL11?state=failed">Thực thi lỗi</a><a href="/__ui-preview/BL11?state=legacy">Legacy đối soát</a></nav>}
+    {id.startsWith('AS') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu bài tập"><a href="/__ui-preview/AS01?state=empty">Danh sách rỗng</a><a href="/__ui-preview/AS01?state=loading">Đang tải</a><a href="/__ui-preview/AS01?state=error">Lỗi tải</a><a href="/__ui-preview/AS02?state=validation">Lỗi biểu mẫu</a><a href="/__ui-preview/AS02?assignmentId=assignment-chuong-3&amp;state=published">Bài đã giao</a><a href="/__ui-preview/AS03?state=empty">Chưa có bài nộp</a><a href="/__ui-preview/AS04?state=empty">Hàng chờ rỗng</a><a href="/__ui-preview/AS05?submissionId=submission-gia-han">Nháp điểm</a><a href="/__ui-preview/AS05?submissionId=submission-my-linh&amp;state=correction">Điều chỉnh</a><a href="/__ui-preview/AS06?state=empty">Học sinh rỗng</a><a href="/__ui-preview/AS07?state=late">Nộp muộn</a><a href="/__ui-preview/AS07?state=expired">Hết hạn</a><a href="/__ui-preview/AS07?assignmentId=assignment-dai-so&amp;state=closed">Đã chấm</a></nav>}
+    {(id === 'AS06' || id === 'AS07' || id === 'AS05') && <nav className="ui-preview-variants" aria-label="Trạng thái bổ sung"><a href="/__ui-preview/AS06?state=overdue">Quá hạn</a><a href="/__ui-preview/AS07?state=upload-error">Lỗi tệp</a><a href="/__ui-preview/AS05?state=missing-file">Tệp không truy cập</a><a href="/__ui-preview/AS05?state=read-only">Chỉ xem</a></nav>}
     <div className="ui-preview-content">
       {id === 'AU02' && <TenantSelectionScreen
         tenants={sampleTenants}
@@ -174,6 +186,15 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
         {(id === 'BL09' || id === 'BL11' && previewState !== 'forbidden' || id === 'BL08' && query.get('mode') === 'topup') && <ReceivablesWalletScreen data={previewState === 'empty' ? { ...billingScoped, invoices: [], issuedOutstandingTotalVnd: '0', overdueOutstandingTotalVnd: '0' } : previewState === 'insufficient' ? { ...billingScoped, wallets: billingScoped.wallets.map((item) => item.studentId === 'student-hai-dang' ? { ...item, availableVnd: '300000' } : item) } : billingScoped} preview canManage={!billingReadOnly} initialStudentId={query.get('studentId') ?? undefined} initialTopUpOpen={id === 'BL08'} initialReversalOpen={id === 'BL11'} initialTopUpId={query.get('topUpId') ?? (previewState === 'already' ? 'TOP-2026-OLD' : undefined)} topUpFeedback={billingPaymentFeedback} reversalFeedback={previewState === 'pending' ? 'PENDING' : previewState === 'failed' ? 'FAILED' : undefined} reversalReconciliationBlocked={id === 'BL11' && previewState === 'legacy'} onOpenInvoice={(invoiceId) => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(invoiceId)}`)} />}
         {id === 'BL11' && previewState === 'forbidden' && <TopUpReversalDialog wallet={billingFixtures.wallets[0]} topUp={billingFixtures.wallets[0].topUps[0]} canManage={false} onClose={() => navigate('/__ui-preview/BL09')} />}
         {id === 'BL10' && <InvoiceAdjustmentScreen data={billingAdjustmentData} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canRequest={!billingReadOnly} stalePayment={previewState === 'stale'} onBack={() => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(query.get('invoiceId') ?? billingFixtures.invoices[0].id)}${adjustmentStateQuery}`)} />}
+      </AppShell>}
+      {id.startsWith('AS') && <AppShell route={routes.find((route) => route.id === id)!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(id === 'AS06' || id === 'AS07' ? ['AS06', 'AS07'] : ['AS01', 'AS02', 'AS03', 'AS04', 'AS05']).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
+        {id === 'AS01' && <TeacherAssignmentListScreen data={assignmentData} preview referenceTime={assignmentData.sampleNow} state={previewState === 'loading' || previewState === 'error' ? previewState : 'ready'} onCreate={() => navigate('/__ui-preview/AS02')} onOpen={(assignmentId) => navigate(`/__ui-preview/AS03?assignmentId=${encodeURIComponent(assignmentId)}`)} />}
+        {id === 'AS02' && <AssignmentEditorScreen data={assignmentFixtures} preview selectedId={query.get('assignmentId') ?? undefined} initialState={previewState ?? undefined} onBack={() => navigate('/__ui-preview/AS01')} />}
+        {id === 'AS03' && <AssignmentDetailScreen data={previewState === 'empty' ? { ...assignmentFixtures, submissions: [] } : assignmentFixtures} selectedId={query.get('assignmentId') ?? assignmentFixtures.assignments[0].id} onBack={() => navigate('/__ui-preview/AS01')} onGrade={(submissionId) => navigate(`/__ui-preview/AS05?submissionId=${encodeURIComponent(submissionId)}`)} />}
+        {id === 'AS04' && <GradingQueueScreen data={previewState === 'empty' ? { ...assignmentFixtures, submissions: [] } : assignmentFixtures} state={previewState === 'loading' || previewState === 'error' ? previewState : 'ready'} onOpen={(submissionId) => navigate(`/__ui-preview/AS05?submissionId=${encodeURIComponent(submissionId)}`)} />}
+        {id === 'AS05' && <GradeSubmissionScreen data={assignmentFixtures} selectedId={query.get('submissionId') ?? assignmentFixtures.submissions[0].id} state={previewState ?? undefined} onBack={() => navigate('/__ui-preview/AS04')} />}
+        {id === 'AS06' && <MyAssignmentsScreen data={assignmentData} preview studentId={studentId} state={previewState === 'loading' || previewState === 'error' ? previewState : 'ready'} onOpen={(assignmentId) => navigate(`/__ui-preview/AS07?assignmentId=${encodeURIComponent(assignmentId)}&studentId=${encodeURIComponent(studentId)}`)} />}
+        {id === 'AS07' && <MyAssignmentDetailScreen data={assignmentFixtures} selectedId={query.get('assignmentId') ?? assignmentFixtures.assignments[0].id} studentId={studentId} state={previewState ?? undefined} onBack={() => navigate(`/__ui-preview/AS06?studentId=${encodeURIComponent(studentId)}`)} />}
       </AppShell>}
     </div>
   </main>

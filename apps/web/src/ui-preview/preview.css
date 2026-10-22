@@ -36,6 +36,11 @@
 .ui-preview-attendance .ui-preview-variants { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
 .ui-preview-attendance .ui-preview-variants a { flex: 0 0 auto; }
 .ui-preview-billing .ui-preview-banner { position: static; }
+.ui-preview-assignments .ui-preview-banner { position: static; }
+.ui-preview-assignments .ui-preview-banner nav,
+.ui-preview-assignments .ui-preview-variants { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; max-width: 100%; }
+.ui-preview-assignments .ui-preview-banner nav a,
+.ui-preview-assignments .ui-preview-variants a { flex: 0 0 auto; }
 @media (max-width: 600px) {
   .ui-preview-banner { align-items: flex-start; }
   .ui-preview-banner nav { width: 100%; }
