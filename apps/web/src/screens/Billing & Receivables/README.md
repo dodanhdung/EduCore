@@ -1,6 +1,16 @@
-# Billing & Receivables — Batch A–D review
+# Billing & Receivables — Batch A–E review
 
 Trạng thái: **BILLING_UI_PARTIAL**. Đã có UI BL01–BL11; tích hợp finance API và quyết định kỹ thuật Payment reversal còn chờ. Ánh xạ 88 frame Figma nằm trong [FIGMA_FRAME_MAP.md](FIGMA_FRAME_MAP.md). Page được xác nhận là `65:5 — F. Billing & Receivables`.
+
+## Batch E — sửa lỗi và rà soát tích hợp UI
+
+- BL01 mở mới form với trường rỗng, xóa validation/`PENDING_API`; bản giá lịch sử vẫn chỉ đọc. BL03 không đổi ID kỳ không hợp lệ sang kỳ đầu, xóa lý do/review khi đổi kỳ hoặc generation và khi mở yêu cầu tính lại; nút “Xem dự thảo” đi tới BL04 kèm ID kỳ. BL04 lọc đúng kỳ, kể cả kỳ chưa có draft.
+- BL07 và BL10 chỉ hiển thị ghi có ví khi cùng bản ghi có `APPROVED`, `COMPLETED` và số credit đã ghi nhận. Giá trị `0` hiện rõ không phát sinh ghi có; trạng thái chờ, bị từ chối hoặc thực thi lỗi không hiện ghi có hoàn tất. Preview hai màn dùng cùng snapshot biến thể.
+- Nhãn dữ liệu mẫu chỉ xuất hiện khi `preview=true` hoặc trong banner Preview; BL01–BL04 không gắn nhãn mẫu vào dữ liệu production. BL02 không còn tên cơ sở cố định trong thành phần nghiệp vụ. BL08/BL11 đưa focus vào dialog, giữ Tab trong dialog, Escape đóng và trả focus về nút mở; điều hướng mobile ẩn khi dialog mở.
+- Luồng rà soát: BL01→BL03→BL04→BL05, BL06→BL07→BL08/BL10, BL09→BL08/BL11, BL07→BL10→BL07. Kiểm thử fixture đối chiếu student/period/generation/payment/wallet/TOP_UP/reversal bằng ID và VND `BigInt`. Nút tài chính vẫn chỉ `PENDING_API`; Payment reversal vẫn `NEEDS_DECISION`.
+- Kiểm tra Chrome headless bằng CDP ở 320/390/768/1440 px: trang không tràn ngang; bảng BL04/BL07 cuộn trong khung; BL08 dialog vừa 320/390 px; BL11 dialog vừa 320/1440 px; BL10 đọc được ở 390/768 px. Thao tác trình duyệt BL03→BL04 giữ `period=2026-09`; focus BL08 vào ô tiền và mobile nav ẩn. Ảnh chụp phục vụ rà soát nằm ngoài repo trong thư mục tạm của máy chạy kiểm tra.
+
+**Giới hạn:** Preview dùng điều hướng URL hiện có, nên chuyển màn tải lại trang; repo chưa có bộ định tuyến nội bộ cho Preview. API đọc/quyền tài chính chưa được nối ở production. Các trạng thái và nội dung Preview tiếp tục là **PROPOSED UI**, không xác nhận giao dịch hay đạt pixel parity Figma.
 
 | Screen | UC / quy tắc | Route | Thành phần | Trạng thái UI |
 |---|---|---|---|---|

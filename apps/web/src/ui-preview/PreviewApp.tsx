@@ -80,7 +80,7 @@ const sampleNotifications = [
   },
 ]
 
-export function PreviewApp({ screenId }: { screenId: string }) {
+export function PreviewApp({ screenId, navigation }: { screenId: string; navigation?: (path: string) => void }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
   if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
@@ -88,7 +88,7 @@ export function PreviewApp({ screenId }: { screenId: string }) {
 
   const id = screenId as PreviewScreenId
   const selectedTenant = sampleTenants.find((tenant) => tenant.id === selectedTenantId) ?? sampleTenants[0]
-  const navigate = (path: string) => { window.location.assign(path) }
+  const navigate = navigation ?? ((path: string) => { window.location.assign(path) })
   const query = new URLSearchParams(window.location.search)
   const previewState = query.get('state')
   const conflictSet = previewState === 'one' || previewState === 'race' ? schedulingConflictFixtures[previewState] : previewState === 'conflict' ? schedulingConflictFixtures.many : []
@@ -111,6 +111,7 @@ export function PreviewApp({ screenId }: { screenId: string }) {
         : previewState === 'completed-credit' ? { decision: 'APPROVED' as const, execution: 'COMPLETED' as const, note: 'Đã điều chỉnh nghĩa vụ và ghi credit ví theo receipt.', walletCreditVnd: '100000' }
           : undefined
   const billingAdjustmentData = adjustmentVariant ? { ...billingScoped, invoices: billingScoped.invoices.map((invoice) => invoice.id !== 'invoice-hai-dang-0926' ? invoice : { ...invoice, ...(previewState === 'completed-credit' ? { adjustedObligationVnd: '900000', allocatedVnd: '900000', outstandingVnd: '0', walletAvailableVnd: '1300000', settlement: 'SETTLED' as const } : {}), adjustments: [{ id: 'ADJ-PREVIEW-014', kind: 'ADJUSTMENT' as const, occurredAt: '2026-10-16', ...adjustmentVariant }] }), wallets: previewState === 'completed-credit' ? billingScoped.wallets.map((wallet) => wallet.studentId !== 'student-hai-dang' ? wallet : { ...wallet, availableVnd: '1300000', transactions: [...wallet.transactions, { id: 'WT-PREVIEW-CREDIT', occurredAt: '2026-10-16', kind: 'INTERNAL_REFUND' as const, signedAmountVnd: '100000', sourceRef: 'ADJ-PREVIEW-014', invoiceNumber: 'INV-2026-00001', status: 'COMPLETED' as const }] }) : billingScoped.wallets } : billingScoped
+  const adjustmentStateQuery = ['pending', 'rejected', 'failed', 'completed-credit', 'stale'].includes(previewState ?? '') ? `&state=${encodeURIComponent(previewState!)}` : ''
 
   return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}`}>
     <header className="ui-preview-banner">
@@ -165,14 +166,14 @@ export function PreviewApp({ screenId }: { screenId: string }) {
       {id.startsWith('BL') && <AppShell route={routes.find((route) => route.id === (id === 'BL08' ? query.get('mode') === 'topup' ? 'BL09' : 'BL07' : id === 'BL11' ? 'BL09' : id))!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
         {id === 'BL01' && <PriceRulesScreen data={billingFixtures} preview />}
         {id === 'BL02' && <SiblingDiscountScreen data={billingFixtures} preview />}
-        {id === 'BL03' && <BillingPeriodsScreen data={billingFixtures} preview initialPeriodId={query.get('period') ?? undefined} />}
-        {id === 'BL04' && <DraftInvoiceListScreen data={previewState === 'empty' ? { ...billingFixtures, drafts: [], draftEstimatedTotalVnd: '0' } : billingFixtures} preview onOpenDraft={(draftId) => navigate(`/__ui-preview/BL05?draftId=${encodeURIComponent(draftId)}`)} />}
+        {id === 'BL03' && <BillingPeriodsScreen data={billingFixtures} preview initialPeriodId={query.get('period') ?? undefined} onOpenDrafts={(periodId) => navigate(`/__ui-preview/BL04?period=${encodeURIComponent(periodId)}`)} />}
+        {id === 'BL04' && <DraftInvoiceListScreen data={previewState === 'empty' ? { ...billingFixtures, drafts: [], draftEstimatedTotalVnd: '0' } : billingFixtures} preview initialPeriodId={query.get('period') ?? undefined} onOpenDraft={(draftId) => navigate(`/__ui-preview/BL05?draftId=${encodeURIComponent(draftId)}`)} />}
         {id === 'BL05' && <DraftInvoiceReviewScreen data={billingFixtures} selectedId={query.get('draftId') ?? billingFixtures.drafts[0].id} preview canIssue onBack={() => navigate('/__ui-preview/BL04')} />}
         {id === 'BL06' && <IssuedInvoiceListScreen data={previewState === 'empty' ? { ...billingFixtures, invoices: [], issuedOutstandingTotalVnd: '0' } : billingFixtures} preview onOpenInvoice={(invoiceId) => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(invoiceId)}`)} />}
-        {(id === 'BL07' || id === 'BL08' && query.get('mode') !== 'topup') && <InvoiceDetailScreen data={billingScoped} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canManage={!billingReadOnly} initialPaymentOpen={id === 'BL08'} paymentFeedback={billingPaymentFeedback} onOpenAdjustment={(invoiceId) => navigate(`/__ui-preview/BL10?invoiceId=${encodeURIComponent(invoiceId)}`)} onBack={() => navigate('/__ui-preview/BL06')} />}
+        {(id === 'BL07' || id === 'BL08' && query.get('mode') !== 'topup') && <InvoiceDetailScreen data={id === 'BL07' ? billingAdjustmentData : billingScoped} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canManage={!billingReadOnly} initialPaymentOpen={id === 'BL08'} paymentFeedback={billingPaymentFeedback} onOpenAdjustment={(invoiceId) => navigate(`/__ui-preview/BL10?invoiceId=${encodeURIComponent(invoiceId)}${adjustmentStateQuery}`)} onBack={() => navigate('/__ui-preview/BL06')} />}
         {(id === 'BL09' || id === 'BL11' && previewState !== 'forbidden' || id === 'BL08' && query.get('mode') === 'topup') && <ReceivablesWalletScreen data={previewState === 'empty' ? { ...billingScoped, invoices: [], issuedOutstandingTotalVnd: '0', overdueOutstandingTotalVnd: '0' } : previewState === 'insufficient' ? { ...billingScoped, wallets: billingScoped.wallets.map((item) => item.studentId === 'student-hai-dang' ? { ...item, availableVnd: '300000' } : item) } : billingScoped} preview canManage={!billingReadOnly} initialStudentId={query.get('studentId') ?? undefined} initialTopUpOpen={id === 'BL08'} initialReversalOpen={id === 'BL11'} initialTopUpId={query.get('topUpId') ?? (previewState === 'already' ? 'TOP-2026-OLD' : undefined)} topUpFeedback={billingPaymentFeedback} reversalFeedback={previewState === 'pending' ? 'PENDING' : previewState === 'failed' ? 'FAILED' : undefined} reversalReconciliationBlocked={id === 'BL11' && previewState === 'legacy'} onOpenInvoice={(invoiceId) => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(invoiceId)}`)} />}
         {id === 'BL11' && previewState === 'forbidden' && <TopUpReversalDialog wallet={billingFixtures.wallets[0]} topUp={billingFixtures.wallets[0].topUps[0]} canManage={false} onClose={() => navigate('/__ui-preview/BL09')} />}
-        {id === 'BL10' && <InvoiceAdjustmentScreen data={billingAdjustmentData} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canRequest={!billingReadOnly} stalePayment={previewState === 'stale'} onBack={() => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(query.get('invoiceId') ?? billingFixtures.invoices[0].id)}`)} />}
+        {id === 'BL10' && <InvoiceAdjustmentScreen data={billingAdjustmentData} selectedId={query.get('invoiceId') ?? billingFixtures.invoices[0].id} preview canRequest={!billingReadOnly} stalePayment={previewState === 'stale'} onBack={() => navigate(`/__ui-preview/BL07?invoiceId=${encodeURIComponent(query.get('invoiceId') ?? billingFixtures.invoices[0].id)}${adjustmentStateQuery}`)} />}
       </AppShell>}
     </div>
   </main>

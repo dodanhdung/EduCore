@@ -1,16 +1,18 @@
 import { useState } from 'react'
 import type { StudentWallet, WalletTopUp } from '../BillingTypes.ts'
 import { BillingBadge, MoneyVnd, PendingNotice } from '../BillingPrimitives.tsx'
+import { useBillingDialogFocus } from '../useBillingDialogFocus.ts'
 import '../BillingScreens.css'
 
 export function TopUpReversalDialog({ wallet, topUp, canManage, reconciliationBlocked = false, executionFeedback, onClose }: { wallet: StudentWallet; topUp: WalletTopUp; canManage: boolean; reconciliationBlocked?: boolean; executionFeedback?: 'PENDING' | 'FAILED'; onClose: () => void }) {
+  const dialogRef = useBillingDialogFocus(onClose)
   const [reason, setReason] = useState('')
   const [evidence, setEvidence] = useState('')
   const [step, setStep] = useState<'form' | 'review' | 'pending'>('form')
   const enough = BigInt(wallet.availableVnd) >= BigInt(topUp.amountVnd)
   const eligible = canManage && topUp.status === 'COMPLETED' && enough && !reconciliationBlocked && !executionFeedback
-  if (!canManage) return <div className="billing-dialog-backdrop" data-screen-id="BL11"><section className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="reversal-title"><h2 id="reversal-title">Đảo nạp ví sai</h2><p role="alert" className="billing-error">Không có financial permission và student-tenant scope để xem hoặc yêu cầu đảo TOP_UP này.</p><div className="billing-actions"><button className="billing-button billing-button-secondary" onClick={onClose}>Đóng</button></div></section></div>
-  return <div className="billing-dialog-backdrop" data-screen-id="BL11"><section className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="reversal-title">
+  if (!canManage) return <div className="billing-dialog-backdrop" data-screen-id="BL11"><section ref={dialogRef} tabIndex={-1} className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="reversal-title"><h2 id="reversal-title">Đảo nạp ví sai</h2><p role="alert" className="billing-error">Không có financial permission và student-tenant scope để xem hoặc yêu cầu đảo TOP_UP này.</p><div className="billing-actions"><button className="billing-button billing-button-secondary" onClick={onClose}>Đóng</button></div></section></div>
+  return <div className="billing-dialog-backdrop" data-screen-id="BL11"><section ref={dialogRef} tabIndex={-1} className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="reversal-title">
     <h2 id="reversal-title">Đảo nạp ví sai</h2><p className="billing-muted">{topUp.id} · {wallet.studentName} · TOP_UP gốc giữ nguyên</p>
     <div className="billing-operation-summary"><p>Số tiền gốc, đảo toàn phần: <strong><MoneyVnd value={topUp.amountVnd} /></strong></p><p>Số dư ví khả dụng: <strong><MoneyVnd value={wallet.availableVnd} /></strong></p><p>Nguồn nhận: {topUp.source === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'} · {topUp.receivedAt}</p><p>Biên nhận: {topUp.receiptRef} · {topUp.evidence}</p></div>
     {topUp.status === 'REVERSED' && <p role="alert" className="billing-error">TOP_UP này đã được đảo ngày {topUp.reversedAt}. Không gửi lại.</p>}

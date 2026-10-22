@@ -74,6 +74,33 @@ test('BL01 filters exact scope and keeps historical price rule read-only', async
   } finally { await view.close() }
 })
 
+test('BL01 starts each create request with blank values and clears pending feedback', async () => {
+  const view = mount(PriceRulesScreen, { data: billingFixtures, preview: true })
+  try {
+    await view.render()
+    const button = (label) => [...view.document.querySelectorAll('button')].find((item) => item.textContent === label)
+    await view.click(button('Tạo đơn giá'))
+    let dialog = view.document.querySelector('[role="dialog"]')
+    await view.input(dialog.querySelector('input:not([type="date"])'), 'ENG-B2')
+    await view.input(dialog.querySelector('input[inputmode="numeric"]'), '350000')
+    await view.input(dialog.querySelector('input[type="date"]'), '2026-11-01')
+    await view.click(button('Lưu phiên bản mới'))
+    assert.match(dialog.textContent, /PENDING_API/)
+    await view.click(button('Đóng'))
+    await view.click(button('Mở biểu mẫu'))
+    dialog = view.document.querySelector('[role="dialog"]')
+    assert.deepEqual([...dialog.querySelectorAll('input')].map((input) => input.value), ['', '', '', ''])
+    assert.equal(dialog.querySelector('select').value, 'CLASS')
+    assert.doesNotMatch(dialog.textContent, /PENDING_API|Cần đối tượng, đơn giá dương/)
+    await view.click(button('Đóng'))
+    await view.click(view.document.querySelector('.billing-table .billing-link'))
+    assert.equal(view.document.querySelector('[role="dialog"] input'), null)
+    await view.click(button('Đóng'))
+    await view.click(button('Tạo đơn giá'))
+    assert.deepEqual([...view.document.querySelectorAll('[role="dialog"] input')].map((input) => input.value), ['', '', '', ''])
+  } finally { await view.close() }
+})
+
 test('BL02 separates verified evidence from eligibility and local review cannot approve', async () => {
   const view = mount(SiblingDiscountScreen, { data: billingFixtures, preview: true })
   try {
@@ -83,6 +110,7 @@ test('BL02 separates verified evidence from eligibility and local review cannot 
     assert.match(rows[2].textContent, /Đã thu hồi.*Chưa áp dụng/)
     await view.click(rows[1].querySelector('button'))
     assert.match(view.document.body.textContent, /Chưa có chứng cứ xác minh/)
+    assert.doesNotMatch(view.document.body.textContent, /Cơ sở Quận 1/)
     await view.click([...view.document.querySelectorAll('button')].find((button) => button.textContent === 'Xác minh điều kiện'))
     assert.match(view.document.querySelector('.billing-pending').textContent, /Cần ghi chú chứng cứ/)
     assert.equal(billingFixtures.siblingEligibility[1].evidence, 'UNVERIFIED')
@@ -102,6 +130,52 @@ test('BL03 selects missing-data period and cannot fake a recompute', async () =>
     assert.equal([...view.document.querySelectorAll('button')].find((button) => button.textContent === 'Tính lại hóa đơn nháp').disabled, true)
     assert.equal(billingFixtures.generations[0].id, 'G2')
   } finally { await view.close() }
+})
+
+test('BL03 explicit unknown period is not replaced by the first record', () => {
+  const html = renderToStaticMarkup(React.createElement(BillingPeriodsScreen, { data: billingFixtures, initialPeriodId: '2099-12' }))
+  assert.match(html, /Không tìm thấy kỳ học phí/)
+  assert.doesNotMatch(html, /Kỳ tháng 09\/2026|RUN-0926-02/)
+})
+
+test('BL03 clears recompute reason and review when generation or period changes', async () => {
+  const view = mount(BillingPeriodsScreen, { data: billingFixtures, preview: true })
+  try {
+    await view.render()
+    const button = (label) => [...view.document.querySelectorAll('button')].find((item) => item.textContent === label)
+    await view.click(button('Tính lại hóa đơn nháp'))
+    await view.input(view.document.querySelector('[role="dialog"] textarea'), 'Nguồn điểm danh thay đổi')
+    await view.click(button('Hủy'))
+    await view.click(button('Tính lại hóa đơn nháp'))
+    assert.equal(view.document.querySelector('[role="dialog"] textarea').value, '')
+    await view.input(view.document.querySelector('[role="dialog"] textarea'), 'Lý do cũ')
+    await view.click([...view.document.querySelectorAll('.billing-table tbody button')].find((item) => item.closest('tr').textContent.includes('G1')))
+    assert.equal(view.document.querySelector('[role="dialog"]'), null)
+    assert.match(view.document.body.textContent, /Generation G1 · Lịch sử/)
+    await view.input(view.document.querySelector('select'), '2026-08')
+    assert.match(view.document.body.textContent, /G-08/)
+    assert.doesNotMatch(view.document.body.textContent, /Generation G1 · Lịch sử|Lý do cũ/)
+    await view.input(view.document.querySelector('select'), '2026-09')
+    await view.click(button('Tính lại hóa đơn nháp'))
+    assert.equal(view.document.querySelector('[role="dialog"] textarea').value, '')
+  } finally { await view.close() }
+})
+
+test('Preview BL03 opens BL04 for its selected period and BL04 keeps an empty period empty', async () => {
+  let path = ''
+  const view = mount(PreviewApp, { screenId: 'BL03', navigation: (next) => { path = next } }, 'http://localhost/__ui-preview/BL03')
+  try {
+    await view.render()
+    await view.click([...view.document.querySelectorAll('button')].find((item) => item.textContent === 'Xem dự thảo'))
+    assert.equal(path, '/__ui-preview/BL04?period=2026-09')
+  } finally { await view.close() }
+  const empty = mount(DraftInvoiceListScreen, { data: billingFixtures, initialPeriodId: '2026-08' })
+  try {
+    await empty.render()
+    assert.equal(empty.document.querySelector('select').value, '2026-08')
+    assert.match(empty.document.body.textContent, /Không có dự thảo cho kỳ đã chọn/)
+    assert.equal(empty.document.querySelector('.billing-table tbody'), null)
+  } finally { await empty.close() }
 })
 
 test('Preview BL01–BL03 use AppShell and display sample banner', () => {
@@ -136,6 +210,20 @@ test('BL04 preserves incomplete draft totals and navigates by draft ID', async (
   } finally { await view.close() }
 })
 
+test('BL04 → BL05 keeps a nonfirst draft ID and its stale generation', async () => {
+  let opened = ''
+  const view = mount(DraftInvoiceListScreen, { data: billingFixtures, initialPeriodId: '2026-09', onOpenDraft: (id) => { opened = id } })
+  try {
+    await view.render()
+    await view.click(view.document.querySelectorAll('.billing-table tbody button')[1])
+    assert.equal(opened, 'D-0926-002')
+    const detail = renderToStaticMarkup(React.createElement(DraftInvoiceReviewScreen, { data: billingFixtures, selectedId: opened, canIssue: true }))
+    assert.match(detail, /D-0926-002|Trần Phương Linh/)
+    assert.match(detail, /Generation cũ/)
+    assert.match(detail, /disabled=""/)
+  } finally { await view.close() }
+})
+
 test('BL05 stale generation blocks issue and ready confirmation never creates invoice', async () => {
   const stale = renderToStaticMarkup(React.createElement(DraftInvoiceReviewScreen, { data: billingFixtures, selectedId: 'D-0926-002' }))
   assert.match(stale, /Generation cũ/)
@@ -164,6 +252,49 @@ test('BL06 and BL07 keep outstanding separate from wallet and parent read-only',
   assert.match(detail, /Chưa thực thi/)
   assert.doesNotMatch(detail, /Thao tác nhân sự/)
   assert.match(renderToStaticMarkup(React.createElement(InvoiceDetailScreen, { data: billingFixtures, selectedId: 'missing' })), /Không tìm thấy hóa đơn/)
+})
+
+test('BL06 → BL07 → BL10 preserves a nonfirst invoice ID and student', async () => {
+  let invoiceId = ''
+  const list = mount(IssuedInvoiceListScreen, { data: billingFixtures, onOpenInvoice: (id) => { invoiceId = id } })
+  try {
+    await list.render()
+    await list.click(list.document.querySelectorAll('.billing-table tbody button')[1])
+    assert.equal(invoiceId, 'invoice-thao-vy-0926')
+  } finally { await list.close() }
+  let adjustmentId = ''
+  const detail = mount(InvoiceDetailScreen, { data: billingFixtures, selectedId: invoiceId, canManage: true, onOpenAdjustment: (id) => { adjustmentId = id } })
+  try {
+    await detail.render()
+    assert.match(detail.document.body.textContent, /Trần Thảo Vy/)
+    await detail.click([...detail.document.querySelectorAll('button')].find((button) => button.textContent === 'Yêu cầu điều chỉnh'))
+    assert.equal(adjustmentId, invoiceId)
+    const adjustment = renderToStaticMarkup(React.createElement(InvoiceAdjustmentScreen, { data: billingFixtures, selectedId: adjustmentId, canRequest: true }))
+    assert.match(adjustment, /Trần Thảo Vy|Legacy \/ mixed cần đối soát/)
+    assert.match(adjustment, /disabled=""/)
+  } finally { await detail.close() }
+})
+
+test('BL07 and BL10 show wallet credit only for an approved completed adjustment with recorded amount', () => {
+  const invoice = billingFixtures.invoices[0]
+  const renderHistory = (decision, execution, walletCreditVnd) => {
+    const variant = { ...billingFixtures, invoices: [{ ...invoice, adjustments: [{ ...invoice.adjustments[0], decision, execution, walletCreditVnd }] }] }
+    return [InvoiceDetailScreen, InvoiceAdjustmentScreen].map((Component) => renderToStaticMarkup(React.createElement(Component, { data: variant, selectedId: invoice.id })))
+  }
+  for (const [decision, execution] of [['PENDING_APPROVAL', 'NOT_STARTED'], ['REJECTED', 'NOT_STARTED'], ['APPROVED', 'NOT_STARTED'], ['APPROVED', 'FAILED']]) {
+    for (const html of renderHistory(decision, execution, '100000')) assert.doesNotMatch(html, /Ghi có ví theo biên nhận|Không phát sinh ghi có ví/)
+  }
+  for (const html of renderHistory('APPROVED', 'COMPLETED', '100000')) assert.match(html, /Ghi có ví theo biên nhận:[\s\S]*100\.000/)
+  for (const html of renderHistory('APPROVED', 'COMPLETED', '0')) assert.match(html, /Không phát sinh ghi có ví/)
+  for (const html of renderHistory('APPROVED', 'COMPLETED', undefined)) assert.doesNotMatch(html, /Ghi có ví theo biên nhận|Không phát sinh ghi có ví/)
+  assert.equal(invoice.adjustments[0].execution, 'NOT_STARTED')
+})
+
+test('BL01–BL04 production content uses neutral labels even when scoped data exists', () => {
+  for (const Component of [PriceRulesScreen, SiblingDiscountScreen, BillingPeriodsScreen, DraftInvoiceListScreen]) {
+    const html = renderToStaticMarkup(React.createElement(Component, { data: billingFixtures }))
+    assert.doesNotMatch(html, /Dữ liệu mẫu|dữ liệu mẫu|Cơ sở Quận 1/)
+  }
 })
 
 test('Batch B sample invoice lines and receivables reconcile without using wallet balance', () => {
@@ -260,6 +391,55 @@ test('BL09 separates wallet history, outstanding and legacy; read-only hides mut
   assert.doesNotMatch(parent, /Nạp ví thủ công|Lê Nam Phong/)
 })
 
+test('BL09 opens invoice-free TOP_UP and BL11 with the selected original TOP_UP', async () => {
+  const wallet = billingFixtures.wallets[0]
+  const balance = wallet.availableVnd
+  const view = mount(ReceivablesWalletScreen, { data: billingFixtures, canManage: true })
+  try {
+    await view.render()
+    await view.click([...view.document.querySelectorAll('[role="tab"]')].find((item) => item.textContent === 'Lịch sử ví'))
+    await view.click([...view.document.querySelectorAll('button')].find((item) => item.textContent === 'Nạp ví thủ công'))
+    let dialog = view.document.querySelector('[role="dialog"]')
+    assert.match(dialog.textContent, /không cần hóa đơn/)
+    assert.doesNotMatch(dialog.textContent, /Chọn hóa đơn|INV-2026/)
+    await view.click([...dialog.querySelectorAll('button')].find((item) => item.textContent === 'Đóng'))
+    await view.click(view.document.querySelector('table tbody button.billing-link'))
+    dialog = view.document.querySelector('[role="dialog"]')
+    assert.match(dialog.textContent, /TOP-2026-001/)
+    assert.match(dialog.textContent, /đảo toàn phần/)
+    assert.doesNotMatch(dialog.textContent, /đảo Payment.*Xác nhận/i)
+    assert.equal(wallet.availableVnd, balance)
+  } finally { await view.close() }
+})
+
+test('BL08 and BL11 dialogs receive focus, trap Tab and allow Escape', async () => {
+  for (const [Component, props] of [
+    [TopUpDialog, { wallet: billingFixtures.wallets[0] }],
+    [WalletPaymentDialog, { invoice: billingFixtures.invoices[0], availableVnd: '1200000' }],
+    [TopUpReversalDialog, { wallet: billingFixtures.wallets[0], topUp: billingFixtures.wallets[0].topUps[0], canManage: true }],
+  ]) {
+    let closed = 0
+    const view = mount(Component, { ...props, onClose: () => { closed += 1 } })
+    try {
+      const opener = view.document.createElement('button')
+      view.document.body.append(opener)
+      opener.focus()
+      await view.render()
+      const dialog = view.document.querySelector('[role="dialog"]')
+      const first = dialog.querySelector('input:not(:disabled), textarea:not(:disabled)')
+      assert.equal(view.document.activeElement, first)
+      await act(async () => first.dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })))
+      assert.equal(view.document.activeElement.textContent, 'Đóng')
+      await act(async () => view.document.activeElement.dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })))
+      assert.equal(view.document.activeElement, first)
+      await act(async () => first.dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+      assert.equal(closed, 1)
+      await view.close()
+      assert.equal(view.document.activeElement, opener)
+    } finally { if (view.document.querySelector('[role="dialog"]')) await view.close() }
+  }
+})
+
 test('BL10 keeps approval distinct from execution and blocks legacy mutation', () => {
   const approved = renderToStaticMarkup(React.createElement(InvoiceAdjustmentScreen, { data: billingFixtures, selectedId: 'invoice-hai-dang-0926', canRequest: true }))
   assert.match(approved, /APPROVED/)
@@ -323,20 +503,43 @@ test('BL11 review never removes original TOP_UP or debits wallet locally', async
 test('BL10 preview variants distinguish pending, rejection, execution failure and committed credit', () => {
   const previous = window.location.href
   try {
-    for (const [state, expected] of [['pending', 'Chờ duyệt thủ công'], ['rejected', 'Yêu cầu bị từ chối'], ['failed', 'Thực thi lỗi'], ['completed-credit', 'Credit ví theo receipt']]) {
+    for (const [state, expected] of [['pending', 'Chờ duyệt thủ công'], ['rejected', 'Yêu cầu bị từ chối'], ['failed', 'Thực thi lỗi'], ['completed-credit', 'Ghi có ví theo biên nhận']]) {
       window.history.replaceState(null, '', `/__ui-preview/BL10?state=${state}`)
       const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' }))
       assert.match(html, new RegExp(expected))
-      if (state === 'failed') assert.doesNotMatch(html, /Credit ví theo receipt/)
+      if (state === 'failed') assert.doesNotMatch(html, /Ghi có ví theo biên nhận/)
       if (state === 'completed-credit') assert.match(html, /100\.000/)
     }
     window.history.replaceState(null, '', '/__ui-preview/BL10?state=stale')
     assert.match(renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' })), /Payment đã thay đổi/)
     window.history.replaceState(null, '', '/__ui-preview/BL10?invoiceId=invoice-mai-an-0926')
     const noCredit = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' }))
-    assert.match(noCredit, /Không phát sinh credit ví/)
-    assert.doesNotMatch(noCredit, /Credit ví theo receipt/)
+    assert.match(noCredit, /Không phát sinh ghi có ví/)
+    assert.doesNotMatch(noCredit, /Ghi có ví theo biên nhận/)
   } finally { window.history.replaceState(null, '', previous) }
+})
+
+test('BL07 and BL10 Preview show the same adjustment state and preserve invoice navigation', async () => {
+  const previous = window.location.href
+  try {
+    for (const [state, expected] of [['failed', 'Thực thi thất bại'], ['completed-credit', 'Ghi có ví theo biên nhận']]) {
+      window.history.replaceState(null, '', `/__ui-preview/BL07?invoiceId=invoice-hai-dang-0926&state=${state}`)
+      const detail = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL07' }))
+      assert.match(detail, new RegExp(expected))
+      if (state === 'failed') assert.doesNotMatch(detail, /Ghi có ví theo biên nhận/)
+      window.history.replaceState(null, '', `/__ui-preview/BL10?invoiceId=invoice-hai-dang-0926&state=${state}`)
+      const adjustment = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' }))
+      assert.match(adjustment, /Nguyễn Hải Đăng/)
+      assert.match(adjustment, state === 'failed' ? /Thực thi lỗi/ : /Ghi có ví theo biên nhận/)
+    }
+  } finally { window.history.replaceState(null, '', previous) }
+  let path = ''
+  const view = mount(PreviewApp, { screenId: 'BL07', navigation: (next) => { path = next } }, 'http://localhost/__ui-preview/BL07?invoiceId=invoice-hai-dang-0926&state=failed')
+  try {
+    await view.render()
+    await view.click([...view.document.querySelectorAll('button')].find((item) => item.textContent === 'Yêu cầu điều chỉnh'))
+    assert.equal(path, '/__ui-preview/BL10?invoiceId=invoice-hai-dang-0926&state=failed')
+  } finally { await view.close() }
 })
 
 test('BL11 forbidden hides wallet details and pending or failed execution cannot request reversal', () => {
@@ -363,6 +566,33 @@ test('wallet fixture ledger reconciles exactly with available VND string', () =>
     assert.equal(total, BigInt(wallet.availableVnd))
   }
   assert.equal(billingFixtures.legacyReconciliations.reduce((sum, item) => sum + BigInt(item.amountVnd), 0n), BigInt(billingFixtures.legacyReconciliationVnd))
+})
+
+test('Billing fixture IDs keep period, generation, payment and reversal relationships coherent', () => {
+  const periods = new Set(billingFixtures.periods.map((item) => item.id))
+  const generations = new Map(billingFixtures.generations.map((item) => [item.id, item]))
+  const wallets = new Map(billingFixtures.wallets.map((item) => [item.studentId, item]))
+  for (const draft of billingFixtures.drafts) {
+    assert.ok(periods.has(draft.period))
+    assert.equal(generations.get(draft.generationId)?.period, draft.period)
+    assert.equal(generations.get(draft.currentGenerationId)?.period, draft.period)
+  }
+  for (const invoice of billingFixtures.invoices) {
+    assert.ok(periods.has(invoice.period))
+    assert.equal(generations.get(invoice.generationId)?.period, invoice.period)
+    assert.equal(invoice.payments.filter((item) => item.status === 'APPLIED').reduce((sum, item) => sum + BigInt(item.allocatedVnd), 0n), BigInt(invoice.allocatedVnd))
+    if (invoice.sourceType === 'PURE_WALLET') assert.equal(wallets.get(invoice.studentId)?.availableVnd, invoice.walletAvailableVnd)
+    for (const adjustment of invoice.adjustments) if (adjustment.walletCreditVnd !== undefined) assert.equal(adjustment.execution, 'COMPLETED')
+  }
+  for (const wallet of billingFixtures.wallets) {
+    for (const topUp of wallet.topUps) {
+      assert.equal(topUp.studentId, wallet.studentId)
+      assert.ok(wallet.transactions.some((entry) => entry.kind === 'TOP_UP' && entry.sourceRef === topUp.receiptRef && BigInt(entry.signedAmountVnd) === BigInt(topUp.amountVnd)))
+      const reversals = wallet.transactions.filter((entry) => entry.kind === 'TOP_UP_REVERSAL' && entry.sourceRef === topUp.id)
+      assert.equal(reversals.length, topUp.status === 'REVERSED' ? 1 : 0)
+      if (reversals.length) assert.equal(BigInt(reversals[0].signedAmountVnd), -BigInt(topUp.amountVnd))
+    }
+  }
 })
 
 test('Preview BL08–BL11 use the real host and keep fixtures development-only', () => {

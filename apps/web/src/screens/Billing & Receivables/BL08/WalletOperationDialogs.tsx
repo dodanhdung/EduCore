@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { BillingInvoice, StudentWallet } from '../BillingTypes.ts'
 import { BillingBadge, MoneyVnd, PendingNotice } from '../BillingPrimitives.tsx'
+import { useBillingDialogFocus } from '../useBillingDialogFocus.ts'
 import '../BillingScreens.css'
 
 export type WalletFeedback = 'duplicate' | 'concurrent' | 'unknown' | 'forbidden'
@@ -15,6 +16,7 @@ const feedbackText = {
 function validPositiveVnd(value: string) { return /^\d+$/.test(value) && BigInt(value) > 0n }
 
 export function TopUpDialog({ wallet, onClose, feedback }: { wallet: StudentWallet; onClose: () => void; feedback?: WalletFeedback }) {
+  const dialogRef = useBillingDialogFocus(onClose)
   const [amount, setAmount] = useState('')
   const [source, setSource] = useState<'CASH' | 'BANK_TRANSFER'>('BANK_TRANSFER')
   const [receivedAt, setReceivedAt] = useState('')
@@ -23,7 +25,7 @@ export function TopUpDialog({ wallet, onClose, feedback }: { wallet: StudentWall
   const [verified, setVerified] = useState(false)
   const [step, setStep] = useState<'form' | 'review' | 'pending'>('form')
   const ready = validPositiveVnd(amount) && receivedAt !== '' && receiptRef.trim() !== '' && evidence.trim() !== '' && verified && !feedback
-  return <div className="billing-dialog-backdrop" data-screen-id="BL08"><section className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="topup-title">
+  return <div className="billing-dialog-backdrop" data-screen-id="BL08"><section ref={dialogRef} tabIndex={-1} className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="topup-title">
     <h2 id="topup-title">Nạp ví học phí thủ công</h2><p className="billing-muted">{wallet.studentName} · {wallet.studentId} · không cần hóa đơn</p>
     <p className="billing-inline-info">Số dư hiện tại: <MoneyVnd value={wallet.availableVnd} /></p>
     {feedback && <p role="alert" className="billing-error">{feedbackText[feedback]}</p>}
@@ -34,6 +36,7 @@ export function TopUpDialog({ wallet, onClose, feedback }: { wallet: StudentWall
 }
 
 export function WalletPaymentDialog({ invoice, availableVnd, onClose, feedback }: { invoice: BillingInvoice; availableVnd: string; onClose: () => void; feedback?: WalletFeedback }) {
+  const dialogRef = useBillingDialogFocus(onClose)
   const [amount, setAmount] = useState('')
   const [reference, setReference] = useState('')
   const [step, setStep] = useState<'form' | 'review' | 'pending'>('form')
@@ -42,7 +45,7 @@ export function WalletPaymentDialog({ invoice, availableVnd, onClose, feedback }
   const tooMuchWallet = positive && BigInt(amount) > BigInt(availableVnd)
   const tooMuchDebt = positive && BigInt(amount) > BigInt(invoice.outstandingVnd)
   const ready = eligible && positive && !tooMuchWallet && !tooMuchDebt && !feedback
-  return <div className="billing-dialog-backdrop" data-screen-id="BL08"><section className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="wallet-payment-title">
+  return <div className="billing-dialog-backdrop" data-screen-id="BL08"><section ref={dialogRef} tabIndex={-1} className="billing-dialog" role="dialog" aria-modal="true" aria-labelledby="wallet-payment-title">
     <h2 id="wallet-payment-title">Trả hóa đơn bằng ví</h2><p className="billing-muted">{invoice.number} · {invoice.studentName}</p>
     <div className="billing-operation-summary"><p>Còn phải thu: <strong><MoneyVnd value={invoice.outstandingVnd} /></strong></p><p>Ví khả dụng: <strong><MoneyVnd value={availableVnd} /></strong></p></div>
     {!eligible && <p role="alert" className="billing-error">Chỉ hóa đơn ISSUED nguồn Wallet, còn công nợ, mới đủ điều kiện.</p>}
