@@ -19,6 +19,6 @@ Nguồn: Page `65:5` của file `xEdI4S3TJU0mKqQYUSPZhp`, kiểm tra metadata ng
 ## Phạm vi thực hiện
 
 - Batch A: BL01–BL03. Các màn dùng dữ liệu từ `billingFixtures.ts` chỉ trong UI Preview. Production chưa có API tài chính, nên hiển thị trạng thái chờ dữ liệu.
-- BL04–BL07: đã triển khai React trong Batch B; các biến thể là trạng thái của cùng entry component. BL08–BL11: đã có UI Batch C; BL08/BL11 nhúng, không có business route độc lập. Payment reversal vẫn NEEDS_DECISION, không có biểu mẫu hoặc route thực thi.
+- BL04–BL07: đã triển khai React trong Batch B; các biến thể là trạng thái của cùng entry component. BL08–BL11: đã có UI Batch C; BL10–BL11 được bổ sung trạng thái preview và kiểm tra ranh giới trong Batch D. BL08/BL11 nhúng, không có business route độc lập. Payment reversal vẫn NEEDS_DECISION, không có biểu mẫu hoặc route thực thi.
 - `APPROVED` và `COMPLETED` là trạng thái khác nhau. Payment reversal chưa có hợp đồng kỹ thuật được duyệt.
 

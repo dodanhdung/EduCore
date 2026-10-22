@@ -320,6 +320,43 @@ test('BL11 review never removes original TOP_UP or debits wallet locally', async
   } finally { await view.close() }
 })
 
+test('BL10 preview variants distinguish pending, rejection, execution failure and committed credit', () => {
+  const previous = window.location.href
+  try {
+    for (const [state, expected] of [['pending', 'Chờ duyệt thủ công'], ['rejected', 'Yêu cầu bị từ chối'], ['failed', 'Thực thi lỗi'], ['completed-credit', 'Credit ví theo receipt']]) {
+      window.history.replaceState(null, '', `/__ui-preview/BL10?state=${state}`)
+      const html = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' }))
+      assert.match(html, new RegExp(expected))
+      if (state === 'failed') assert.doesNotMatch(html, /Credit ví theo receipt/)
+      if (state === 'completed-credit') assert.match(html, /100\.000/)
+    }
+    window.history.replaceState(null, '', '/__ui-preview/BL10?state=stale')
+    assert.match(renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' })), /Payment đã thay đổi/)
+    window.history.replaceState(null, '', '/__ui-preview/BL10?invoiceId=invoice-mai-an-0926')
+    const noCredit = renderToStaticMarkup(React.createElement(PreviewApp, { screenId: 'BL10' }))
+    assert.match(noCredit, /Không phát sinh credit ví/)
+    assert.doesNotMatch(noCredit, /Credit ví theo receipt/)
+  } finally { window.history.replaceState(null, '', previous) }
+})
+
+test('BL11 forbidden hides wallet details and pending or failed execution cannot request reversal', () => {
+  const wallet = billingFixtures.wallets[0]
+  const topUp = wallet.topUps[0]
+  const forbidden = renderToStaticMarkup(React.createElement(TopUpReversalDialog, { wallet, topUp, canManage: false, onClose: () => undefined }))
+  assert.match(forbidden, /student-tenant scope/)
+  assert.doesNotMatch(forbidden, /TOP-2026-001|CK-1003-HD-01|1\.200\.000/)
+  for (const executionFeedback of ['PENDING', 'FAILED']) {
+    const html = renderToStaticMarkup(React.createElement(TopUpReversalDialog, { wallet, topUp, canManage: true, executionFeedback, onClose: () => undefined }))
+    assert.match(html, /disabled=""/)
+    assert.match(html, executionFeedback === 'FAILED' ? /Chưa có giao dịch bù hoàn tất/ : /đang chờ receipt máy chủ/)
+  }
+  const legacy = renderToStaticMarkup(React.createElement(TopUpReversalDialog, { wallet, topUp, canManage: true, reconciliationBlocked: true, onClose: () => undefined }))
+  assert.match(legacy, /legacy \/ mixed đang chờ chính sách đối soát/)
+  assert.match(legacy, /disabled=""/)
+  assert.equal(wallet.availableVnd, '1200000')
+  assert.equal(topUp.status, 'COMPLETED')
+})
+
 test('wallet fixture ledger reconciles exactly with available VND string', () => {
   for (const wallet of billingFixtures.wallets) {
     const total = wallet.transactions.reduce((sum, item) => sum + BigInt(item.signedAmountVnd), 0n)

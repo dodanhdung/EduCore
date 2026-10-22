@@ -1,4 +1,4 @@
-# Billing & Receivables — Batch A + B + C review
+# Billing & Receivables — Batch A–D review
 
 Trạng thái: **BILLING_UI_PARTIAL**. Đã có UI BL01–BL11; tích hợp finance API và quyết định kỹ thuật Payment reversal còn chờ. Ánh xạ 88 frame Figma nằm trong [FIGMA_FRAME_MAP.md](FIGMA_FRAME_MAP.md). Page được xác nhận là `65:5 — F. Billing & Receivables`.
 
@@ -24,6 +24,12 @@ Trạng thái: **BILLING_UI_PARTIAL**. Đã có UI BL01–BL11; tích hợp fina
 | BL09 | Người xem được API cấp đúng scope | Route sẵn có; chọn ví student, mở invoice bằng ID | No debt, zero balance, lịch sử rỗng, overdue/partial, legacy cần đối soát; ví không trừ công nợ, credit không cộng tiền nhận mới |
 | BL10 | Staff có quyền yêu cầu; người không có quyền chỉ xem | Route sẵn có với invoiceId; snapshot và history theo ID | Invalid/legacy/cancelled blocked; local review chỉ dẫn `PENDING_API`; APPROVED khác COMPLETED, lỗi thực thi không báo hoàn tiền |
 | BL11 | Staff có quyền đúng ví/student | Dialog từ TOP_UP gốc trong BL09; không route | Full-only, thiếu balance/đã đảo/chưa quyền blocked; Payment reversal chỉ ghi `NEEDS_DECISION`, không có form/route |
+
+## Hoàn thiện Batch D — BL10/BL11
+
+- BL10 hiển thị riêng trạng thái mới nhất `PENDING_APPROVAL`, `REJECTED`, `APPROVED/NOT_STARTED`, `APPROVED/FAILED`, `COMPLETED`; trạng thái Payment đổi chặn gửi từ snapshot cũ. Preview có trường hợp completed với credit nội bộ 100.000 ₫ và trường hợp hủy không phát sinh credit. Số liệu completed chỉ thuộc fixture có receipt mẫu; UI nhập liệu không tự tính hoặc ghi ví.
+- BL11 hiển thị trạng thái đang xử lý, thực thi lỗi và legacy/mixed chờ đối soát, chặn gửi tiếp; khi không có permission/scope, dialog không lộ số dư, TOP_UP hoặc biên nhận. Bản gốc và giao dịch bù vẫn tách trong lịch sử ví; Payment reversal còn `NEEDS_DECISION`.
+- Biến thể cùng ID chỉ dùng query `state` trong `/__ui-preview/BL10` và `/__ui-preview/BL11`, không tạo route nghiệp vụ mới. Mọi trạng thái và copy bổ sung là **PROPOSED UI** cần owner review; backend vẫn là nguồn quyền, số liệu và kết quả cuối cùng.
 
 **PROPOSED UI:** vị trí các dialog, tab, copy pending và dạng cảnh báo chờ owner review theo từng màn. Dữ liệu preview được gắn nhãn mẫu, chỉ có ở `import.meta.env.DEV`. Production chưa có finance read/permission API nên fail closed và không nhập fixture. Các nút xác nhận chỉ đổi bước local sang `PENDING_API`; kết quả, số dư, nghĩa vụ, receipt và audit phải do máy chủ trả.
 
@@ -58,3 +64,7 @@ Trạng thái: **BILLING_UI_PARTIAL**. Đã có UI BL01–BL11; tích hợp fina
 ## Nguồn Batch C
 
 `SCREEN_MAP.md` BL08–BL11; `SCREEN_SPECIFICATIONS.md` bốn card tương ứng; `SCREEN_FLOWS.md` F05/F07; Requirements v5.1 Wallet B1–B5, BR-08/11/12/14; Usecase v1.3 UC-25/26/34; Figma frame 67:5182, 109:2, 67:4642, 67:5367, 67:5910 cùng biến thể trong frame map. Q1–Q8 kỹ thuật Wallet và Payment reversal còn chờ quyết định, không được coi là API đã duyệt.
+
+## Nguồn Batch D
+
+`PROJECT_CONTEXT.md` §10; `SCREEN_MAP.md` BL10–BL11; `SCREEN_SPECIFICATIONS.md` hai card tương ứng; `SCREEN_FLOWS.md` F05/F07; Requirements v5.1 BR-08/11/12/14; Usecase v1.3 UC-25/26/34; Figma BL10 67:5367/11354/11517/11680, BL11 67:5910/11996/12145 và biến thể trong frame map. Không suy ra contract API từ Figma.
