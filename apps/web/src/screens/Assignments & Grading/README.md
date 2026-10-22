@@ -18,4 +18,8 @@ Trạng thái loading/empty/error/not-found có mặt trên danh sách và chi t
 
 `NEEDS_SLICE_REVIEW`: Q-11 nói nộp lại trước khi chấm/công bố, Detailed Design đề xuất khóa khi có nháp điểm. UI hiển thị sự chưa thống nhất và chờ contract backend phê duyệt.
 
-Thiếu tích hợp API, kiểm tra trực quan bằng trình duyệt ở 320/390/768/1440 px và đối chiếu ảnh Figma thực tế; Figma được đọc, không chỉnh sửa.
+**PROPOSED để chủ sở hữu review:** AS01 dùng cửa sổ 72 giờ theo thời điểm tuyệt đối để trình bày KPI “Sắp đến hạn”. Spec chưa định nghĩa khoảng này; đây không phải chính sách nhắc hạn hay thông báo. Preview cấp đồng hồ mẫu cố định; nếu không có mốc thời gian, KPI hiển thị “—”. ISO deadline có offset nên so sánh instant không phụ thuộc timezone máy người xem.
+
+AS02 tạo mới với các trường trống. Chế độ sửa chỉ dùng assignment ID được chọn; bài đã giao có bài nộp bị khóa chỉnh sửa cục bộ cho đến khi có biện pháp bảo vệ được duyệt. Số người nhận chỉ lấy từ roster tường minh trong dữ liệu màn hình; fixture Preview có roster minh họa, còn thiếu roster thì báo chưa xác minh. Backend vẫn phải xác nhận người nhận cuối cùng. AS05 và AS07 gắn state chỉnh sửa tạm với submission ID hoặc cặp student/assignment ID, không ghi ngược vào fixture.
+
+Thiếu tích hợp API; Figma được đọc trong lượt triển khai ban đầu, không chỉnh sửa trong lượt sửa này.

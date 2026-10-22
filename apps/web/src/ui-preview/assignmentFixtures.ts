@@ -3,6 +3,10 @@ import type { AssignmentData } from '../screens/Assignments & Grading/Assignment
 export const assignmentFixtures: AssignmentData = {
   teacherId: 'teacher-mai', studentId: 'student-minh-anh', sampleNow: '2026-10-17T12:00:00+07:00',
   studentNames: { 'student-minh-anh': 'Trần Minh Anh', 'student-gia-han': 'Nguyễn Gia Hân', 'student-bao-ngoc': 'Trần Bảo Ngọc', 'student-my-linh': 'Lê Mỹ Linh' },
+  classRosters: {
+    'class-toan-8a': { studentIds: ['student-minh-anh', 'student-gia-han', 'student-bao-ngoc', 'student-my-linh'] },
+    'class-toan-8b': { studentIds: ['student-minh-anh', 'student-my-linh'] },
+  },
   assignments: [
     { id: 'assignment-chuong-3', title: 'Bài tập chương 3: Phương trình', description: 'Hoàn thành câu 1–10, trình bày lời giải và tải tệp PDF hoặc DOCX.', classId: 'class-toan-8a', className: 'Toán 8A', teacherId: 'teacher-mai', teacherName: 'Cô Mai Nguyễn', recipientIds: ['student-minh-anh', 'student-gia-han', 'student-bao-ngoc'], deadline: '2026-10-20T23:59:00+07:00', priority: 4, status: 'PUBLISHED', attachmentNames: ['de-bai-chuong-3.pdf'] },
     { id: 'assignment-hinh-hoc', title: 'Ôn tập hình học', description: 'Làm bài tập về tam giác và đường tròn.', classId: 'class-toan-8b', className: 'Toán 8B', teacherId: 'teacher-mai', teacherName: 'Cô Mai Nguyễn', recipientIds: ['student-minh-anh', 'student-my-linh'], deadline: '2026-10-17T23:59:00+07:00', priority: 3, status: 'PUBLISHED' },

@@ -8,13 +8,20 @@ export type Submission = {
   id: string; assignmentId: string; studentId: string; studentName: string;
   versions: SubmissionVersion[]; grade?: { status: 'DRAFT' | 'PUBLISHED'; score: number; feedback: string }
 }
-export type AssignmentData = { assignments: Assignment[]; submissions: Submission[]; studentNames?: Record<string, string>; sampleNow?: string; studentId?: string; teacherId?: string }
+export type AssignmentData = { assignments: Assignment[]; submissions: Submission[]; studentNames?: Record<string, string>; classRosters?: Record<string, { studentIds: string[] }>; sampleNow?: string; studentId?: string; teacherId?: string }
 
 export const assignmentFor = (data: AssignmentData | undefined, id: string | undefined) => data?.assignments.find((item) => item.id === id)
 export const submissionFor = (data: AssignmentData | undefined, id: string | undefined) => data?.submissions.find((item) => item.id === id)
 export const latestVersion = (submission: Submission) => submission.versions.at(-1)
 export const studentAssignments = (data: AssignmentData, studentId: string) => data.assignments.filter((item) => item.status !== 'DRAFT' && item.recipientIds.includes(studentId))
 export const validScore = (value: string) => /^(?:\d|10)(?:\.\d)?$/.test(value) && Number(value) >= 0 && Number(value) <= 10
+
+// Presentation-only 72-hour window; this is not an assignment or notification policy.
+export function upcomingDeadlineCount(items: Assignment[], referenceTime?: string) {
+  if (!referenceTime || !Number.isFinite(Date.parse(referenceTime))) return undefined
+  const now = Date.parse(referenceTime)
+  return items.filter((item) => item.status === 'PUBLISHED' && Number.isFinite(Date.parse(item.deadline)) && Date.parse(item.deadline) >= now && Date.parse(item.deadline) <= now + 72 * 60 * 60 * 1000).length
+}
 
 const allowedMime: Record<string, string[]> = {
   pdf: ['application/pdf'], docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
