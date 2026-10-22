@@ -10,6 +10,19 @@ export function MyAssignmentDetailScreen({ data, selectedId, studentId, state, o
   return <StudentAssignmentContent key={`${studentId}:${item.id}`} data={data} item={item} studentId={studentId} state={state} onBack={onBack} />
 }
 
+// Presentation for a child-scoped projection. The caller must obtain that projection from an authorized source.
+export function ParentAssignmentDetailScreen({ data, selectedId, studentId, scopedStudentId, onBack }: { data?: AssignmentData; selectedId?: string; studentId?: string; scopedStudentId?: string; onBack?: () => void }) {
+  const item = assignmentFor(data, selectedId)
+  if (!data || !studentId || studentId !== scopedStudentId || !item || item.status === 'DRAFT' || !item.recipientIds.includes(studentId)) return <Page title="Bài tập của con"><State kind="not-found" /></Page>
+  const submission = data.submissions.find((entry) => entry.assignmentId === item.id && entry.studentId === studentId)
+  const grade = submission?.grade?.status === 'PUBLISHED' ? submission.grade : undefined
+  return <Page title="Bài tập của con" subtitle={`${item.title} · ${item.className} · Chỉ xem`} action={onBack && <Button onClick={onBack} secondary>Thông tin học tập</Button>}>
+    <Card title={item.title} subtitle={`Hạn nộp ${new Date(item.deadline).toLocaleString('vi-VN')}`}><p>{item.description}</p><Badge tone={submission ? 'success' : 'warning'}>{submission ? 'Đã nộp' : 'Chưa nộp'}</Badge></Card>
+    {grade ? <Card title="Kết quả đã công bố"><strong>{grade.score}/10</strong><p>{grade.feedback}</p></Card> : <Notice>Chưa có kết quả được công bố.</Notice>}
+    <Card title="Lịch sử bài nộp">{submission?.versions.length ? <ul className="as-list">{[...submission.versions].reverse().map((version) => <li key={version.number}><strong>v{version.number}</strong> · {new Date(version.submittedAt).toLocaleString('vi-VN')} · {version.files.length} tệp{version.late && <Badge tone="warning">Nộp muộn</Badge>}<div>{version.files.map((file) => <span key={file.name}>{file.name}<br /></span>)}</div></li>)}</ul> : <p>Chưa có phiên bản nộp bài.</p>}</Card>
+  </Page>
+}
+
 function StudentAssignmentContent({ data, item, studentId, state, onBack }: { data: AssignmentData; item: Assignment; studentId: string; state?: string; onBack?: () => void }) {
   const [files, setFiles] = useState<File[]>([]), [errors, setErrors] = useState<string[]>(state === 'upload-error' ? ['Tệp .zip không được hỗ trợ. Chọn PDF, DOCX, JPG hoặc PNG.'] : []), [message, setMessage] = useState('')
   const submission = data.submissions.find((sub) => sub.assignmentId === item.id && sub.studentId === studentId)

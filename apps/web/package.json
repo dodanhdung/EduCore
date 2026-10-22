@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types --test src/foundation.test.mjs \"src/screens/Authentication & Shared/AU01/login.test.mjs\" \"src/screens/Authentication & Shared/batch.test.mjs\" \"src/screens/Academic Management/academic.test.mjs\" \"src/screens/Scheduling & Resources/scheduling.test.mjs\" \"src/screens/Attendance & Leave/attendance.test.mjs\" \"src/screens/Billing & Receivables/billing.test.mjs\" \"src/screens/Assignments & Grading/assignments.test.mjs\"",
+    "test": "node --experimental-strip-types --test src/foundation.test.mjs \"src/screens/Authentication & Shared/AU01/login.test.mjs\" \"src/screens/Authentication & Shared/batch.test.mjs\" \"src/screens/Academic Management/academic.test.mjs\" \"src/screens/Scheduling & Resources/scheduling.test.mjs\" \"src/screens/Attendance & Leave/attendance.test.mjs\" \"src/screens/Billing & Receivables/billing.test.mjs\" \"src/screens/Assignments & Grading/assignments.test.mjs\" \"src/screens/Role Portals/portals.test.mjs\"",
     "preview": "vite preview"
   },
   "dependencies": {

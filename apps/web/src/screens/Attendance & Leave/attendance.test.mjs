@@ -137,9 +137,38 @@ test('AT03 parent switch recalculates sessions and ambiguous time stays unavaila
     await change(view, studentSelect, 'HS-1031')
     assert.deepEqual([...sessionSelect.options].map((option) => option.value), [''])
     assert.match(view.document.body.textContent, /Chưa xác định thời gian buổi/)
-    await change(view, studentSelect, 'HS-1042')
-    assert.deepEqual([...sessionSelect.options].map((option) => option.value), ['', 'valid'])
+    await change(view, view.document.querySelectorAll('select')[0], 'HS-1042')
+    assert.deepEqual([...view.document.querySelectorAll('select')[1].options].map((option) => option.value), ['', 'valid'])
     assert.doesNotMatch(view.document.body.textContent, /Chưa xác định thời gian buổi/)
+  } finally { await view.close() }
+})
+
+test('AT03 đổi con và người xem trên cùng React root xóa toàn bộ đơn nháp', async () => {
+  const data = formData([sessionAt('2026-10-22', '15:00', 'shared')], '2026-10-21T08:00:00+07:00', {
+    linkedChildIds: ['HS-1031', 'HS-1042'], rosters: { shared: ['HS-1031', 'HS-1042'] },
+  })
+  const props = { data, role: 'parent', viewerId: 'parent-a', tenantId: 'tenant-a' }
+  const view = mount(LeaveRequestFormScreen, props)
+  const button = (label) => [...view.document.querySelectorAll('button')].find((item) => item.textContent === label)
+  try {
+    await view.render()
+    await change(view, view.document.querySelectorAll('select')[0], 'HS-1031')
+    await change(view, view.document.querySelectorAll('select')[1], 'shared')
+    await change(view, view.document.querySelector('textarea'), 'Lý do riêng của con A')
+    await click(view, button('Xem lại đơn'))
+    await click(view, button('Gửi đơn xin nghỉ'))
+    assert.match(view.document.body.textContent, /Gửi đơn đang chờ API/)
+    await change(view, view.document.querySelectorAll('select')[0], 'HS-1042')
+    assert.equal(view.document.querySelectorAll('select')[0].value, 'HS-1042')
+    assert.equal(view.document.querySelectorAll('select')[1].value, '')
+    assert.equal(view.document.querySelector('textarea').value, '')
+    assert.doesNotMatch(view.document.body.textContent, /Lý do riêng của con A|Xem lại trước khi gửi|Gửi đơn đang chờ API/)
+    await click(view, button('Xem lại đơn'))
+    assert.match(view.document.body.textContent, /Vui lòng chọn học sinh và buổi học hợp lệ/)
+    await view.rerender({ ...props, viewerId: 'parent-b', initialStudentId: 'HS-1042' })
+    assert.equal(view.document.querySelector('textarea').value, '')
+    assert.equal(view.document.querySelectorAll('select')[1].value, '')
+    assert.doesNotMatch(view.document.body.textContent, /Vui lòng chọn học sinh và buổi học hợp lệ|Xem lại trước khi gửi|Gửi đơn đang chờ API/)
   } finally { await view.close() }
 })
 
