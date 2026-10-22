@@ -41,6 +41,12 @@ import { GradingQueueScreen } from './screens/Assignments & Grading/AS04/Grading
 import { GradeSubmissionScreen } from './screens/Assignments & Grading/AS05/GradeSubmissionScreen.tsx'
 import { MyAssignmentsScreen } from './screens/Assignments & Grading/AS06/MyAssignmentsScreen.tsx'
 import { MyAssignmentDetailScreen } from './screens/Assignments & Grading/AS07/MyAssignmentDetailScreen.tsx'
+import { TeacherHomeScreen } from './screens/Role Portals/PO01/TeacherHomeScreen.tsx'
+import { StudentHomeScreen } from './screens/Role Portals/PO02/StudentHomeScreen.tsx'
+import { ParentHomeScreen } from './screens/Role Portals/PO03/ParentHomeScreen.tsx'
+import { ChildLearningScreen } from './screens/Role Portals/PO04/ChildLearningScreen.tsx'
+import { MyBillingScreen } from './screens/Role Portals/PO05/MyBillingScreen.tsx'
+import { portalPath } from './screens/Role Portals/PortalNavigation.ts'
 import './App.css'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
@@ -165,6 +171,11 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'AS05' ? <GradeSubmissionScreen selectedId={result.params.submissionId} onBack={() => navigate(tenantPath(tenant.id, '/teaching/grading'))} />
       : result.route.id === 'AS06' ? <MyAssignmentsScreen onOpen={(id) => navigate(tenantPath(tenant.id, `/my/assignments/${encodeURIComponent(id)}`))} />
       : result.route.id === 'AS07' ? <MyAssignmentDetailScreen selectedId={result.params.assignmentId} onBack={() => navigate(tenantPath(tenant.id, '/my/assignments'))} />
+      : result.route.id === 'PO01' ? <TeacherHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO02' ? <StudentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
