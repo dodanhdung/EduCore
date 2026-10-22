@@ -8,6 +8,7 @@ import type { AttendanceData } from '../screens/Attendance & Leave/AttendanceTyp
 
 // Explicit verified relationships for UI Preview only. These are not production grants.
 export const portalFixtures: PortalData = {
+  scope: { viewerId: 'parent-demo', tenantId: 'demo-hcm-01' },
   sampleNow: '2026-10-17T07:00:00+07:00', timeZone: 'Asia/Ho_Chi_Minh',
   teacherId: 'teacher-mai', teacherName: 'Cô Mai Nguyễn', studentId: 'student-minh-anh', studentName: 'Trần Minh Anh',
   links: [

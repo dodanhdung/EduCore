@@ -173,9 +173,9 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'AS07' ? <MyAssignmentDetailScreen selectedId={result.params.assignmentId} onBack={() => navigate(tenantPath(tenant.id, '/my/assignments'))} />
       : result.route.id === 'PO01' ? <TeacherHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
       : result.route.id === 'PO02' ? <StudentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
-      : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} viewerId={session?.principal.id} tenantId={tenant.id} />
       : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
-      : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
+      : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
