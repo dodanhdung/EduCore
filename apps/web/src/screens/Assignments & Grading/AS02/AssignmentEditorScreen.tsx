@@ -1,0 +1,27 @@
+import { useEffect, useState } from 'react'
+import type { AssignmentData } from '../AssignmentTypes.ts'
+import { Button, Card, Dialog, Notice, Page } from '../AssignmentPrimitives.tsx'
+
+export function AssignmentEditorScreen({ data, initialState, onBack }: { data?: AssignmentData; initialState?: string; onBack?: () => void }) {
+  const classes = [...new Map((data?.assignments.filter((item) => item.teacherId === data.teacherId) ?? []).map((item) => [item.classId, item.className])).entries()]
+  const [title, setTitle] = useState(data && initialState !== 'validation' ? 'Bài tập chương 3: Phương trình' : '')
+  const [description, setDescription] = useState(data && initialState !== 'validation' ? 'Hoàn thành câu 1–10, trình bày lời giải trong tệp đính kèm.' : '')
+  const [classId, setClassId] = useState(initialState === 'validation' ? '' : (classes[0]?.[0] ?? ''))
+  const [deadline, setDeadline] = useState(data && initialState !== 'validation' ? '2026-10-20T23:59' : '')
+  const [priority, setPriority] = useState('4'), [files, setFiles] = useState<File[]>([])
+  const [review, setReview] = useState(false), [dirty, setDirty] = useState(false), [showErrors, setShowErrors] = useState(initialState === 'validation')
+  const [message, setMessage] = useState('')
+  const selected = data?.assignments.find((item) => item.classId === classId)
+  const errors = { title: !title.trim(), description: !description.trim(), classId: !classId, deadline: !deadline, priority: !/^[1-5]$/.test(priority) }
+  const valid = !Object.values(errors).some(Boolean)
+  useEffect(() => { if (!dirty) return; const before = (event: BeforeUnloadEvent) => { event.preventDefault() }; window.addEventListener('beforeunload', before); return () => window.removeEventListener('beforeunload', before) }, [dirty])
+  const reviewPublish = () => { setShowErrors(true); if (valid) setReview(true) }
+  const saveDraft = () => { setShowErrors(true); if (valid) setMessage('PENDING_API: Chưa lưu bản nháp. Kết nối dịch vụ nghiệp vụ để hoàn tất.') }
+  return <Page title={initialState === 'published' ? 'Chỉnh sửa bài đã giao' : 'Tạo & giao bài tập'} subtitle="Lưu nháp và xuất bản là hai thao tác riêng." action={<Button onClick={reviewPublish}>Xem lại trước khi xuất bản</Button>}>
+    {initialState === 'published' && <Notice>Không thể sửa nội dung đã có bài nộp hoặc rút ngắn hạn nộp nếu chưa có biện pháp bảo vệ được phê duyệt. PENDING_API.</Notice>}
+    <Card title="Nội dung và thời hạn"><div className="as-grid two"><label className="as-field">Tiêu đề *<input value={title} onChange={(e) => { setTitle(e.target.value); setDirty(true) }} aria-invalid={showErrors && errors.title} />{showErrors && errors.title && <span className="as-error">Cần nhập tiêu đề.</span>}</label><label className="as-field">Lớp phụ trách *<select value={classId} onChange={(e) => { setClassId(e.target.value); setDirty(true) }} aria-invalid={showErrors && errors.classId}><option value="">Chọn lớp</option>{classes.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>{showErrors && errors.classId && <span className="as-error">Cần chọn lớp.</span>}</label></div><label className="as-field">Mô tả & yêu cầu *<textarea value={description} onChange={(e) => { setDescription(e.target.value); setDirty(true) }} aria-invalid={showErrors && errors.description} />{showErrors && errors.description && <span className="as-error">Cần nhập mô tả.</span>}</label><div className="as-grid two"><label className="as-field">Hạn nộp *<input type="datetime-local" value={deadline} onChange={(e) => { setDeadline(e.target.value); setDirty(true) }} aria-invalid={showErrors && errors.deadline} />{showErrors && errors.deadline && <span className="as-error">Cần nhập hạn nộp.</span>}</label><label className="as-field">Độ ưu tiên *<input type="number" min="1" max="5" step="1" value={priority} onChange={(e) => { setPriority(e.target.value); setDirty(true) }} aria-invalid={showErrors && errors.priority} />{showErrors && errors.priority && <span className="as-error">Ưu tiên phải từ 1 đến 5.</span>}</label></div></Card>
+    <Card title="Kiểm tra đối tượng nhận" subtitle="Phạm vi người nhận cuối cùng do backend xác nhận."><p>{selected ? `${selected.recipientIds.length} học sinh trong ${selected.className} (dữ liệu mẫu)` : 'Chọn lớp để xem số học sinh mẫu.'}</p><label className="as-field">Tài liệu tham khảo<input type="file" multiple onChange={(e) => { setFiles([...e.target.files ?? []]); setDirty(true) }} /></label>{files.length > 0 && <ul className="as-list">{files.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}</ul>}</Card>
+    <div className="as-actions"><Button secondary onClick={saveDraft}>Lưu bản nháp</Button><Button onClick={reviewPublish}>Xem lại và xuất bản</Button>{onBack && <Button secondary onClick={() => { if (!dirty || window.confirm('Bỏ các thay đổi chưa lưu?')) onBack() }}>Quay lại</Button>}</div>{message && <Notice>{message}</Notice>}
+    {review && <Dialog title="Xác nhận xuất bản bài tập" onClose={() => setReview(false)}><p><strong>{title}</strong> · {selected?.className} · {selected?.recipientIds.length ?? 0} người nhận mẫu</p><p>Hạn nộp: {deadline.replace('T', ' ')} · Ưu tiên {priority}/5</p><Notice>Chỉ backend mới có thể xác nhận người nhận, xuất bản và tạo thông báo in-app. PENDING_API.</Notice><div className="as-actions"><Button onClick={() => { setReview(false); setMessage('PENDING_API: Chưa xuất bản bài tập hoặc gửi thông báo.') }}>Xác nhận yêu cầu xuất bản</Button></div></Dialog>}
+  </Page>
+}
