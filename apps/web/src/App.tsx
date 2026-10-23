@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ApiClient } from './api.ts'
-import { resolveRoute, SessionController } from './auth.ts'
+import { landingPath, navigationRoutes, resolveRoute, SessionController } from './auth.ts'
 import type { AuthState, Tenant } from './auth.ts'
 import type { ScreenRoute } from './routes.ts'
 import { tenantPath } from './routes.ts'
@@ -104,16 +104,28 @@ function PublicLayout({ route, navigate }: { route: ScreenRoute; navigate: (path
   </div>
 }
 
-export function AppShell({ route, tenant, navigate, onLogout, children, preview = false, previewNavigation }: {
+export function AppShell({ route, tenant, navigate, onLogout, children, preview = false, previewNavigation, navigation = [] }: {
   route: ScreenRoute; tenant: Tenant; navigate: (path: string) => void;
-  onLogout: () => void; children: React.ReactNode; preview?: boolean; previewNavigation?: React.ReactNode
+  onLogout: () => void; children: React.ReactNode; preview?: boolean; previewNavigation?: React.ReactNode; navigation?: readonly ScreenRoute[]
 }) {
   const profile = tenantPath(tenant.id, '/me')
+  const business = navigation.filter((item) => !item.selfService)
+  const groups = [
+    { label: 'Tổng quan & vận hành', ids: /^(G|OP|GL)/ },
+    { label: 'Học vụ', ids: /^(AC|SC|AT)/ },
+    { label: 'Học phí', ids: /^BL/ },
+    { label: 'Học tập', ids: /^(AS|PO)/ },
+  ]
+  const links = <>{groups.map((group) => {
+    const items = business.filter((item) => group.ids.test(item.id))
+    return items.length ? <div className="navigation-group" key={group.label}><span className="sidebar-caption">{group.label}</span>
+      {items.map((item) => <Link key={item.id} to={item.path.replace(':tenantId', encodeURIComponent(tenant.id))} navigate={navigate} active={item.id === route.id}>{item.name}</Link>)}</div> : null
+  })}<Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link></>
   return <div className="app-shell">
     <aside className="sidebar"><div className="wordmark">EduCore</div>
       <div className="sidebar-caption">Không gian trung tâm</div>
-      <nav aria-label="Điều hướng chính">{preview ? previewNavigation : <Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link>}</nav>
-      <p className="sidebar-note">Các mục nghiệp vụ sẽ xuất hiện khi có hợp đồng quyền hiệu lực và màn hình được triển khai.</p>
+      <nav aria-label="Điều hướng chính">{preview ? previewNavigation : links}</nav>
+      {!preview && !business.length && <p className="sidebar-note" role="status">Chưa có mục nghiệp vụ được cấp quyền truy cập. Bạn vẫn có thể xem tài khoản.</p>}
     </aside>
     <div className="shell-body">
       <header className="topbar"><span className="mobile-brand wordmark">EduCore</span>
@@ -121,24 +133,37 @@ export function AppShell({ route, tenant, navigate, onLogout, children, preview 
         {!preview && <div className="top-actions"><Link to="/select-tenant" navigate={navigate}>Đổi trung tâm</Link><button onClick={onLogout}>Đăng xuất</button></div>}
       </header>
       <main className="content"><p className="breadcrumb">{tenant.name} / {route.name}</p>{children}</main>
-      <nav className="mobile-nav" aria-label="Điều hướng di động">{preview ? previewNavigation : <Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link>}</nav>
+      <nav className="mobile-nav" aria-label="Điều hướng di động">{preview ? previewNavigation : <details><summary>Menu điều hướng</summary>{links}</details>}</nav>
     </div>
   </div>
 }
 
-export function AppView({ state, path, navigate, onLogout }: { state: AuthState; path: string; navigate: (path: string) => void; onLogout: () => void }) {
+export function AppView({ state, path, navigate, onLogout, controller = sessions }: { state: AuthState; path: string; navigate: (path: string) => void; onLogout: () => void; controller?: SessionController }) {
   const result = resolveRoute(path, state)
   if (result.kind === 'not-found') return <ErrorScreen code="404" navigate={navigate} />
   if (result.kind === 'public') {
-    if (result.route.id === 'AU01') return <LoginScreen navigate={navigate} />
+    if (result.route.id === 'AU01') return <>
+      {state.status === 'unauthenticated' && state.reason && <p className="session-notice" role="status">{state.reason === 'logout-unconfirmed'
+        ? 'Đã đăng xuất trên trình duyệt này. Chưa xác nhận được việc thu hồi phiên trên máy chủ.'
+        : state.reason === 'logged-out' ? 'Bạn đã đăng xuất.' : state.reason === 'unavailable'
+          ? 'Không thể xác minh phiên. Vui lòng đăng nhập lại khi kết nối ổn định.'
+          : 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại.'}</p>}
+      <LoginScreen navigate={navigate} onSubmit={async (email, password) => {
+        if (await controller.login(email, password)) navigate('/select-tenant')
+      }} />
+    </>
     if (result.route.id === 'AU03') return <RecoveryRequestScreen navigate={navigate} />
     if (result.route.id === 'AU04') return <ResetPasswordScreen navigate={navigate} />
     if (result.route.id === 'AU06') return <ActivationScreen navigate={navigate} />
     return <PublicLayout route={result.route} navigate={navigate} />
   }
   if (result.kind === 'checking') return <StatePage code="Đang kiểm tra" title="Đang kiểm tra phiên" detail="Vui lòng chờ trong giây lát." navigate={navigate} />
-  if (result.kind === 'unauthenticated') return <StatePage code="Chưa đăng nhập" title="Cần đăng nhập" detail="Phiên không còn sẵn có trên trình duyệt này." navigate={navigate} to="/login" />
-  if (result.kind === 'tenant-selection') return <TenantSelectionScreen tenants={state.status === 'authenticated' ? state.session.principal.allowedTenants : []} onSelect={(id) => sessions.selectTenant(id)} navigate={navigate} />
+  if (result.kind === 'unauthenticated') return <StatePage code="Chưa đăng nhập" title="Cần đăng nhập" detail="Phiên đăng nhập chưa có, đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại." navigate={navigate} to="/login" />
+  if (result.kind === 'tenant-selection') return <><TenantSelectionScreen tenants={state.status === 'authenticated' ? state.session.principal.allowedTenants : []} onSelect={async (id) => {
+    if (!await controller.selectTenant(id)) return false
+    const next = controller.getSnapshot()
+    return next.status === 'authenticated' ? landingPath(next.session) : false
+  }} navigate={navigate} /><button className="tenant-logout" onClick={onLogout}>Đăng xuất</button></>
   if (result.kind === 'forbidden') return <ErrorScreen code="403" navigate={navigate} />
   const session = state.status === 'authenticated' ? state.session : null
   const tenant = session?.principal.allowedTenants.find((item) => item.id === result.tenantId)
@@ -181,21 +206,35 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
       : (managementIds as readonly string[]).includes(result.route.id) ? <ManagementScreen id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId ?? result.params.requestId} />
       : <ScreenPlaceholder route={result.route} />
-  return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
+  return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout} navigation={navigationRoutes(session!)}>
     {screen}
   </AppShell>
 }
 
-export default function App() {
-  const state = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot)
+export default function App({ controller = sessions }: { controller?: SessionController } = {}) {
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { path, navigate } = usePath()
-  useEffect(() => { sessions.finishInitialCheck() }, [])
+  useEffect(() => { controller.finishInitialCheck() }, [controller])
   useEffect(() => {
     if (state.status !== 'authenticated') return
     const remaining = state.session.expiresAt - Date.now()
-    if (remaining <= 0) { sessions.expire(); return }
-    const timer = window.setTimeout(() => sessions.expire(), remaining)
-    return () => window.clearTimeout(timer)
-  }, [state])
-  return <AppView state={state} path={path} navigate={navigate} onLogout={() => { void sessions.logout(); navigate('/login') }} />
+    if (remaining <= 0) { controller.expire(); return }
+    const timer = window.setTimeout(() => {
+      const current = controller.getSnapshot()
+      if (current.status !== 'authenticated') return
+      const refresh = current.session.expiresAt - Date.now() <= 60_000
+      void controller.revalidate(refresh).catch(() => { /* Controller already failed closed. */ })
+    }, Math.max(0, Math.min(60_000, remaining - 60_000)))
+    const expiry = window.setTimeout(() => controller.expire(), remaining)
+    return () => { window.clearTimeout(timer); window.clearTimeout(expiry) }
+  }, [state, controller])
+  useEffect(() => {
+    const check = () => {
+      const current = controller.getSnapshot()
+      if (current.status === 'authenticated') void controller.revalidate(current.session.expiresAt - Date.now() <= 60_000).catch(() => {})
+    }
+    window.addEventListener('focus', check)
+    return () => window.removeEventListener('focus', check)
+  }, [controller])
+  return <AppView state={state} path={path} navigate={navigate} controller={controller} onLogout={() => { void controller.logout(); navigate('/login') }} />
 }

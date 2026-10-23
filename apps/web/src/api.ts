@@ -5,6 +5,22 @@ export type SelectTenantResponse = { accessToken: string; expiresInSeconds: numb
 export type RefreshResponse = { accessToken: string; expiresInSeconds: number; csrfToken: string }
 type ErrorBody = { code?: string; message?: string; correlationId?: string }
 
+export function safeErrorMessage(error: unknown, operation: 'login' | 'tenant' | 'request' = 'request'): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return operation === 'login'
+      ? 'Email hoặc mật khẩu chưa đúng. Vui lòng thử lại.'
+      : 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại.'
+    if (error.status === 429) return 'Bạn đã thử quá nhiều lần. Vui lòng đợi một lúc rồi thử lại.'
+    if (error.status === 403) return operation === 'tenant'
+      ? 'Bạn không còn quyền truy cập trung tâm này. Vui lòng chọn lại.'
+      : 'Bạn không có quyền thực hiện thao tác này.'
+    if (error.status === 404) return 'Không tìm thấy nội dung yêu cầu.'
+    if (error.status === 409) return 'Dữ liệu hoặc phiên đã thay đổi. Vui lòng tải lại và thử lại.'
+    if (error.status === 400 || error.status === 422) return 'Thông tin chưa hợp lệ. Vui lòng kiểm tra lại.'
+  }
+  return 'Không thể kết nối dịch vụ lúc này. Vui lòng thử lại sau.'
+}
+
 export class ApiError extends Error {
   status: number
   code: string
@@ -22,7 +38,7 @@ export class ApiClient {
   private baseUrl: string
   private transport: typeof fetch
   constructor(baseUrl = '', transport: typeof fetch = fetch) {
-    this.baseUrl = baseUrl
+    this.baseUrl = baseUrl.replace(/\/+$/, '')
     this.transport = transport
   }
 
@@ -37,7 +53,8 @@ export class ApiClient {
     const response = await this.transport(`${this.baseUrl}${path}`, {
       method: options.method ?? 'GET', headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: options.credentials ?? 'omit', signal: options.signal,
+      credentials: options.credentials ?? 'omit',
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     })
     const requestId = response.headers.get('x-request-id') ?? undefined
     if (response.status === 204) {
@@ -46,12 +63,12 @@ export class ApiClient {
     }
     const raw = await response.text()
     let data: unknown
-    try { data = raw ? JSON.parse(raw) : undefined } catch { throw new ApiError(response.status, 'INVALID_RESPONSE', requestId) }
+    try { data = raw ? JSON.parse(raw) : undefined } catch { throw new ApiError(response.ok ? 502 : response.status, 'INVALID_RESPONSE', requestId) }
     if (!response.ok) {
       const error = data && typeof data === 'object' ? data as ErrorBody : {}
       throw new ApiError(response.status, typeof error.code === 'string' ? error.code : 'HTTP_ERROR', error.correlationId ?? requestId)
     }
-    if (data === undefined) throw new ApiError(response.status, 'INVALID_RESPONSE', requestId)
+    if (data === undefined) throw new ApiError(502, 'INVALID_RESPONSE', requestId)
     return data as T
   }
 

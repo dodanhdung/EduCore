@@ -147,7 +147,7 @@ test('AU02 calls the session tenant boundary, prevents duplicates, and fails clo
   let rejectRequest
   const request = new Promise((_, reject) => { rejectRequest = reject })
   const api = {
-    login: async () => ({ accessToken: 'pre-tenant', csrfToken: 'csrf', expiresInSeconds: 3600 }),
+    login: async () => ({ accessToken: 'pre-tenant', csrfToken: 'csrf', expiresInSeconds: 900 }),
     me: async () => ({ id: 'user-1', sessionId: 'private-session', tenantId: null, allowedTenants: [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }] }),
     selectTenant: (_token, id) => { requestedId = id; return request },
   }
@@ -161,7 +161,7 @@ test('AU02 calls the session tenant boundary, prevents duplicates, and fails clo
     assert.equal(requestedId, 'two')
     assert.ok([...view.document.querySelectorAll('.ec-tenant-choice')].every((button) => button.disabled))
     await act(async () => rejectRequest(new Error('network failure')))
-    assert.equal(controller.getSnapshot().session.principal.tenantId, null)
+    assert.equal(controller.getSnapshot().status, 'unauthenticated')
     assert.equal(navigated, '')
     assert.ok(view.document.querySelector('[role="alert"]'))
   } finally { await view.close() }
