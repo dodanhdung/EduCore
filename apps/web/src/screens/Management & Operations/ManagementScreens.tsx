@@ -7,6 +7,7 @@ import { ApprovalDetailScreen } from './OP05/ApprovalDetailScreen.tsx'
 import { AuditScreen } from './OP06/AuditScreen.tsx'
 import { JobsScreen } from './OP07/JobsScreen.tsx'
 import { StateMessage } from './ManagementPrimitives.tsx'
+import { ManagementPreviewContext } from './ManagementTypes.ts'
 import type { ManagementData, ManagementId, ViewState } from './ManagementTypes.ts'
 import './management.css'
 
@@ -23,5 +24,5 @@ export function ManagementScreen({ id, tenantId, data, preview = false, state = 
   // Defense in depth for fixture injection. Real scope checks remain server-side.
   const scoped = { ...data, members: data.members.filter((r) => r.tenantId === tenantId), relationships: data.relationships.filter((r) => r.tenantId === tenantId), approvals: data.approvals.filter((r) => r.tenantId === tenantId), audit: data.audit.filter((r) => r.tenantId === tenantId), jobs: data.jobs.filter((r) => r.tenantId === tenantId) }
   const Component = components[id]
-  return <div className="management" data-screen-id={id}><Component key={`${tenantId}:${id}:${selectedId ?? ''}:${canReview}`} data={scoped} selectedId={selectedId} canReview={canReview} open={open} /></div>
+  return <ManagementPreviewContext.Provider value={preview}><div className="management" data-screen-id={id}><Component key={`${tenantId}:${id}:${selectedId ?? ''}:${canReview}`} data={scoped} selectedId={selectedId} canReview={canReview} open={open} /></div></ManagementPreviewContext.Provider>
 }

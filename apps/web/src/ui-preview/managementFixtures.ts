@@ -11,10 +11,10 @@ export const managementFixtures: ManagementData = {
     { id: 'MB-004', tenantId, name: 'Phạm Gia Hưng', email: 'hung.pham@educore.vn', status: 'DISABLED', assignments: [{ id: 'RA-004', role: 'Accountant', scope: 'TENANT', status: 'REVOKED' }], history: ['23/10/2026 · Khóa tài khoản và thu hồi quyền theo yêu cầu'] },
   ],
   relationships: [
-    { id: 'REL-01', tenantId, parent: 'Nguyễn Thị Hạnh', student: 'Nguyễn Minh Anh', status: 'ACTIVE', evidence: 'Hồ sơ nhập học #HS-1028', verifiedBy: 'Trần Minh Khoa', verifiedAt: '2026-10-22T02:30:00Z' },
-    { id: 'REL-02', tenantId, parent: 'Trần Văn Phúc', student: 'Trần Bảo Ngọc', status: 'PENDING_VERIFICATION', evidence: 'Giấy khai sinh #TL-014' },
-    { id: 'REL-03', tenantId, parent: 'Lê Thị Mai', student: 'Lê Quốc Bảo', status: 'ACTIVE', evidence: 'Hồ sơ nhập học #HS-0884', verifiedBy: 'Nguyễn Văn An', verifiedAt: '2026-10-21T03:00:00Z' },
-    { id: 'REL-04', tenantId, parent: 'Phạm Minh Tuấn', student: 'Phạm Khánh Linh', status: 'INACTIVE', evidence: 'Biên bản thu hồi #TL-019' },
+    { id: 'REL-01', tenantId, parent: 'Nguyễn Thị Hạnh', parentId: 'P-1028', student: 'Nguyễn Minh Anh', studentId: 'ST-1028', status: 'ACTIVE', evidence: 'Hồ sơ nhập học #HS-1028', verifiedBy: 'Trần Minh Khoa', verifiedAt: '2026-10-22T02:30:00Z' },
+    { id: 'REL-02', tenantId, parent: 'Trần Văn Phúc', parentId: 'P-014', student: 'Trần Bảo Ngọc', studentId: 'ST-014', status: 'PENDING_VERIFICATION', evidence: 'Giấy khai sinh #TL-014' },
+    { id: 'REL-03', tenantId, parent: 'Lê Thị Mai', parentId: 'P-0884', student: 'Lê Quốc Bảo', studentId: 'ST-0884', status: 'ACTIVE', evidence: 'Hồ sơ nhập học #HS-0884', verifiedBy: 'Nguyễn Văn An', verifiedAt: '2026-10-21T03:00:00Z' },
+    { id: 'REL-04', tenantId, parent: 'Phạm Minh Tuấn', parentId: 'P-019', student: 'Phạm Khánh Linh', studentId: 'ST-019', status: 'INACTIVE', evidence: 'Biên bản thu hồi #TL-019' },
   ],
   approvals: [
     { id: 'YC-24018', tenantId, title: 'Điều chỉnh hóa đơn', category: 'Tài chính', target: 'Invoice INV-0241 · ST-1028', requester: 'Phạm Gia Hưng', createdAt: '2026-10-24T02:30:00Z', status: 'PENDING_APPROVAL', reason: 'Điều chỉnh theo biên bản đối chiếu học phí.', evidence: 'Biên bản lớp học #BB-241; giảm 100.000 ₫, giữ hóa đơn gốc.', policy: 'Billing v1.3', correlationId: 'corr-84f1-c2e9', execution: 'NOT_STARTED', history: ['23/10 15:10 · Yêu cầu được tạo', '24/10 09:30 · Chờ quyết định'] },
@@ -23,12 +23,13 @@ export const managementFixtures: ManagementData = {
     { id: 'YC-24015', tenantId, title: 'Điều chỉnh hóa đơn', category: 'Tài chính', target: 'Invoice INV-0238', requester: 'Phạm Gia Hưng', createdAt: '2026-10-20T07:06:00Z', status: 'COMPLETED', reason: 'Đã đối chiếu đủ căn cứ.', evidence: 'Biên bản #BB-238', policy: 'Billing v1.3', correlationId: 'corr-44b8-ae40', execution: 'COMPLETED', receipt: 'RCPT-238 · adjustment / signed release / wallet credit / audit committed (mẫu)', history: ['20/10 · Tạo yêu cầu', '21/10 · APPROVED', '21/10 · Effect, receipt, audit cùng commit · COMPLETED'] },
     { id: 'YC-24014', tenantId, title: 'Hủy hóa đơn', category: 'Tài chính', target: 'Invoice INV-0237', requester: 'Trần Minh Khoa', createdAt: '2026-10-19T03:00:00Z', status: 'REJECTED', reason: 'Chưa đủ căn cứ hủy.', evidence: 'Biên bản thiếu xác nhận.', policy: 'Billing v1.3', correlationId: 'corr-237', execution: 'NOT_STARTED', history: ['19/10 · Tạo yêu cầu', '20/10 · REJECTED · không thực thi'] },
   ],
+  // Preview-only redacted projection. Production requires an independently reviewed server DTO.
   audit: [
     { id: 'AUD-1024', tenantId, action: 'MEMBER_ROLE_ASSIGNED', target: 'Membership MB-031', actor: 'Nguyễn Văn An', at: '2026-10-24T02:42:00Z', result: 'Thành công', reason: 'Cập nhật phạm vi lớp.', policy: 'IAM v1.1', correlationId: 'corr-84f1-c2e9' },
     { id: 'AUD-1023', tenantId, action: 'APPROVAL_REQUESTED', target: 'Invoice INV-0241', actor: 'Phạm Gia Hưng', at: '2026-10-24T02:30:00Z', result: 'Chờ duyệt', reason: 'Đối chiếu học phí.', policy: 'Billing v1.3', correlationId: 'corr-84f1-c2e9' },
     { id: 'AUD-1022', tenantId, action: 'WALLET_PAYMENT_APPLIED', target: 'Invoice INV-0240', actor: 'Phạm Gia Hưng', at: '2026-10-24T01:51:00Z', result: 'Thành công', reason: 'Trả hóa đơn bằng ví theo xác nhận.', policy: 'Billing v1.3', correlationId: 'corr-98a2-d607' },
     { id: 'AUD-1021', tenantId, action: 'MEMBER_ACCESS_DENIED', target: 'Membership MB-099', actor: 'Lê Hoàng Yến', at: '2026-10-23T10:10:00Z', result: 'Thất bại', reason: 'Không đủ quyền.', policy: 'IAM v1.1', correlationId: 'corr-denied' },
-  ],
+  ].map((a) => ({ ...a, safeProjection: { target: a.target, actor: a.actor, reason: a.reason } })),
   jobs: [
     { id: 'JB-2417', tenantId, kind: 'Lập hóa đơn', source: 'Billing', policy: 'Billing v1.3', status: 'FAILED', attemptCount: 2, correlationId: 'corr-84f1-c2e9', operationKey: 'billing-root-2417', error: 'Xung đột dữ liệu đầu vào; kiểm tra điều kiện trước khi chạy lại.', attempts: ['Lần 1 · Lỗi khóa tạm thời', 'Lần 2 · Thất bại khi kiểm tra nguồn'] },
     { id: 'JB-2416', tenantId, kind: 'Kiểm tra lịch', source: 'Scheduling', policy: 'Scheduling v1.1', status: 'COMPLETED', attemptCount: 1, correlationId: 'corr-98a2-d607', operationKey: 'schedule-root-2416', hasEffectReceipt: true, attempts: ['Lần 1 · COMPLETED'] },

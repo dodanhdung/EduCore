@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 import { matchRoute, routes } from '../../routes.ts'
 import { canView, resolveRoute } from '../../auth.ts'
-import { managementIds, retryEligible, roleValidation, money } from './ManagementTypes.ts'
+import { managementIds, retryEligible, retryReadyForReview, roleValidation, money } from './ManagementTypes.ts'
 
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/__ui-preview/G01' })
 globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement; globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -114,7 +114,7 @@ test('OP02 validates seeded roles, scoped IDs and already-effective assignments'
   assert.match(html('OP02'), /Đã thu hồi/)
   const manager = doc(html('OP02', { selectedId: 'MB-001' })); const actions = [...manager.querySelectorAll('button')]
   assert.equal(actions.find((el) => el.textContent === 'Khóa tài khoản').disabled, true)
-  assert.equal(actions.find((el) => el.textContent === 'Thu hồi Manager').disabled, true)
+  assert.equal(actions.find((el) => el.textContent.startsWith('Thu hồi Manager')).disabled, true)
 })
 test('OP02 role assignment form requires scope then prepares a review without changes', async () => {
   await mounted('OP02', {}, async () => {
@@ -146,9 +146,9 @@ test('OP05 decision and execution are separate; no completion from failed/stale 
   assert.match(html('OP05', managementScenario('failed')), /Thực thi thất bại/)
   assert.match(html('OP05', managementScenario('self-approved')), /SELF_APPROVED · Cờ tự phê duyệt/)
   const missing = structuredClone(data); missing.approvals[3].receipt = undefined
-  assert.match(html('OP05', { data: missing, selectedId: 'YC-24015' }), /Chưa đủ bằng chứng/)
+  assert.match(html('OP05', { data: missing, selectedId: 'YC-24015' }), /Chưa xác minh được trạng thái hoàn tất/)
   assert.doesNotMatch(html('OP05', { data: missing, selectedId: 'YC-24015' }), /Đã hoàn thành theo bằng chứng/)
-  assert.match(html('OP05', { selectedId: 'YC-24015' }), /Đã hoàn thành theo bằng chứng mẫu/)
+  assert.match(html('OP05', { selectedId: 'YC-24015' }), /Kiểm chứng hoàn tất: PENDING_API/)
 })
 test('OP05 approve form requires reason and cannot transition local workflow', async () => {
   await mounted('OP05', {}, async () => {
@@ -157,6 +157,113 @@ test('OP05 approve form requires reason and cannot transition local workflow', a
     assert.match(document.querySelector('.mo-review').textContent, /Chưa thực hiện thay đổi/)
     assert.equal(data.approvals[0].status, 'PENDING_APPROVAL')
   })
+})
+
+test('OP05 preserves source status across incomplete and contradictory completion records', () => {
+  const cases = [
+    ['PENDING_APPROVAL', 'NOT_STARTED', undefined, false],
+    ['NEEDS_INFORMATION', 'NOT_STARTED', undefined, false],
+    ['APPROVED', 'NOT_STARTED', undefined, false],
+    ['APPROVED', 'FAILED', undefined, false],
+    ['COMPLETED', 'COMPLETED', 'RCPT-X', false],
+    ['COMPLETED', 'COMPLETED', undefined, true],
+    ['COMPLETED', 'FAILED', 'RCPT-X', true],
+    ['REJECTED', 'NOT_STARTED', undefined, false],
+  ]
+  for (const [status, execution, receipt, inconsistent] of cases) {
+    const copy = structuredClone(data); Object.assign(copy.approvals[0], { status, execution, receipt })
+    const source = html('OP05', { data: copy })
+    const view = doc(source)
+    assert.match(view.querySelector('.mo-card').textContent, new RegExp(status === 'COMPLETED' ? 'Đã hoàn thành' : status === 'APPROVED' ? 'Đã duyệt' : status === 'REJECTED' ? 'Đã từ chối' : status === 'NEEDS_INFORMATION' ? 'Cần bổ sung' : 'Chờ phê duyệt'))
+    assert.equal(!!view.querySelector('[role=alert]') && source.includes('Chưa xác minh được trạng thái hoàn tất'), inconsistent)
+    if (status === 'COMPLETED') assert.doesNotMatch(source, /Xem lại thực thi/)
+    assert.doesNotMatch(source, /Đã hoàn thành theo bằng chứng mẫu/)
+  }
+  assert.match(html('OP05', managementScenario('self-approved')), /SELF_APPROVED/)
+  assert.doesNotMatch(html('OP05', { canReview: false }), />Phê duyệt</)
+  assert.match(html('OP05', { selectedId: 'bad-id' }), /Không tìm thấy/)
+})
+
+test('OP02 revocation dialog identifies only the selected scoped assignment and does not mutate', async () => {
+  const copy = structuredClone(data)
+  copy.members[2].assignments.push({ id: 'RA-032', role: 'Teacher', scope: 'CLASS', scopeId: 'IELTS-04', status: 'ACTIVE' })
+  await mounted('OP02', { data: copy }, async () => {
+    await click(button('Thu hồi Teacher · RA-032'))
+    const dialog = document.querySelector('dialog').textContent
+    assert.match(dialog, /MB-031|Lê Hoàng Yến|RA-032|IELTS-04|CLASS|Đang hiệu lực/)
+    assert.doesNotMatch(dialog, /RA-031|IELTS-03/)
+    await input(document.querySelector('dialog textarea'), 'Thu hồi phân công lớp')
+    await click(button('Xem lại yêu cầu'))
+    assert.equal(copy.members[2].assignments[2].status, 'ACTIVE')
+    assert.equal(copy.members[2].assignments[0].status, 'ACTIVE')
+  })
+})
+
+test('OP03 confirmation uses relationship identity and distinct verify/revoke consequences', async () => {
+  const copy = structuredClone(data)
+  copy.relationships.push({ ...copy.relationships[1], id: 'REL-05', studentId: 'ST-105', evidence: 'Căn cứ thứ hai' })
+  await mounted('OP03', { data: copy }, async () => {
+    const row = [...document.querySelectorAll('tr')].filter((r) => r.textContent.includes('Trần Văn Phúc')).at(-1)
+    await click(row.querySelector('button'))
+    assert.match(document.querySelector('dialog').textContent, /REL-05|ST-105|P-014|Căn cứ thứ hai|Hiện chưa cấp quyền/)
+    assert.doesNotMatch(document.querySelector('dialog').textContent, /REL-02/)
+    await click(button('Đóng'))
+    const active = [...document.querySelectorAll('tr')].find((r) => r.textContent.includes('Nguyễn Thị Hạnh'))
+    await click(active.querySelector('button'))
+    assert.match(document.querySelector('dialog').textContent, /REL-01|mất quyền xem học sinh/)
+    assert.equal(copy.relationships[1].status, 'PENDING_VERIFICATION')
+    assert.equal(copy.relationships[0].status, 'ACTIVE')
+  })
+})
+
+test('OP06 hides raw free text without a trusted detail projection', async () => {
+  const copy = structuredClone(data)
+  copy.audit[0].safeProjection = undefined
+  Object.assign(copy.audit[0], { actor: 'RAW_ACTOR_SECRET', target: 'RAW_TARGET_SECRET', reason: 'RAW_REASON_SECRET', payload: { token: 'RAW_TOKEN_SECRET' } })
+  await mounted('OP06', { data: copy }, async () => {
+    await click(button('Xem sự kiện'))
+    assert.match(document.body.textContent, /Chi tiết chưa khả dụng · PENDING_API/)
+    assert.doesNotMatch(document.body.textContent, /RAW_.*_SECRET/)
+    assert.equal(document.querySelectorAll('dialog, textarea, [contenteditable=true]').length, 0)
+  })
+})
+
+test('OP07 candidate is separate from readiness, authorization and retry execution', async () => {
+  for (const status of ['READY', 'RUNNING', 'PENDING_APPROVAL', 'COMPLETED']) assert.equal(retryEligible({ ...data.jobs[0], status }), false)
+  assert.equal(retryEligible({ ...data.jobs[0], attemptCount: 0 }), false)
+  assert.equal(retryEligible({ ...data.jobs[0], attemptCount: 4 }), false)
+  assert.equal(retryEligible({ ...data.jobs[0], hasEffectReceipt: true }), false)
+  assert.equal(retryReadyForReview(data.jobs[0]), false)
+  assert.equal(retryReadyForReview({ ...data.jobs[0], remediationEvidence: 'Đã kiểm tra nguồn' }), true)
+  assert.equal(retryEligible(data.jobs[3]), true)
+  assert.equal(retryReadyForReview(data.jobs[3]), false)
+  await mounted('OP07', {}, async () => {
+    await click([...document.querySelectorAll('tr')].find((r) => r.textContent.includes('JB-2417')).querySelector('button'))
+    assert.match(document.body.textContent, /PENDING_API|canReview không xác nhận quyền/)
+    await click([...document.querySelectorAll('tr')].find((r) => r.textContent.includes('JB-2414')).querySelector('button'))
+    assert.match(document.body.textContent, /Cần bổ sung dữ liệu và xác nhận khắc phục/)
+    assert.equal(button('Xem lại yêu cầu retry'), undefined)
+  })
+  assert.equal(data.jobs[0].attemptCount, 2)
+})
+
+test('reusable screens and review dialog use neutral copy outside Preview context', async () => {
+  const { ManagerDashboardScreen } = await vite.ssrLoadModule('/src/screens/Management & Operations/G01/ManagerDashboardScreen.tsx')
+  const { MembersScreen } = await vite.ssrLoadModule('/src/screens/Management & Operations/OP01/MembersScreen.tsx')
+  const { JobsScreen } = await vite.ssrLoadModule('/src/screens/Management & Operations/OP07/JobsScreen.tsx')
+  const direct = (Component) => renderToStaticMarkup(React.createElement(Component, { data, canReview: false }))
+  assert.doesNotMatch(direct(ManagerDashboardScreen), /dữ liệu mẫu/)
+  assert.doesNotMatch(direct(MembersScreen), /dữ liệu mẫu/)
+  assert.doesNotMatch(direct(JobsScreen), /Lịch sử lần thử \(mẫu\)/)
+  assert.match(html('G01'), /dữ liệu mẫu/)
+  const { ReviewAction } = await vite.ssrLoadModule('/src/screens/Management & Operations/ManagementPrimitives.tsx')
+  const root = createRoot(document.getElementById('root'))
+  try {
+    await act(async () => root.render(React.createElement(ReviewAction, { label: 'Xem lại' })))
+    await click(button('Xem lại'))
+    assert.doesNotMatch(document.querySelector('dialog').textContent, /Dữ liệu mẫu|UI Preview/)
+    assert.match(document.querySelector('dialog').textContent, /PENDING_API/)
+  } finally { await act(async () => root.unmount()) }
 })
 test('OP06 allowlists displayed audit fields and remains read-only with timeline details', async () => {
   const poisoned = { ...data, audit: data.audit.map((a) => ({ ...a, password: 'SECRET_PASSWORD', otp: 'SECRET_OTP', token: 'SECRET_TOKEN', payload: { private: 'SECRET_PAYLOAD' } })) }

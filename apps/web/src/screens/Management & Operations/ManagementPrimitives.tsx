@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { labels } from './ManagementTypes.ts'
+import { labels, useManagementPreview } from './ManagementTypes.ts'
 import type { ViewState } from './ManagementTypes.ts'
+
 
 export function Heading({ title, detail, children }: { title: string; detail: string; children?: ReactNode }) {
   return <header className="mo-heading"><div><h1>{title}</h1><p>{detail}</p></div>{children}</header>
@@ -32,9 +33,10 @@ export function Filters({ query, setQuery, status, setStatus, statuses, children
 }
 export function Timeline({ items }: { items: string[] }) { return <ol className="mo-timeline">{items.map((item, i) => <li key={i}>{item}</li>)}</ol> }
 export type Field = { name: string; label: string; type?: 'email' | 'textarea'; options?: string[]; optional?: boolean }
-export function ReviewAction({ label, title, fields = [{ name: 'reason', label: 'Lý do', type: 'textarea' }], validate, warning, disabled = false }: {
-  label: string; title?: string; fields?: Field[]; validate?: (values: Record<string, string>) => string | undefined; warning?: string; disabled?: boolean
+export function ReviewAction({ label, title, fields = [{ name: 'reason', label: 'Lý do', type: 'textarea' }], validate, warning, details, disabled = false }: {
+  label: string; title?: string; fields?: Field[]; validate?: (values: Record<string, string>) => string | undefined; warning?: string; details?: { label: string; value: string }[]; disabled?: boolean
 }) {
+  const preview = useManagementPreview()
   const [open, setOpen] = useState(false), [values, setValues] = useState<Record<string, string>>({}), [error, setError] = useState(''), [review, setReview] = useState(false)
   const dialog = useRef<HTMLDialogElement>(null), trigger = useRef<HTMLButtonElement>(null), titleId = useId(), errorId = useId()
   useEffect(() => { if (open) { dialog.current?.showModal(); dialog.current?.querySelector<HTMLElement>('input,textarea,select,button')?.focus() } }, [open])
@@ -45,7 +47,7 @@ export function ReviewAction({ label, title, fields = [{ name: 'reason', label: 
     const first = targets[0], last = targets.at(-1)
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
-  }}><h2 id={titleId}>{title ?? label}</h2><p>Dữ liệu mẫu — UI Preview. Chỉ xem xét nội dung; chưa gửi yêu cầu.</p>{warning && <p className="mo-warning">{warning}</p>}<form noValidate onSubmit={(e) => {
+  }}><h2 id={titleId}>{title ?? label}</h2><p>{preview ? 'Dữ liệu mẫu — UI Preview. ' : ''}Chỉ xem xét nội dung; chưa gửi yêu cầu. Thao tác thực tế: PENDING_API.</p>{details && <dl className="mo-detail">{details.map(({ label, value }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}{warning && <p className="mo-warning">{warning}</p>}<form noValidate onSubmit={(e) => {
     e.preventDefault()
     const missing = fields.find((f) => !f.optional && !values[f.name]?.trim())
     const email = fields.find((f) => f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values[f.name] ?? ''))
