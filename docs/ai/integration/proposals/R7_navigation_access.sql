@@ -1,4 +1,5 @@
--- PROPOSED ONLY. NOT APPROVED, NOT EXECUTED, NOT A PRISMA MIGRATION.
+-- PROPOSED ONLY. NOT OWNER-APPROVED, NOT ACTIVATED IN PRODUCTION, NOT A PRISMA MIGRATION.
+-- Owner-authorized disposable fixtures only; test execution does not approve activation.
 -- Forward-only candidate after owner review of R7_NAVIGATION_PROPOSAL.md.
 -- Conservative TENANT-scoped operations only; no role shortcuts/resource grants.
 BEGIN;
@@ -12,11 +13,14 @@ DECLARE
 BEGIN
   SELECT * INTO a FROM public.auth_sessions WHERE id=educore_r4.session_id();
   IF a.id IS NULL THEN RAISE EXCEPTION 'AUTH_REQUIRED' USING ERRCODE='28000'; END IF;
-  IF a.active_tenant_id IS DISTINCT FROM t THEN
+  IF t IS NULL OR a.active_tenant_id IS DISTINCT FROM t THEN
     RAISE EXCEPTION 'TENANT_DENIED' USING ERRCODE='42501';
   END IF;
   -- Existing principal helper rechecks live user/tenant/membership/session.
   m := educore_r3.principal(t);
+  -- Re-read after the existing principal's User -> Tenant locks and fresh checks.
+  SELECT * INTO a FROM public.auth_sessions WHERE id=educore_r4.session_id();
+  IF a.id IS NULL THEN RAISE EXCEPTION 'AUTH_REQUIRED' USING ERRCODE='28000'; END IF;
   SELECT COALESCE(jsonb_agg(v.screen ORDER BY v.screen),'[]'::jsonb) INTO screens
   FROM (VALUES
     ('OP01','member.read'),

@@ -1,6 +1,6 @@
 # R7 — Chạy local
 
-Ngày 23/10/2026. Không deploy, không reset DB, không dùng shared/staging/production. Các lệnh dưới đây là hướng dẫn; kết quả đã chạy ghi riêng trong `R7_IMPLEMENTATION_REPORT.md`.
+Ngày 23/10/2026, cập nhật verification24/10. Không deploy, không reset DB, không dùng shared/staging/production. Các lệnh dưới đây là hướng dẫn; kết quả R7 gốc ở `R7_IMPLEMENTATION_REPORT.md`, kết quả follow-up ở [AUTH_FOUNDATION_VERIFICATION_REPORT.md](AUTH_FOUNDATION_VERIFICATION_REPORT.md).
 
 ## Toolchain / cài dependency
 
@@ -108,7 +108,29 @@ Test consumer HTTP double không chứng minh DB/security end-to-end. Native R4 
 powershell -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r4-native.ps1 -RunTests
 ```
 
-Runner tự tạo cluster PostgreSQL16 unique, admission fresh-loopback, secret memory, restricted LOGINs; giữ lại resource để inspect, không xóa/reset DB có sẵn. Nếu Docker daemon không chạy thì dừng, không set admission thủ công. Không lấy `DATABASE_URL` của ứng dụng làm `R4_TEST_URL`. Không chạy navigation SQL proposal trong runner trước review.
+Runner tự tạo cluster PostgreSQL16 unique, admission fresh-loopback, secret memory, restricted LOGINs; giữ lại resource để inspect, không xóa/reset DB có sẵn. Nếu Docker daemon không chạy thì dừng, không set admission thủ công. Không lấy `DATABASE_URL` của ứng dụng làm `R4_TEST_URL`. Navigation SQL proposal không chạy mặc định. Owner đã cho phép fixtures trong DB disposable của task verification; production vẫn PENDING_REVIEW. Để tái lập riêng chế độ test đã được phép, trong process terminal dành riêng:
+
+```powershell
+$env:R7_NAVIGATION_PROPOSAL_TESTS='OWNER_APPROVED_DISPOSABLE_PROPOSAL_TEST'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r4-native.ps1 -RunTests
+Remove-Item Env:R7_NAVIGATION_PROPOSAL_TESTS
+```
+
+Mỗi invocation tạo cluster mới. Không đặt acknowledgement này trong `.env` ứng dụng hoặc production. A19 dùng Edge headless nếu binary có sẵn (Windows default hoặc `R7_TEST_EDGE_PATH`); khởi động Vite strict localhost5173, Nest ephemeral port và restricted PostgreSQL thật. Thiếu browser thì A19 SKIP, không được báo browser PASS. Profile/cookie/CDP payload nằm ngoài artifact; không archive profile hay environment secrets.
+
+## Windows checkout và baseline integrity
+
+Nếu backend integrity test báo hash R1a khác chỉ vì CRLF checkout, từ repository root chạy:
+
+```powershell
+node apps/api/scripts/verify-r1a-checkout.mjs
+node apps/api/scripts/verify-r1a-checkout.mjs --restore
+pnpm.cmd --dir apps/api exec vitest run test/schema-integrity/r1b-static.spec.ts
+```
+
+Helper xác minh HEAD/index đều khớp checksum lịch sử hiện có trong test và working content chỉ khác CRLF/LF trước khi khôi phục riêng file R1a từ Git index bằng checkout tạm có `core.autocrlf=false`, `core.eol=lf` chỉ cho invocation đó. Không sửa SQL authored, test expectation, migrations table, global/local Git config hoặc `.gitattributes`. Nếu có sửa nội dung/index thì dừng, không ghi đè. Lần checkout sau với Git system `core.autocrlf=true` có thể tái tạo CRLF; chạy lại helper khi cần. Migration history và checksum nguồn không đổi; không archive tệp migration như một source change.
+
+Raw migration checksum phụ thuộc byte/EOL. Không dùng checkout repair này như một kế hoạch upgrade cho DB đã có history/checksum khác; phải inventory và review riêng, không sửa `_prisma_migrations`. Verification chỉ migrate cluster disposable mới, không dùng DB đã tồn tại.
 
 ## Hành vi hiện tại / giới hạn
 

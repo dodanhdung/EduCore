@@ -39,7 +39,9 @@ export class ApiClient {
   private transport: typeof fetch
   constructor(baseUrl = '', transport: typeof fetch = fetch) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
-    this.transport = transport
+    // Native browser fetch requires its Window/global receiver. Node and most
+    // HTTP doubles accept an arbitrary receiver and previously masked this bug.
+    this.transport = transport.bind(globalThis)
   }
 
   async request<T>(path: string, options: {

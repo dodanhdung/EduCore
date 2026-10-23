@@ -73,6 +73,14 @@ test('R7 real ApiClient sends credentials, loads me, and requires explicit tenan
   assert.equal(landingPath(controller.getSnapshot().session), '/select-tenant')
 })
 
+test('closure: ApiClient calls browser fetch with its global receiver', async () => {
+  const transport = function () {
+    assert.equal(this === globalThis, true, 'browser fetch must retain its Window/global receiver')
+    return Promise.resolve(json({ id: 'test-only' }))
+  }
+  await new ApiClient('http://localhost:3000', transport).me('test-only')
+})
+
 for (const [status, copy] of [[401, /Email hoặc mật khẩu/], [429, /quá nhiều lần/], [500, /Không thể kết nối/]]) {
   test(`R7 login ${status} fails closed with safe Vietnamese feedback`, async () => {
     const { controller } = setup({ fault: (path) => path.endsWith('/login') && json({ code: 'PRIVATE_SQL_EMAIL_EXISTS' }, status) })
@@ -152,6 +160,74 @@ test('R7 logout failure still clears all local privileges and reports unconfirme
   const { controller } = await selected({ navigation: true, fault: (path) => path.endsWith('/logout') && json({}, 503) })
   assert.equal(await controller.logout(), false)
   assert.deepEqual(controller.getSnapshot(), { status: 'unauthenticated', reason: 'logout-unconfirmed' })
+})
+
+test('closure: logout during refresh confirms revocation of the rotated session', async () => {
+  const gate = deferred(), entered = deferred()
+  const { controller } = await selected({ fault: async (path) => {
+    if (path.endsWith('/refresh')) { entered.resolve(); await gate.promise }
+  } })
+  const refresh = controller.refresh()
+  await entered.promise
+  const logout = controller.logout()
+  gate.resolve()
+  assert.equal(await refresh, false)
+  assert.equal(await logout, true)
+  assert.deepEqual(controller.getSnapshot(), { status: 'unauthenticated', reason: 'logged-out' })
+})
+
+test('closure: logout still revokes the new token when post-refresh me fails', async () => {
+  const gate = deferred(), entered = deferred()
+  const { controller, calls } = await selected({ fault: async (path, options) => {
+    if (path.endsWith('/refresh')) { entered.resolve(); await gate.promise }
+    if (path.endsWith('/me') && options.headers.Authorization?.includes('test-refreshed-')) throw new TypeError('network')
+  } })
+  const refresh = controller.refresh()
+  await entered.promise
+  const logout = controller.logout()
+  gate.resolve()
+  await refresh
+  assert.equal(await logout, true)
+  assert.ok(calls.some((c) => c.path.endsWith('/logout') && c.options.headers.Authorization.includes('test-refreshed-')))
+})
+
+test('closure: failed stale-login cleanup cannot falsely confirm logout', async () => {
+  const gate = deferred(), entered = deferred()
+  const { controller } = setup({ fault: async (path) => {
+    if (path.endsWith('/login')) { entered.resolve(); await gate.promise }
+    if (path.endsWith('/logout')) return json({}, 503)
+  } })
+  const login = controller.login('person@example.test', 'test password')
+  await entered.promise
+  const logout = controller.logout()
+  gate.resolve()
+  assert.equal(await login, false)
+  assert.equal(await logout, false)
+  assert.equal(controller.getSnapshot().reason, 'logout-unconfirmed')
+})
+
+test('closure: logout during prior-session cleanup cancels replacement login and preserves failed revocation', async () => {
+  const gate = deferred(), entered = deferred()
+  const { controller, calls } = await selected({ fault: async (path) => {
+    if (path.endsWith('/logout')) { entered.resolve(); await gate.promise; return json({}, 503) }
+  } })
+  const replacement = controller.login('replacement@example.test', 'test password')
+  await entered.promise
+  const logout = controller.logout()
+  gate.resolve()
+  assert.equal(await replacement, false)
+  assert.equal(await logout, false)
+  assert.equal(calls.filter((c) => c.path.endsWith('/login')).length, 1)
+  assert.equal(controller.getSnapshot().reason, 'logout-unconfirmed')
+})
+
+test('closure: repeated logout shares the same failed revocation outcome', async () => {
+  const { controller } = await selected({ fault: (path) => path.endsWith('/logout') && json({}, 503) })
+  const first = controller.logout(), second = controller.logout()
+  assert.equal(first, second)
+  assert.deepEqual(await Promise.all([first, second]), [false, false])
+  assert.equal(await controller.logout(), false)
+  assert.equal(controller.getSnapshot().reason, 'logout-unconfirmed')
 })
 
 test('R7 previous tenant evidence disappears synchronously and rapid switches use rotated tokens', async () => {

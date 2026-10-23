@@ -4,6 +4,10 @@ Ngày 23/10/2026. **Chưa được duyệt hoặc kích hoạt. Không có endpo
 
 Quyết định owner trong phiên R7: **giữ PENDING_REVIEW, production fail-closed; bàn giao proposal cùng ZIP R7**. Không chuyển SQL này thành migration hoặc bật reader trong R7.
 
+Follow-up verification trên commit `1323972`: [security review](R7_NAVIGATION_SECURITY_REVIEW.md). SQL draft được bổ sung explicit NULL-tenant denial và đọc lại session sau User→Tenant checks/locks. Không có production migration, endpoint hoặc reader được bật. Fixtures PostgreSQL riêng cho proposal nằm trong native R4 test harness, mặc định skip và chỉ chạy với acknowledgement dành riêng cho test disposable.
+
+Owner đã cho phép chạy fixtures **chỉ trên DB disposable**, vẫn giữ production PENDING_REVIEW. Kết quả opt-in:16 fixtures PASS trong native suite73 PASS/0 FAIL/0 SKIP. Test approval không phải contract approval; chi tiết trong [verification report](AUTH_FOUNDATION_VERIFICATION_REPORT.md).
+
 ## Evidence hiện có và boundary
 
 R4 identity migration tạo `bind(token)`, `session_id()`, `me()` và `select_tenant`; principal gắn PID + transaction ID, token hash hiện hành, user ACTIVE, access/session chưa hết hạn và chưa revoked. `me` chỉ trả identity/allowed tenants. `SessionGuard` kiểm selected tenant và active allowed membership mỗi request.

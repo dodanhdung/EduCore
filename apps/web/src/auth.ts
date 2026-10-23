@@ -12,6 +12,7 @@ export type AuthState = { status: 'checking' } | { status: 'unauthenticated'; re
 export type NavigationResponse = { userId: string; sessionId: string; tenantId: string; screenIds: readonly string[]; validUntil: number }
 export type PermissionEvidence = NavigationResponse & { tenantEpoch: number }
 export type NavigationReader = (token: string, tenantId: string) => Promise<NavigationResponse>
+type RevocationTarget = { token?: string; confirmed: boolean; uncertain: boolean }
 
 export function canView(route: ScreenRoute, session: Session, tenantId: string, evidence?: PermissionEvidence): boolean {
   if (session.expiresAt <= Date.now() || session.principal.tenantId !== tenantId) return false
@@ -57,6 +58,8 @@ export class SessionController {
   private epoch = 0
   private api: ApiClient
   private active: Session | null = null
+  private credential: RevocationTarget | null = null
+  private pendingLogout?: { revision: number; result: Promise<boolean> }
   private queue: Promise<unknown> = Promise.resolve()
   private pendingCheck: Promise<boolean> | null = null
   private transition = 0
@@ -76,8 +79,15 @@ export class SessionController {
     this.transition = revision
     return this.serial(operation).finally(() => { if (this.transition === revision) this.transition = 0 })
   }
-  private async revoke(token: string) {
-    try { await this.api.logout(token); return true } catch { return false }
+  private async revoke(target: RevocationTarget) {
+    if (target.confirmed) return true
+    if (!target.token) return !target.uncertain
+    try {
+      await this.api.logout(target.token)
+      target.confirmed = true
+      target.token = undefined
+      return true
+    } catch { return false }
   }
   private principal(value: Principal) {
     if (!value || typeof value.id !== 'string' || !value.id || typeof value.sessionId !== 'string' || !value.sessionId
@@ -120,25 +130,31 @@ export class SessionController {
     this.set({ status: 'checking' })
     return this.mutation(revision, async () => {
       if (revision !== this.revision) return false
-      const previous = this.active
+      const previous = this.credential
       this.active = null
-      if (previous) await this.revoke(previous.accessToken)
+      if (previous) await this.revoke(previous)
+      if (revision !== this.revision) return false
+      const target: RevocationTarget = { confirmed: false, uncertain: true }
+      this.credential = target
       const started = Date.now()
       let token: string | undefined
       try {
         const response = await this.api.login(email, password)
         token = response.accessToken
+        target.token = token
         if (!token || !response.csrfToken) throw new ApiError(502, 'INVALID_SESSION')
         const principal = this.principal(await this.api.me(token))
         if (principal.tenantId !== null) throw new ApiError(502, 'INVALID_PRINCIPAL')
         const expiresAt = this.expiry(response.expiresInSeconds, started)
-        if (revision !== this.revision || expiresAt <= Date.now()) { await this.revoke(token); return false }
+        if (revision !== this.revision || expiresAt <= Date.now()) { await this.revoke(target); return false }
         this.publish({ accessToken: token, csrfToken: response.csrfToken, expiresAt, principal, tenantEpoch: ++this.epoch,
           refreshDeadline: started + 7 * 86400_000 - 1000 })
         return true
       } catch (error) {
-        if (token) await this.revoke(token)
+        if (!token && error instanceof ApiError && [400, 401, 403, 429].includes(error.status)) target.uncertain = false
+        if (token) await this.revoke(target)
         if (revision !== this.revision) return false
+        this.credential = null
         this.set({ status: 'unauthenticated' })
         throw error
       }
@@ -155,12 +171,15 @@ export class SessionController {
     return this.mutation(revision, async () => {
       if (revision !== this.revision) return false
       const active = this.active
-      if (!active) throw new ApiError(401, 'AUTH_REQUIRED')
+      const target = this.credential
+      if (!active || !target) throw new ApiError(401, 'AUTH_REQUIRED')
       let rotated: string | undefined
       try {
         const started = Date.now()
         const response = await this.api.selectTenant(active.accessToken, tenantId)
         rotated = response.accessToken
+        target.token = rotated
+        target.confirmed = false
         const principal = this.principal(response.principal)
         if (!rotated || principal.id !== active.principal.id || principal.sessionId !== active.principal.sessionId
           || principal.tenantId !== tenantId || !principal.allowedTenants.some((t) => t.id === tenantId)) {
@@ -171,7 +190,7 @@ export class SessionController {
         // Preserve a rotated token for a queued newer selection; never render it.
         if (revision !== this.revision) {
           if (this.current.status === 'authenticated') this.active = selected
-          else await this.revoke(rotated)
+          else await this.revoke(target)
           return false
         }
         this.active = selected
@@ -180,7 +199,7 @@ export class SessionController {
         this.publish(ready)
         return true
       } catch (error) {
-        if (rotated) await this.revoke(rotated)
+        if (rotated) await this.revoke(target)
         if (revision !== this.revision) return false
         // Only a definite denial leaves the old unselected credential usable.
         if (!(error instanceof ApiError) || ![400, 403, 404, 409, 422, 429].includes(error.status)) this.expire()
@@ -199,12 +218,14 @@ export class SessionController {
     const pending = this.serial(async () => {
       if (revision !== this.revision) return false
       const active = this.active
-      if (!active) return false
+      const target = this.credential
+      if (!active || !target) return false
       let token = active.accessToken
       try {
         const started = Date.now()
         const response = refresh ? await this.api.refresh(active.csrfToken) : null
         token = response?.accessToken ?? active.accessToken
+        if (response) { target.token = response.accessToken; target.confirmed = false }
         const principal = this.principal(await this.api.me(token))
         if (principal.id !== active.principal.id || principal.sessionId !== active.principal.sessionId
           || principal.tenantId !== active.principal.tenantId || (principal.tenantId !== null
@@ -215,7 +236,7 @@ export class SessionController {
           expiresAt: response ? this.expiry(response.expiresInSeconds, started, active.refreshDeadline) : active.expiresAt }
         if (revision !== this.revision) {
           if (this.current.status === 'authenticated') this.active = next
-          else if (response) await this.revoke(token)
+          else if (response) await this.revoke(target)
           return false
         }
         this.active = next
@@ -224,8 +245,9 @@ export class SessionController {
         this.publish(ready)
         return true
       } catch (error) {
-        if (revision !== this.revision) return false
+        if (revision !== this.revision) { await this.revoke(target); return false }
         this.expire(error instanceof ApiError && error.status === 401 ? 'access-revoked' : 'unavailable')
+        await this.revoke(target)
         throw error
       }
     })
@@ -233,18 +255,24 @@ export class SessionController {
     return this.pendingCheck
   }
   logout() {
+    if (this.pendingLogout?.revision === this.revision) return this.pendingLogout.result
     const revision = ++this.revision
-    const active = this.active
+    // Shared only with in-flight auth work: token rotations update this target
+    // even after the visible session and controller credential are cleared.
+    const target = this.credential
     this.active = null
+    this.credential = null
     ++this.epoch
     this.set({ status: 'unauthenticated', reason: 'logged-out' })
-    return this.serial(async () => {
-      const ok = !active || await this.revoke(active.accessToken)
+    const result = this.serial(async () => {
+      const ok = !target || await this.revoke(target)
       if (!ok && revision === this.revision) this.set({ status: 'unauthenticated', reason: 'logout-unconfirmed' })
       return ok
     })
+    this.pendingLogout = { revision, result }
+    return result
   }
   expire(reason: 'session-expired' | 'access-revoked' | 'unavailable' = 'session-expired') {
-    ++this.revision; ++this.epoch; this.active = null; this.set({ status: 'unauthenticated', reason })
+    ++this.revision; ++this.epoch; this.active = null; this.credential = null; this.set({ status: 'unauthenticated', reason })
   }
 }

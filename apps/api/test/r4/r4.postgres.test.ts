@@ -34,6 +34,8 @@ import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { RuntimeService } from '../../src/workflow-approval/runtime.service.js';
 import { R4Worker } from '../../src/automation-jobs/worker.js';
+import { registerNavigationProposalTests } from './navigation-proposal.cases.js';
+import { browserAuthJourney, browserAvailable } from './browser-auth.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
@@ -61,6 +63,7 @@ const native = (name: string, fn: () => Promise<void>) =>
   it(name, async () => {
     await fn();
   });
+registerNavigationProposalTests({ admin: () => admin, repository: () => repository, auth: () => auth, fresh: () => fresh(), actor });
 const connect = (url: string) => {
   const q = postgres(url, {
     max: 1,
@@ -421,6 +424,37 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  native('A20 navigation stays outside production runtime and endpoint remains absent', async () => {
+    if (process.env.R7_NAVIGATION_PROPOSAL_TESTS !== 'OWNER_APPROVED_DISPOSABLE_PROPOSAL_TEST') {
+      const [row] = await admin`SELECT to_regprocedure('educore_r4.navigation_access(uuid)') IS NULL absent`;
+      expect(row.absent).toBe(true);
+    }
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${fixture.tenant}/access/navigation`).expect(404);
+  });
+  native('A18 no-membership account authenticates but cannot select a tenant', async () => {
+    const isolatedEmail = randomUUID() + '@r4.invalid';
+    const user = await put(admin as unknown as Query, 'users', { email_normalized: isolatedEmail, display_name: 'No membership', status: 'ACTIVE' });
+    await admin`INSERT INTO credentials(user_id,password_hash,password_changed_at) VALUES(${user},${sharedPasswordHash},clock_timestamp())`;
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').set('Origin', auth.config.origins[0])
+      .send({ email: isolatedEmail, password }).expect(200);
+    expect(login.body.allowedTenants).toEqual([]);
+    const me = await request(app.getHttpServer()).get('/api/v1/auth/me').set('Authorization', `Bearer ${login.body.accessToken}`).expect(200);
+    expect(me.body.tenantId).toBeNull();
+    expect(me.body.allowedTenants).toEqual([]);
+    await request(app.getHttpServer()).post('/api/v1/auth/select-tenant').set('Authorization', `Bearer ${login.body.accessToken}`)
+      .send({ tenantId: fixture.tenant }).expect(403);
+    await request(app.getHttpServer()).post('/api/v1/auth/logout').set('Authorization', `Bearer ${login.body.accessToken}`).expect(204);
+  });
+  it.skipIf(!browserAvailable)('A19 actual Edge → React → NestJS → restricted PostgreSQL journey', async () => {
+    const f = await fresh();
+    const [user] = await admin`SELECT email_normalized FROM users WHERE id=${f.user}`;
+    const verified = await browserAuthJourney({ authUrl: authConnection, apiUrl: apiConnection, config: auth.config,
+      email: user.email_normalized as string, password, tenantId: f.tenant });
+    expect(Object.values(verified).every((value) => value === true)).toBe(true);
+    const [row] = await admin`SELECT count(*)::int revoked FROM auth_sessions WHERE user_id=${f.user} AND revoked_at IS NOT NULL`;
+    expect(row.revoked).toBeGreaterThanOrEqual(1);
+    (evidence.cases as Record<string, unknown>).browser = verified;
+  });
   it('D01 restricted runtime starts; anonymous principal cannot bind', async () => {
     expect(() => auth.me('invalid')).toThrow('AUTH_REQUIRED');
     await expect(
