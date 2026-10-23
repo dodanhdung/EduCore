@@ -48,6 +48,9 @@ import { ChildLearningScreen } from './screens/Role Portals/PO04/ChildLearningSc
 import { MyBillingScreen } from './screens/Role Portals/PO05/MyBillingScreen.tsx'
 import { portalPath } from './screens/Role Portals/PortalNavigation.ts'
 import './App.css'
+import { ManagementScreen } from './screens/Management & Operations/ManagementScreens.tsx'
+import { managementIds } from './screens/Management & Operations/ManagementTypes.ts'
+import type { ManagementId } from './screens/Management & Operations/ManagementTypes.ts'
 
 const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
 
@@ -176,6 +179,7 @@ export function AppView({ state, path, navigate, onLogout }: { state: AuthState;
       : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} viewerId={session?.principal.id} tenantId={tenant.id} />
       : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
       : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
+      : (managementIds as readonly string[]).includes(result.route.id) ? <ManagementScreen id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId ?? result.params.requestId} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout}>
     {screen}
