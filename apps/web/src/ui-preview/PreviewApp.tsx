@@ -51,8 +51,12 @@ import type { MoreId } from '../screens/Academic Management/AcademicMoreScreens.
 import { AppShell } from '../App.tsx'
 import { routes } from '../routes.ts'
 import './preview.css'
+import { ManagementScreen } from '../screens/Management & Operations/ManagementScreens.tsx'
+import { managementIds } from '../screens/Management & Operations/ManagementTypes.ts'
+import type { ManagementId } from '../screens/Management & Operations/ManagementTypes.ts'
+import { managementScenario } from './managementFixtures.ts'
 
-type PreviewScreenId = 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07' | 'BL08' | 'BL09' | 'BL10' | 'BL11' | 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07' | 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'
+type PreviewScreenId = ManagementId | 'AU02' | 'AU05' | 'GL01' | AcademicId | MoreId | 'AC09' | 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04' | 'AT05' | 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07' | 'BL08' | 'BL09' | 'BL10' | 'BL11' | 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07' | 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'
 
 const sampleTenants: Tenant[] = [
   { id: 'demo-hcm-01', name: 'EduCore Quận 1' },
@@ -98,7 +102,7 @@ const sampleNotifications = [
 
 export function PreviewApp({ screenId, navigation }: { screenId: string; navigation?: (path: string) => void }) {
   const [selectedTenantId, setSelectedTenantId] = useState(sampleTenants[0].id)
-  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07', 'PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as string[]).includes(screenId)) {
+  if (!(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07', 'PO01', 'PO02', 'PO03', 'PO04', 'PO05', ...managementIds] as string[]).includes(screenId)) {
     return <main className="ui-preview"><p role="alert">Màn hình preview không hợp lệ.</p></main>
   }
 
@@ -138,14 +142,14 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
   const assignmentData = previewState === 'empty' ? { ...assignmentFixtures, assignments: [], submissions: [] } : previewState === 'overdue' ? { ...assignmentFixtures, sampleNow: '2026-10-22T12:00:00+07:00' } : assignmentFixtures
   const studentId = query.get('studentId') ?? assignmentFixtures.studentId!
   const portalPath = (target: string, recordId?: string) => target === 'SC06' ? `/__ui-preview/SC06?source=portal&role=${id === 'PO01' ? 'teacher' : 'student'}` : target === 'AT03' ? `/__ui-preview/AT03?source=portal&role=${id === 'PO03' ? 'parent' : 'student'}${recordId ? `&studentId=${encodeURIComponent(recordId)}` : ''}` : target === 'AT02' ? `${portalPreviewPath(target, recordId)}&source=portal` : target === 'SC05' ? `${portalPreviewPath(target, recordId)}&source=portal` : portalPreviewPath(target, recordId)
-  return <main className={`ui-preview${id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') || id.startsWith('AS') || id.startsWith('PO') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}${id.startsWith('AS') ? ' ui-preview-assignments' : ''}`}>
+  return <main className={`ui-preview${(managementIds as readonly string[]).includes(id) || id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') || id.startsWith('AS') || id.startsWith('PO') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}${id.startsWith('AS') ? ' ui-preview-assignments' : ''}${(managementIds as readonly string[]).includes(id) ? ' ui-preview-management' : ''}`}>
     <header className="ui-preview-banner">
       <div>
         <strong>Dữ liệu mẫu — UI Preview</strong>
         <span>Chỉ để xem giao diện · Không gọi API · Không tạo phiên đăng nhập</span>
       </div>
       <nav aria-label="Chọn màn hình preview">
-        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07', 'PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
+        {(['AU02', 'AU05', 'GL01', 'AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09', 'SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04', 'AT05', 'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL08', 'BL09', 'BL10', 'BL11', 'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07', 'PO01', 'PO02', 'PO03', 'PO04', 'PO05', ...managementIds] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}
         <a href="/__ui-preview/SC03?state=conflict" aria-current={id === 'SC03' && previewState === 'conflict' ? 'page' : undefined}>SC04</a>
       </nav>
     </header>
@@ -165,7 +169,11 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
     {id.startsWith('AS') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu bài tập"><a href="/__ui-preview/AS01?state=empty">Danh sách rỗng</a><a href="/__ui-preview/AS01?state=loading">Đang tải</a><a href="/__ui-preview/AS01?state=error">Lỗi tải</a><a href="/__ui-preview/AS02?state=validation">Lỗi biểu mẫu</a><a href="/__ui-preview/AS02?assignmentId=assignment-chuong-3&amp;state=published">Bài đã giao</a><a href="/__ui-preview/AS03?state=empty">Chưa có bài nộp</a><a href="/__ui-preview/AS04?state=empty">Hàng chờ rỗng</a><a href="/__ui-preview/AS05?submissionId=submission-gia-han">Nháp điểm</a><a href="/__ui-preview/AS05?submissionId=submission-my-linh&amp;state=correction">Điều chỉnh</a><a href="/__ui-preview/AS06?state=empty">Học sinh rỗng</a><a href="/__ui-preview/AS07?state=late">Nộp muộn</a><a href="/__ui-preview/AS07?state=expired">Hết hạn</a><a href="/__ui-preview/AS07?assignmentId=assignment-dai-so&amp;state=closed">Đã chấm</a></nav>}
     {(id === 'AS06' || id === 'AS07' || id === 'AS05') && <nav className="ui-preview-variants" aria-label="Trạng thái bổ sung"><a href="/__ui-preview/AS06?state=overdue">Quá hạn</a><a href="/__ui-preview/AS07?state=upload-error">Lỗi tệp</a><a href="/__ui-preview/AS05?state=missing-file">Tệp không truy cập</a><a href="/__ui-preview/AS05?state=read-only">Chỉ xem</a></nav>}
     {id.startsWith('PO') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của cổng vai trò">{(['day-off', 'no-sessions', 'no-students', 'attendance-pending', 'overdue-grading', 'no-assignments', 'draft-grade', 'cancelled', 'one-child', 'no-links', 'revoked', 'no-activity', 'no-enrollment', 'incomplete', 'no-invoices', 'zero-wallet', 'loading', 'forbidden'] as const).map((item) => <a key={item} href={`/__ui-preview/${id}?state=${item}`}>{item}</a>)}<a href="/__ui-preview/PO05?role=student">Học sinh xem ví</a><a href="/__ui-preview/PO04?studentId=unknown">Con ngoài phạm vi</a><a href="/__ui-preview/PO05?studentId=unknown">Ví ngoài phạm vi</a></nav>}
+    {(managementIds as readonly string[]).includes(id) && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu quản lý">{['empty', 'loading', 'unauthenticated', 'forbidden', 'not-found', 'conflict', 'invalid', 'error', 'partial', 'approved', 'failed', 'self-approved', 'read-only'].map((variant) => <a key={variant} href={`/__ui-preview/${id}?state=${variant}`}>{variant}</a>)}</nav>}
     <div className="ui-preview-content">
+      {(managementIds as readonly string[]).includes(id) && <AppShell route={routes.find((route) => route.id === id)!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={managementIds.map((target) => <a key={target} href={`/__ui-preview/${target}`} aria-current={id === target ? 'page' : undefined}>{routes.find((route) => route.id === target)?.name}</a>)}>
+        <ManagementScreen key={`${id}:${previewState ?? ''}`} id={id as ManagementId} tenantId={selectedTenant.id} preview {...managementScenario(previewState)} selectedId={query.get('recordId') ?? (id === 'OP02' ? 'MB-031' : id === 'OP05' ? 'YC-24018' : undefined)} canReview={previewState !== 'read-only'} open={(target, recordId) => navigate(`/__ui-preview/${target}${recordId ? '?recordId=' + encodeURIComponent(recordId) : ''}`)} />
+      </AppShell>}
       {id === 'AU02' && <TenantSelectionScreen
         tenants={sampleTenants}
         onSelect={async (tenantId) => { setSelectedTenantId(tenantId) }}
