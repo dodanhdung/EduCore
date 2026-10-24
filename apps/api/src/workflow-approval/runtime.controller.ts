@@ -65,7 +65,35 @@ export class RuntimeController {
     @Param('tenantId') t: string,
     @Query() q: unknown,
   ) {
-    return this.read(a, t, 'MEMBERS', page(q));
+    return this.service.managementRead(bearer(a), uuid(t), 'MEMBERS', undefined, page(q));
+  }
+  @Get('members/:id') member(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string,
+    @Param('id') id: string,
+  ) {
+    return this.service.managementRead(bearer(a), uuid(t), 'MEMBER', uuid(id));
+  }
+  @Get('parent-student-links') relationships(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string,
+    @Query() q: unknown,
+  ) {
+    return this.service.managementRead(bearer(a), uuid(t), 'RELATIONSHIPS', undefined, page(q));
+  }
+  @Get('parent-student-links/parents') parents(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string,
+    @Query() q: unknown,
+  ) {
+    return this.service.managementRead(bearer(a), uuid(t), 'PARENTS', undefined, page(q));
+  }
+  @Get('parent-student-links/students') studentsForLinks(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string,
+    @Query() q: unknown,
+  ) {
+    return this.service.managementRead(bearer(a), uuid(t), 'STUDENTS', undefined, page(q));
   }
   @Post('members') createMember(
     @Headers('authorization') a: string | undefined,

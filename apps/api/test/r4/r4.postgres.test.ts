@@ -2757,6 +2757,46 @@ describe('R4 native PostgreSQL', () => {
         .expect(200);
     },
   );
+  native('R8 management readers require tenant grants and return current assignments', async () => {
+    const f = await fresh(), s = await sessionFor(f), subject = await actor(f, 'STUDENT', 'STUDENT', f.student);
+    const list = await runtime.managementRead(s.accessToken, f.tenant, 'MEMBERS') as { items: { id: string; email: string; assignments: { roleCode: string }[] }[] };
+    expect(list.items.some((m) => m.id === subject.member && m.assignments.some((a) => a.roleCode === 'STUDENT'))).toBe(true);
+    const detail = await runtime.managementRead(s.accessToken, f.tenant, 'MEMBER', subject.member) as { id: string; email: string; assignments: { roleCode: string }[] };
+    expect(detail.id).toBe(subject.member);
+    expect(detail.email).toBeTruthy();
+    await expect(runtime.managementRead(subject.accessToken, f.tenant, 'MEMBERS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    const other = await fresh();
+    await expect(runtime.managementRead(s.accessToken, other.tenant, 'MEMBER', subject.member)).rejects.toThrow();
+  });
+  native('R8 relationship reader tracks pending, verified and revoked without opening Parent access', async () => {
+    const f = await fresh(), s = await sessionFor(f), parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    const created = await runtime.iam(s.accessToken, f.tenant, {
+      operation: 'PARENT_CREATE', parentMembershipId: parent.member, studentId: f.student,
+      evidenceReference: 'R8 evidence', reason: 'R8 create',
+    }) as { id: string };
+    const links = () => runtime.managementRead(s.accessToken, f.tenant, 'RELATIONSHIPS') as Promise<{ items: { id: string; status: string }[] }>;
+    expect((await links()).items.find((l) => l.id === created.id)?.status).toBe('PENDING_VERIFICATION');
+    await expect(runtime.managementRead(parent.accessToken, f.tenant, 'RELATIONSHIPS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await runtime.iam(s.accessToken, f.tenant, { operation: 'PARENT_VERIFY', id: created.id, reason: 'R8 verify' });
+    expect((await links()).items.find((l) => l.id === created.id)?.status).toBe('ACTIVE');
+    await runtime.iam(s.accessToken, f.tenant, { operation: 'PARENT_REVOKE', id: created.id, reason: 'R8 revoke' });
+    expect((await links()).items.find((l) => l.id === created.id)?.status).toBe('INACTIVE');
+    const other = await fresh();
+    await expect(runtime.managementRead(s.accessToken, other.tenant, 'RELATIONSHIPS')).rejects.toThrow();
+  });
+  native('R8 relationship selectors require their own TENANT read permissions', async () => {
+    const f = await fresh();
+    const academic = await actor(f, 'ACADEMIC_STAFF');
+    const parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    const parents = await runtime.managementRead(academic.accessToken, f.tenant, 'PARENTS') as { items: { id: string }[] };
+    const students = await runtime.managementRead(academic.accessToken, f.tenant, 'STUDENTS') as { items: { id: string }[] };
+    expect(parents.items.some((p) => p.id === parent.member)).toBe(true);
+    expect(students.items.some((s) => s.id === f.student)).toBe(true);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await expect(runtime.managementRead(accountant.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await expect(runtime.managementRead(accountant.accessToken, f.tenant, 'STUDENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await expect(runtime.managementRead(parent.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+  });
   native(
     'A15 unrelated TENANT role cannot widen a CLASS financial grant',
     async () => {

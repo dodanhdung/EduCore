@@ -1,7 +1,7 @@
 import { ApiClient, ApiError } from './api.ts'
 import type { NavigationReader, NavigationResponse } from './auth.ts'
 
-export const NAVIGATION_SCREENS = ['OP01', 'OP04', 'OP05', 'OP06', 'OP07'] as const
+export const NAVIGATION_SCREENS = ['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07'] as const
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const FIELDS = ['userId', 'sessionId', 'tenantId', 'screenIds', 'validUntil']
 
@@ -16,7 +16,8 @@ export function navigationResponse(value: unknown): NavigationResponse {
   if (!Array.isArray(ids) || ids.length > NAVIGATION_SCREENS.length
     || ids.some((id: unknown) => !NAVIGATION_SCREENS.includes(id as typeof NAVIGATION_SCREENS[number]))
     || ids.some((id: string, i: number) => i > 0 && ids[i - 1] >= id)
-    || ids.includes('OP04') !== ids.includes('OP05')) throw invalid()
+    || ids.includes('OP04') !== ids.includes('OP05')
+    || (ids.includes('OP02') && !ids.includes('OP01'))) throw invalid()
   return item as NavigationResponse
 }
 

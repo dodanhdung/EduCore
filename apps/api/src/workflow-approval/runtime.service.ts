@@ -31,6 +31,11 @@ export class RuntimeService {
       JSON.stringify(query),
     );
   }
+  managementRead(token: string, tenant: string, kind: string, id?: string, query: Record<string, number> = {}) {
+    return this.run(token,
+      'SELECT educore_r4.management_read($1::uuid,$2::text,$3::uuid,$4::int,$5::int) result',
+      tenant, kind, id ?? null, query.page ?? 1, query.pageSize ?? 20);
+  }
   billing(token: string, tenant: string, body: Record<string, unknown>) {
     return this.run(
       token,

@@ -1,6 +1,6 @@
 import { InternalServerErrorException } from '@nestjs/common';
 
-export const NAVIGATION_SCREENS = ['OP01', 'OP04', 'OP05', 'OP06', 'OP07'] as const;
+export const NAVIGATION_SCREENS = ['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07'] as const;
 export type NavigationScreen = (typeof NAVIGATION_SCREENS)[number];
 export type NavigationAccessResponse = {
   userId: string;
@@ -24,6 +24,7 @@ export function navigationAccess(value: unknown): NavigationAccessResponse {
   if (!Array.isArray(ids) || ids.length > NAVIGATION_SCREENS.length
     || ids.some((id: unknown) => !NAVIGATION_SCREENS.includes(id as NavigationScreen))
     || ids.some((id: string, i: number) => i > 0 && ids[i - 1] >= id)
-    || ids.includes('OP04') !== ids.includes('OP05')) throw invalid();
+    || ids.includes('OP04') !== ids.includes('OP05')
+    || (ids.includes('OP02') && !ids.includes('OP01'))) throw invalid();
   return item as NavigationAccessResponse;
 }
