@@ -59,6 +59,7 @@ async function cdp(url: string) {
 
 export async function browserAuthJourney(options: {
   authUrl: string; apiUrl: string; config: AuthConfig; email: string; password: string; tenantId: string;
+  recoveryOtp?: (email: string) => Promise<string | undefined>;
 }) {
   if (!browserAvailable) throw Error('EDGE_TEST_ENVIRONMENT_UNAVAILABLE');
   if (process.env.R4_TEST_DISPOSABLE !== 'I_OWN_THIS_DISPOSABLE_CLUSTER') throw Error('DISPOSABLE_REQUIRED');
@@ -169,7 +170,10 @@ export async function browserAuthJourney(options: {
     await send('Input.insertText', { text: options.email }, sessionId);
     await evaluate('document.querySelector("form").requestSubmit()');
     await until(() => evaluate<boolean>(`!!document.querySelector('a[href="/reset-password"]')`), 'RECOVERY_ACCEPTED');
-    const capture = await until(async () => delivery.messages.find((message) => message.email === options.email && message.purpose === 'PASSWORD_RESET') ?? false, 'TEST_OTP_CAPTURE');
+    const capture = await until(async () => {
+      const code = await options.recoveryOtp?.(options.email);
+      return code ? { otp: code } : delivery.messages.find((message) => message.email === options.email && message.purpose === 'PASSWORD_RESET') ?? false;
+    }, 'TEST_OTP_CAPTURE');
     await evaluate(`document.querySelector('a[href="/reset-password"]').click()`);
     await until(() => evaluate<boolean>('location.pathname === "/reset-password" && !!document.querySelector("#reset-email")'), 'RESET_FORM');
     await send('Page.navigate', { url: `${origin}/reset-password` }, sessionId);

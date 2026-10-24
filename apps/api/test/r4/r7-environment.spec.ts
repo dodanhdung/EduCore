@@ -31,11 +31,14 @@ describe('R7 explicit local environment loading', () => {
       NODE_ENV: 'development', R4_JWT_SECRET: 'k'.repeat(64), R4_OTP_PEPPER: 'p'.repeat(64),
       R4_JWT_ISSUER: 'educore-local', R4_JWT_AUDIENCE: 'web-local',
       R4_WEB_ORIGINS: 'http://localhost:5173', R4_OTP_MODE: 'unavailable',
+      R4_RECOVERY_ACTIVE_KEY_ID: 'r8-test',
+      R4_RECOVERY_ACTIVE_KEY: Buffer.alloc(32, 9).toString('base64'),
     };
     const config = runtimeConfig(env);
     expect(config.auth.origins).toEqual(['http://localhost:5173']);
     expect(config.auth.production).toBe(false);
     expect(config.workerEnabled).toBe(false);
+    expect(runtimeConfig({ ...env, R4_RECOVERY_ACTIVE_KEY_ID: undefined, R4_RECOVERY_ACTIVE_KEY: undefined }).auth.recoveryKey).toBeUndefined();
     expect(() => runtimeConfig({ ...env, R4_WORKER_ENABLED: '1' })).toThrow('R4_WORKER_URL_REQUIRED');
   });
 });

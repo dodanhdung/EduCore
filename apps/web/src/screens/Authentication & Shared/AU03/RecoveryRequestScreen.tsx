@@ -56,7 +56,7 @@ export function RecoveryRequestScreen({ navigate, onRequest }: {
         <PrimaryButton disabled={submitting}>{submitting ? 'Đang tiếp nhận…' : 'Gửi mã xác minh'}</PrimaryButton>
         {feedback && <SafeFeedback>{feedback}</SafeFeedback>}
         {accepted && <>
-          <SafeFeedback tone="info">Nếu tài khoản đủ điều kiện, mã có thể được gửi đến email. Vui lòng kiểm tra hộp thư và thư rác.</SafeFeedback>
+          <SafeFeedback tone="info">Nếu tài khoản đủ điều kiện, mã có thể được gửi đến email. Nếu chưa nhận mã, kiểm tra thư rác và thử lại sau ít nhất 1 phút.</SafeFeedback>
           <AppLink to="/reset-password" navigate={navigate} className="ec-back-link" ref={nextLink}>Nhập mã và đặt lại mật khẩu</AppLink>
         </>}
       </form>

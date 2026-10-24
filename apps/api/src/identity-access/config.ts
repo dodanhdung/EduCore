@@ -1,4 +1,5 @@
 import type { AuthConfig } from './auth.service.js';
+import { parseRecoveryKey } from './recovery-envelope.js';
 import {
   CaptureOtpDelivery,
   SmtpOtpDelivery,
@@ -16,12 +17,16 @@ export function runtimeConfig(env: NodeJS.ProcessEnv): {
   workerEnabled: boolean;
 } {
   const production = env.NODE_ENV === 'production';
+  const recoveryId = env.R4_RECOVERY_ACTIVE_KEY_ID;
+  const recoveryMaterial = env.R4_RECOVERY_ACTIVE_KEY;
+  if (Boolean(recoveryId) !== Boolean(recoveryMaterial)) throw Error('RECOVERY_KEY_CONFIG_INVALID');
   const auth: AuthConfig = {
     jwtSecret: required(env, 'R4_JWT_SECRET'),
     otpPepper: required(env, 'R4_OTP_PEPPER'),
     issuer: required(env, 'R4_JWT_ISSUER'),
     audience: required(env, 'R4_JWT_AUDIENCE'),
     production,
+    recoveryKey: recoveryId && recoveryMaterial ? parseRecoveryKey(recoveryId, recoveryMaterial) : undefined,
     origins: required(env, 'R4_WEB_ORIGINS')
       .split(',')
       .map((s) => s.trim()),

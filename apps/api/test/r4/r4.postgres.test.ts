@@ -4,7 +4,11 @@ import postgres from 'postgres';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, createHmac } from 'node:crypto';
+import { fork, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer, type Socket } from 'node:net';
+import { performance } from 'node:perf_hooks';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,10 +40,18 @@ import { RuntimeService } from '../../src/workflow-approval/runtime.service.js';
 import { R4Worker } from '../../src/automation-jobs/worker.js';
 import { registerNavigationProposalTests } from './navigation-proposal.cases.js';
 import { browserAuthJourney, browserAvailable } from './browser-auth.js';
+import { RecoveryWorker } from '../../src/identity-access/recovery-worker.js';
+import { decryptRecovery, parseRecoveryKey } from '../../src/identity-access/recovery-envelope.js';
+import { encryptRecovery } from '../../src/identity-access/recovery-envelope.js';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../src/generated/prisma/client.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
 let auth: AuthService;
+let recoveryWorker: RecoveryWorker;
+let recoveryDb: PrismaClient;
+let recoveryKey: ReturnType<typeof parseRecoveryKey>;
 const delivery = new CaptureOtpDelivery();
 let app: INestApplication;
 let fixture: Awaited<ReturnType<typeof seed>>;
@@ -47,12 +59,61 @@ const password = 'Test password 123!';
 let email: string;
 let authConnection: string,
   apiConnection: string,
+  otpWorkerConnection: string,
   operatorConnection: string,
   secondWorkerConnection: string;
 let firstWorkerConnection: string;
 let runtime: RuntimeService, worker: R4Worker, sharedPasswordHash: string;
 const clients: postgres.Sql[] = [];
 const evidence: Record<string, unknown> = { races: [], cases: {} };
+type Timing = { known: boolean; ms: number; block: number };
+const quantile = (values: number[], fraction: number) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * fraction;
+  const below = Math.floor(position);
+  return sorted[below] + (sorted[Math.ceil(position)] - sorted[below]) * (position - below);
+};
+function timingMetrics(rows: Timing[]) {
+  const known = rows.filter((r) => r.known).map((r) => r.ms);
+  const unknown = rows.filter((r) => !r.known).map((r) => r.ms);
+  const sortedUnknown = [...unknown].sort((a, b) => a - b);
+  const lowerBound = (value: number, upper: boolean) => {
+    let lo = 0, hi = sortedUnknown.length;
+    while (lo < hi) {
+      const middle = (lo + hi) >>> 1;
+      if (sortedUnknown[middle] < value || (upper && sortedUnknown[middle] === value)) lo = middle + 1;
+      else hi = middle;
+    }
+    return lo;
+  };
+  const auc = known.reduce((sum, value) => sum + (lowerBound(value, false) + lowerBound(value, true)) / 2, 0)
+    / (known.length * unknown.length);
+  return { auc, medianDiff: quantile(known, .5) - quantile(unknown, .5),
+    p95Diff: quantile(known, .95) - quantile(unknown, .95),
+    pooledMedian: quantile([...known, ...unknown], .5), pooledP95: quantile([...known, ...unknown], .95),
+    knownMedian: quantile(known, .5), unknownMedian: quantile(unknown, .5),
+    knownP95: quantile(known, .95), unknownP95: quantile(unknown, .95) };
+}
+function timingAnalysis(rows: Timing[], seedValue: number) {
+  const blocks = Array.from({ length: 100 }, (_, index) => rows.filter((r) => r.block === index));
+  const point = timingMetrics(rows);
+  let state = seedValue;
+  const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  const samples = Array.from({ length: 10_000 }, () => {
+    const sample: Timing[] = [];
+    for (let i = 0; i < 100; i++) sample.push(...blocks[Math.floor(random() * 100)]);
+    return timingMetrics(sample);
+  });
+  const ci = (name: 'auc' | 'medianDiff' | 'p95Diff') =>
+    [quantile(samples.map((s) => s[name]), .025), quantile(samples.map((s) => s[name]), .975)];
+  const intervals = { auc: ci('auc'), medianDiff: ci('medianDiff'), p95Diff: ci('p95Diff') };
+  const medianLimit = Math.max(10, .05 * point.pooledMedian);
+  const p95Limit = Math.max(25, .1 * point.pooledP95);
+  const pass = intervals.auc[0] >= .45 && intervals.auc[1] <= .55
+    && intervals.medianDiff[0] >= -medianLimit && intervals.medianDiff[1] <= medianLimit
+    && intervals.p95Diff[0] >= -p95Limit && intervals.p95Diff[1] <= p95Limit;
+  return { point, intervals, medianLimit, p95Limit, pass };
+}
 afterEach((context) =>
   context.onTestFinished(() => {
     (evidence.cases as Record<string, string>)[context.task.name] =
@@ -352,6 +413,7 @@ beforeAll(async () => {
     return next.toString();
   };
   authConnection = await connection('educore_r4_auth');
+  otpWorkerConnection = await connection('educore_r4_otp_delivery');
   apiConnection = await connection('educore_r4_api');
   const firstWorker = await connection('educore_r4_worker');
   firstWorkerConnection = firstWorker;
@@ -367,6 +429,12 @@ beforeAll(async () => {
   secondWorkerConnection = second.toString();
   repository = new R4Repository(authConnection, apiConnection, firstWorker);
   await repository.assertRuntime();
+  recoveryKey = parseRecoveryKey('r8-test', randomBytes(32).toString('base64'));
+  recoveryDb = new PrismaClient({ adapter: new PrismaPg({ connectionString: otpWorkerConnection }) });
+  recoveryWorker = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), {
+    send: async (address, otp) => { delivery.messages.push({ email: address, otp, purpose: 'PASSWORD_RESET' }); return 'ACCEPTED'; },
+  });
+  await recoveryWorker.assertRuntime();
   auth = new AuthService(repository, delivery, {
     jwtSecret: randomBytes(32).toString('hex'),
     otpPepper: randomBytes(32).toString('hex'),
@@ -374,6 +442,7 @@ beforeAll(async () => {
     audience: 'educore-web',
     origins: ['http://localhost:5173'],
     production: false,
+    recoveryKey,
   });
   sharedPasswordHash = await passwordHash(password);
   fixture = await fresh();
@@ -415,6 +484,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   await repository?.close();
+  await recoveryDb?.$disconnect();
   await Promise.all(clients.map((q) => q.end()));
   await admin?.end();
   const path = join(
@@ -425,6 +495,600 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  const issueRecovery = async () => {
+    const base = await fresh();
+    const address = randomUUID() + '@r4.invalid';
+    const userId = await put(admin as unknown as Query, 'users', {
+      email_normalized: address, display_name: 'Recovery fixture', status: 'ACTIVE',
+    });
+    const f = { ...base, user: userId };
+    await auth.requestOtp(address, 'PASSWORD_RESET');
+    const [otp] = await admin`SELECT id FROM public.password_reset_otps WHERE user_id=${f.user} AND purpose='PASSWORD_RESET' ORDER BY requested_at DESC LIMIT 1`;
+    return { f, email: address, otpId: otp.id as string };
+  };
+  const childEvents = new WeakMap<ChildProcess, Record<string, string>[]>();
+  const crashChild = (mode: string) => {
+    const child = fork(resolve('test/r4/recovery-crash-child.mjs'), [], {
+      cwd: resolve('.'), silent: true,
+      env: { ...process.env, NODE_ENV: 'test', R4_CRASH_MODE: mode,
+        R4_AUTH_URL: authConnection, R4_API_URL: apiConnection,
+        R4_CRASH_KEY: recoveryKey.key.toString('base64'), R4_CRASH_JWT: auth.config.jwtSecret,
+        R4_CRASH_PEPPER: auth.config.otpPepper, R4_OTP_WORKER_URL: otpWorkerConnection,
+        R4_RECOVERY_KEYS: JSON.stringify({ [recoveryKey.id]: recoveryKey.key.toString('base64') }),
+        R4_SMTP_HOST: '127.0.0.1', R4_SMTP_PORT: process.env.R4_CRASH_SMTP_PORT ?? '1',
+        R4_SMTP_FROM: 'otp@r4.invalid' },
+    });
+    const events: Record<string, string>[] = [];
+    childEvents.set(child, events);
+    child.on('message', (event) => events.push(event as Record<string, string>));
+    return child;
+  };
+  const childPhase = (child: ChildProcess, wanted: string) => new Promise<Record<string, string>>((resolvePhase, rejectPhase) => {
+    const previous = childEvents.get(child)?.find((event) => event.phase === wanted);
+    if (previous) { resolvePhase(previous); return; }
+    const timer = setTimeout(() => { cleanup(); rejectPhase(Error('CHILD_PHASE_TIMEOUT')); }, 15_000);
+    const message = (raw: unknown) => {
+      const event = raw as Record<string, string>;
+      if (event.phase === wanted) { cleanup(); resolvePhase(event); }
+      else if (event.phase === 'ERROR') { cleanup(); rejectPhase(Error('CHILD_FAILED')); }
+    };
+    const exit = () => { cleanup(); rejectPhase(Error('CHILD_EXITED_EARLY')); };
+    const cleanup = () => { clearTimeout(timer); child.off('message', message); child.off('exit', exit); };
+    child.on('message', message); child.once('exit', exit);
+  });
+  const stopChild = async (child: ChildProcess) => {
+    const exited = once(child, 'exit');
+    expect(child.kill()).toBe(true);
+    await exited;
+  };
+  native('R8 D01 process kills preserve one committed OTP and recover the same code', async () => {
+    const address = randomUUID() + '@r4.invalid';
+    const userId = await put(admin as unknown as Query, 'users', {
+      email_normalized: address, display_name: 'Crash fixture', status: 'ACTIVE',
+    });
+    const apiChild = crashChild('issue-http');
+    try {
+      const ready = await childPhase(apiChild, 'HTTP_READY');
+      const response = await fetch(`http://127.0.0.1:${ready.port}/api/v1/auth/password/otp/request`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: address }),
+      });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ accepted: true });
+    }
+    finally { if (apiChild.exitCode === null) await stopChild(apiChild); }
+    const [issued] = await admin`SELECT o.id,o.otp_hash,q.status FROM public.password_reset_otps o
+      JOIN educore_r4.recovery_otp_deliveries q ON q.otp_id=o.id
+      WHERE o.user_id=${userId} AND o.consumed_at IS NULL`;
+    expect(issued.status).toBe('READY');
+    const [stored] = await admin`SELECT key_id,nonce,ciphertext,tag FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${issued.id}`;
+    const originalOtp = decryptRecovery(issued.id as string, {
+      keyId: stored.key_id as string, nonce: stored.nonce as Buffer,
+      ciphertext: stored.ciphertext as Buffer, tag: stored.tag as Buffer,
+    }, recoveryKey).otp;
+    expect(createHmac('sha256', auth.config.otpPepper)
+      .update(JSON.stringify([address, 'PASSWORD_RESET', originalOtp])).digest('hex')).toBe(issued.otp_hash);
+    const replacement = crashChild('complete');
+    try {
+      const done = await childPhase(replacement, 'COMPLETED');
+      expect(done.state).toBe('DONE');
+      const resent = await childPhase(replacement, 'RESENT');
+      expect(resent.otpDigest).toBe(createHash('sha256').update(originalOtp).digest('hex'));
+      if (replacement.exitCode === null) await once(replacement, 'exit');
+    } finally { if (replacement.exitCode === null) await stopChild(replacement); }
+    const [after] = await admin`SELECT q.status,q.attempt_count,count(o.id)::int otp_count
+      FROM educore_r4.recovery_otp_deliveries q JOIN public.password_reset_otps o ON o.id=q.otp_id
+      WHERE q.otp_id=${issued.id} GROUP BY q.status,q.attempt_count`;
+    expect(after).toMatchObject({ status: 'ACCEPTED_BY_SMTP', attempt_count: 1, otp_count: 1 });
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${issued.id}`;
+
+    for (const mode of ['before-send', 'during-smtp', 'after-250'] as const) {
+      const item = await issueRecovery();
+      let accepted = 0;
+      let receivedOtp = '';
+      let dataArrived!: () => void;
+      const dataSeen = new Promise<void>((resolveSeen) => { dataArrived = resolveSeen; });
+      const sockets = new Set<Socket>();
+      const server = createServer((socket) => {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+        socket.on('error', () => undefined);
+        socket.write('220 fake-smtp.local ESMTP\r\n');
+        let pending = '', inData = false, message = '';
+        socket.on('data', (chunk) => {
+          pending += chunk.toString('utf8');
+          while (pending.includes('\r\n')) {
+            const end = pending.indexOf('\r\n');
+            const line = pending.slice(0, end); pending = pending.slice(end + 2);
+            if (inData) {
+              if (line === '.') {
+                inData = false;
+                receivedOtp = /\b\d{6}\b/.exec(message)?.[0] ?? '';
+                dataArrived();
+                if (mode === 'after-250') { accepted++; socket.write('250 queued locally\r\n'); }
+              } else message += line + '\n';
+            } else if (/^(EHLO|HELO) /i.test(line)) socket.write('250 fake-smtp.local\r\n');
+            else if (/^(MAIL FROM:|RCPT TO:)/i.test(line)) socket.write('250 ok\r\n');
+            else if (line === 'DATA') { inData = true; socket.write('354 continue\r\n'); }
+            else if (line === 'QUIT') { socket.write('221 bye\r\n'); socket.end(); }
+          }
+        });
+      });
+      await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+      const port = server.address();
+      if (!port || typeof port === 'string') throw Error('FAKE_SMTP_BIND_FAILED');
+      process.env.R4_CRASH_SMTP_PORT = String(port.port);
+      const child = crashChild(mode);
+      let workerId = '';
+      let fence = '';
+      try {
+        const ready = await childPhase(child, 'WORKER_READY');
+        workerId = ready.workerId;
+        if (mode === 'before-send') await childPhase(child, 'BEFORE_SEND');
+        else {
+          await Promise.race([dataSeen, new Promise((_, rejectWait) => setTimeout(() => rejectWait(Error('SMTP_DATA_TIMEOUT')), 15_000))]);
+          if (mode === 'after-250') {
+            const acceptedEvent = await childPhase(child, 'AFTER_SMTP');
+            expect(acceptedEvent.result).toBe('ACCEPTED');
+            expect(acceptedEvent.otpDigest).toBe(createHash('sha256').update(receivedOtp).digest('hex'));
+          }
+        }
+        const [leased] = await admin`SELECT status,attempt_count,fencing_token FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${item.otpId}`;
+        expect(leased).toMatchObject({ status: 'SENDING', attempt_count: 1 });
+        fence = String(leased.fencing_token);
+      } finally {
+        if (child.exitCode === null) await stopChild(child);
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+        delete process.env.R4_CRASH_SMTP_PORT;
+      }
+      expect(accepted).toBe(mode === 'after-250' ? 1 : 0);
+      await admin`UPDATE educore_r4.recovery_otp_deliveries SET lease_until=clock_timestamp()-interval '1 second' WHERE otp_id=${item.otpId}`;
+      expect(await recoveryWorker.sweep()).toBeGreaterThanOrEqual(1);
+      const [waiting] = await admin`SELECT status,attempt_count,fencing_token,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${item.otpId}`;
+      expect(waiting).toMatchObject({ status: 'RETRY_WAIT', attempt_count: 1 });
+      expect(waiting.ciphertext).not.toBeNull();
+      expect(BigInt(waiting.fencing_token as string)).toBeGreaterThan(BigInt(fence));
+      const [stale] = await recoveryDb.$queryRawUnsafe<{ result: boolean }[]>(
+        'SELECT educore_r4.check_recovery_delivery($1::uuid,$2::uuid,$3::bigint,$4::text) result',
+        item.otpId, workerId, fence, item.email);
+      expect(stale.result).toBe(false);
+      await admin`UPDATE educore_r4.recovery_otp_deliveries SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE otp_id=${item.otpId}`;
+      const sentBefore = delivery.messages.length;
+      expect(await recoveryWorker.tick()).toBe('DONE');
+      expect(delivery.messages.length).toBe(sentBefore + 1);
+      expect(delivery.messages.at(-1)?.email).toBe(item.email);
+      if (receivedOtp) expect(delivery.messages.at(-1)?.otp).toBe(receivedOtp);
+      const [recovered] = await admin`SELECT status,attempt_count,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${item.otpId}`;
+      expect(recovered).toMatchObject({ status: 'ACCEPTED_BY_SMTP', attempt_count: 2, ciphertext: null });
+      const [oneOtp] = await admin`SELECT count(*)::int total FROM public.password_reset_otps WHERE user_id=${item.f.user}`;
+      expect(oneOtp.total).toBe(1);
+      await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${item.otpId}`;
+      (evidence.cases as Record<string, string>)[`R8 process kill ${mode}`] = 'PASS';
+    }
+  });
+  native('R8 D01 killed worker cannot send expired, revoked, superseded or fifth-attempt OTP', async () => {
+    const killBeforeSend = async () => {
+      const child = crashChild('before-send');
+      try { await childPhase(child, 'BEFORE_SEND'); }
+      finally { if (child.exitCode === null) await stopChild(child); }
+    };
+    const baseline = delivery.messages.length;
+    const expired = await issueRecovery();
+    await killBeforeSend();
+    await admin`UPDATE public.password_reset_otps SET requested_at=v.at-interval '16 minutes',
+      expires_at=v.at-interval '1 minute' FROM (SELECT clock_timestamp() at) v WHERE id=${expired.otpId}`;
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET lease_until=clock_timestamp()-interval '1 second' WHERE otp_id=${expired.otpId}`;
+    expect(await recoveryWorker.sweep()).toBeGreaterThanOrEqual(1);
+    const [expiredTask] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${expired.otpId}`;
+    expect(expiredTask).toMatchObject({ status: 'EXPIRED', ciphertext: null });
+
+    const revoked = await issueRecovery();
+    await killBeforeSend();
+    await admin`UPDATE public.users SET status='DISABLED' WHERE id=${revoked.f.user}`;
+    const [revokedTask] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${revoked.otpId}`;
+    expect(revokedTask).toMatchObject({ status: 'CANCELLED', ciphertext: null });
+
+    const superseded = await issueRecovery();
+    await killBeforeSend();
+    await admin`UPDATE public.password_reset_otps SET requested_at=requested_at-interval '2 minutes',
+      expires_at=expires_at-interval '2 minutes' WHERE id=${superseded.otpId}`;
+    await auth.requestOtp(superseded.email, 'PASSWORD_RESET');
+    const [supersededTask] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${superseded.otpId}`;
+    expect(supersededTask).toMatchObject({ status: 'CANCELLED', ciphertext: null });
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp()
+      WHERE user_id=${superseded.f.user} AND consumed_at IS NULL`;
+
+    const exhausted = await issueRecovery();
+    const transient = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), { send: async () => 'TRANSIENT' });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      expect(await transient.tick()).toBe('DONE');
+      await admin`UPDATE educore_r4.recovery_otp_deliveries SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE otp_id=${exhausted.otpId}`;
+    }
+    await killBeforeSend();
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET lease_until=clock_timestamp()-interval '1 second' WHERE otp_id=${exhausted.otpId}`;
+    expect(await recoveryWorker.sweep()).toBeGreaterThanOrEqual(1);
+    const [terminal] = await admin`SELECT status,attempt_count,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${exhausted.otpId}`;
+    expect(terminal).toMatchObject({ status: 'FAILED', attempt_count: 4, ciphertext: null });
+    expect(await transient.tick()).toBe('IDLE');
+    expect(delivery.messages.length).toBe(baseline);
+    (evidence.cases as Record<string, string>)['R8 process kill terminal safeguards'] = 'PASS';
+  });
+  native('R8 C01 issue is atomic and worker ACLs are narrow', async () => {
+    const { otpId } = await issueRecovery();
+    const [row] = await admin`SELECT q.status,q.attempt_count,q.fencing_token,q.ciphertext IS NOT NULL encrypted,
+      q.otp_id=o.id bound FROM educore_r4.recovery_otp_deliveries q JOIN public.password_reset_otps o ON o.id=q.otp_id WHERE q.otp_id=${otpId}`;
+    expect(row).toMatchObject({ status: 'READY', attempt_count: 0, encrypted: true, bound: true });
+    const [acl] = await admin`SELECT
+      NOT has_table_privilege('educore_r4_otp_delivery','educore_r4.recovery_otp_deliveries','SELECT') no_raw,
+      has_function_privilege('educore_r4_otp_delivery','educore_r4.claim_recovery_delivery(uuid)','EXECUTE') can_claim,
+      NOT has_function_privilege('educore_r4_auth','educore_r4.claim_recovery_delivery(uuid)','EXECUTE') auth_cannot_claim,
+      NOT has_function_privilege('educore_r4_otp_delivery','educore_r4.request_recovery_otp(text,uuid,text,text,bytea,bytea,bytea)','EXECUTE') worker_cannot_issue`;
+    expect(Object.values(acl).every(Boolean)).toBe(true);
+    const q = connect(authConnection);
+    await expect(q`SELECT * FROM educore_r4.recovery_otp_deliveries LIMIT 1`).rejects.toThrow();
+    await expect(q`SELECT educore_r4.claim_recovery_delivery(${randomUUID()}::uuid)`).rejects.toThrow();
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${otpId}`;
+  });
+  native('R8 C01 disable and email change clear READY and SENDING payloads and fence stale workers', async () => {
+    for (const kind of ['disable', 'email'] as const) {
+      for (const claimed of [false, true]) {
+        const { f, otpId } = await issueRecovery();
+        const claim = claimed ? (await recoveryDb.$queryRawUnsafe<{ result: { fence: string } }[]>(
+          'SELECT educore_r4.claim_recovery_delivery($1::uuid) result', recoveryWorker.workerId))[0].result : null;
+        const [before] = await admin`SELECT fencing_token FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+        if (kind === 'disable') await admin`UPDATE public.users SET status='DISABLED' WHERE id=${f.user}`;
+        else await admin`UPDATE public.users SET email_normalized=${randomUUID() + '@r4.invalid'} WHERE id=${f.user}`;
+        const [after] = await admin`SELECT status,last_error_code,nonce,ciphertext,tag,key_id,lease_owner,lease_until,next_attempt_at,completed_at,fencing_token FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+        expect(after.status).toBe('CANCELLED');
+        expect(after.last_error_code).toBe(kind === 'email' ? 'RECIPIENT_CHANGED' : 'USER_STATE_CHANGED');
+        expect([after.nonce, after.ciphertext, after.tag, after.key_id, after.lease_owner, after.lease_until, after.next_attempt_at]).toEqual(Array(7).fill(null));
+        expect(after.completed_at).not.toBeNull();
+        expect(BigInt(after.fencing_token as string)).toBeGreaterThan(BigInt(before.fencing_token as string));
+        if (claim) {
+          const [stale] = await recoveryDb.$queryRawUnsafe<{ result: string }[]>(
+            'SELECT educore_r4.finish_recovery_delivery($1::uuid,$2::uuid,$3::bigint,$4::text,$5::text,$6::text) result',
+            otpId, recoveryWorker.workerId, claim.fence, kind === 'email' ? 'old@r4.invalid' : 'old@r4.invalid', 'SMTP_ACCEPTED', null);
+          expect(stale.result).toBe('STALE');
+        }
+      }
+    }
+  });
+  native('R8 C01 user-update rollback preserves task; waiting check observes committed disable', async () => {
+    const { f, email: address, otpId } = await issueRecovery();
+    const [claimed] = await recoveryDb.$queryRawUnsafe<{ result: { fence: string } }[]>(
+      'SELECT educore_r4.claim_recovery_delivery($1::uuid) result', recoveryWorker.workerId);
+    const blocker = connect(process.env.R4_TEST_URL!);
+    const waiter = connect(otpWorkerConnection);
+    const observer = connect(process.env.R4_TEST_URL!);
+    const blockerPid = (await blocker`SELECT pg_backend_pid() pid`)[0].pid as number;
+    const waiterPid = (await waiter`SELECT pg_backend_pid() pid`)[0].pid as number;
+    let unlock!: () => void;
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => { unlock = resolve; });
+    const acquired = new Promise<void>((resolve) => { locked = resolve; });
+    const transaction = blocker.begin(async (tx) => {
+      await tx`UPDATE public.users SET status='DISABLED' WHERE id=${f.user}`;
+      locked();
+      await holding;
+    });
+    await acquired;
+    const checking = waiter`SELECT educore_r4.check_recovery_delivery(${otpId}::uuid,${recoveryWorker.workerId}::uuid,${claimed.result.fence}::bigint,${address}) result`.then((rows) => rows);
+    try { await waitBlocked(observer, waiterPid, blockerPid); }
+    finally { unlock(); }
+    await transaction;
+    expect((await checking)[0].result).toBe(false);
+    const [cancelled] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+    expect(cancelled.status).toBe('CANCELLED');
+    expect(cancelled.ciphertext).toBeNull();
+    const again = await issueRecovery();
+    await expect(blocker.begin(async (tx) => {
+      await tx`UPDATE public.users SET email_normalized=${randomUUID() + '@r4.invalid'} WHERE id=${again.f.user}`;
+      throw Error('ROLLBACK_MARKER');
+    })).rejects.toThrow('ROLLBACK_MARKER');
+    const [retained] = await admin`SELECT status,ciphertext IS NOT NULL encrypted FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${again.otpId}`;
+    expect(retained).toMatchObject({ status: 'READY', encrypted: true });
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${again.otpId}`;
+  });
+  native('R8 C03 locked known user uses neutral nonblocking issue path', async () => {
+    const { f, email: address, otpId } = await issueRecovery();
+    const blocker = connect(process.env.R4_TEST_URL!);
+    let unlock!: () => void;
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => { unlock = resolve; });
+    const acquired = new Promise<void>((resolve) => { locked = resolve; });
+    const transaction = blocker.begin(async (tx) => {
+      await tx`UPDATE public.users SET display_name=display_name WHERE id=${f.user}`;
+      locked();
+      await holding;
+    });
+    await acquired;
+    try {
+      const start = performance.now();
+      const known = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+        .send({ email: address }).timeout({ response: 2_000 });
+      const knownMs = performance.now() - start;
+      const unknown = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+        .send({ email: randomUUID() + '@r4.invalid' }).timeout({ response: 2_000 });
+      expect([known.status, unknown.status]).toEqual([202, 202]);
+      expect(known.body).toEqual({ accepted: true });
+      expect(unknown.body).toEqual(known.body);
+      expect(known.headers['content-type']).toBe(unknown.headers['content-type']);
+      expect(known.headers['cache-control']).toBe(unknown.headers['cache-control']);
+      expect(knownMs).toBeLessThan(1_000);
+      const [count] = await admin`SELECT count(*)::int total FROM public.password_reset_otps WHERE user_id=${f.user} AND purpose='PASSWORD_RESET'`;
+      expect(count.total).toBe(1);
+    } finally { unlock(); await transaction; }
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${otpId}`;
+  });
+  native('R8 C01 wrong encrypted recipient cancels before SMTP; exhaustion and supersession clear ciphertext', async () => {
+    const wrong = await issueRecovery();
+    const encoded = encryptRecovery(wrong.otpId, 'other@r4.invalid', '123456', recoveryKey);
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET nonce=${encoded.nonce},ciphertext=${encoded.ciphertext},tag=${encoded.tag} WHERE otp_id=${wrong.otpId}`;
+    const sent = delivery.messages.length;
+    expect(await recoveryWorker.tick()).toBe('DONE');
+    expect(delivery.messages.length).toBe(sent);
+    const [mismatch] = await admin`SELECT status,last_error_code,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${wrong.otpId}`;
+    expect(mismatch).toMatchObject({ status: 'CANCELLED', last_error_code: 'RECIPIENT_CHANGED', ciphertext: null });
+    const exhausted = await issueRecovery();
+    for (let i = 0; i < 5; i++) await expect(auth.reset(exhausted.email, '000000', password, 'PASSWORD_RESET')).rejects.toThrow('INVALID_OTP');
+    const [limit] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${exhausted.otpId}`;
+    expect(limit).toMatchObject({ status: 'CANCELLED', ciphertext: null });
+    const superseded = await issueRecovery();
+    await admin`UPDATE public.password_reset_otps SET requested_at=requested_at-interval '2 minutes',expires_at=expires_at-interval '2 minutes' WHERE id=${superseded.otpId}`;
+    await auth.requestOtp(superseded.email, 'PASSWORD_RESET');
+    const [old] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${superseded.otpId}`;
+    expect(old).toMatchObject({ status: 'CANCELLED', ciphertext: null });
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE user_id=${superseded.f.user} AND consumed_at IS NULL`;
+  });
+  native('R8 D01 fake SMTP retries 1/3/5 minutes, stops at four and clears payload', async () => {
+    const { otpId } = await issueRecovery();
+    const failing = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), {
+      send: async () => 'TRANSIENT',
+    });
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      expect(await failing.tick()).toBe('DONE');
+      const [task] = await admin`SELECT status,attempt_count,last_error_code,
+        extract(epoch FROM (next_attempt_at-updated_at)) delay_seconds,ciphertext
+        FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+      expect(task.attempt_count).toBe(attempt);
+      if (attempt < 4) {
+        expect(task.status).toBe('RETRY_WAIT');
+        expect(Number(task.delay_seconds)).toBeCloseTo([60, 180, 300][attempt - 1], 0);
+        expect(task.ciphertext).not.toBeNull();
+        await admin`UPDATE educore_r4.recovery_otp_deliveries SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE otp_id=${otpId}`;
+      } else {
+        expect(task.status).toBe('FAILED');
+        expect(task.ciphertext).toBeNull();
+      }
+    }
+    const permanent = await issueRecovery();
+    const reject = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), { send: async () => 'PERMANENT' });
+    expect(await reject.tick()).toBe('DONE');
+    const [failed] = await admin`SELECT status,last_error_code,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${permanent.otpId}`;
+    expect(failed).toMatchObject({ status: 'FAILED', last_error_code: 'SMTP_PERMANENT', ciphertext: null });
+  });
+  native('R8 D01 expired lease is swept, stale finish is fenced and no fifth claim occurs', async () => {
+    const { otpId } = await issueRecovery();
+    const [claim] = await recoveryDb.$queryRawUnsafe<{ result: { fence: string } }[]>(
+      'SELECT educore_r4.claim_recovery_delivery($1::uuid) result', recoveryWorker.workerId);
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET lease_until=clock_timestamp()-interval '1 second' WHERE otp_id=${otpId}`;
+    expect(await recoveryWorker.sweep()).toBeGreaterThanOrEqual(1);
+    const [stale] = await recoveryDb.$queryRawUnsafe<{ result: string }[]>(
+      'SELECT educore_r4.finish_recovery_delivery($1::uuid,$2::uuid,$3::bigint,$4::text,$5::text,$6::text) result',
+      otpId, recoveryWorker.workerId, claim.result.fence, 'unknown@r4.invalid', 'SMTP_ACCEPTED', null);
+    expect(stale.result).toBe('STALE');
+    const [task] = await admin`SELECT status,last_error_code,attempt_count,next_attempt_at,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+    expect(task.status).toBe('RETRY_WAIT');
+    expect(task.last_error_code).toBe('SMTP_TIMEOUT_UNKNOWN');
+    expect(task.attempt_count).toBe(1);
+    expect(task.ciphertext).not.toBeNull();
+    await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp() WHERE id=${otpId}`;
+  });
+  native('R8 D01 key loss, corrupt ciphertext, delivery window, expiry and seven-day retention fail closed', async () => {
+    const missing = await issueRecovery();
+    const noKey = new RecoveryWorker(recoveryDb, new Map(), { send: async () => { throw Error('UNREACHABLE_SMTP'); } });
+    expect(await noKey.tick()).toBe('DONE');
+    const [lost] = await admin`SELECT status,last_error_code,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${missing.otpId}`;
+    expect(lost).toMatchObject({ status: 'FAILED', last_error_code: 'KEY_UNAVAILABLE', ciphertext: null });
+    const corrupt = await issueRecovery();
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET ciphertext=decode(repeat('00',octet_length(ciphertext)),'hex') WHERE otp_id=${corrupt.otpId}`;
+    const sent = delivery.messages.length;
+    expect(await recoveryWorker.tick()).toBe('DONE');
+    expect(delivery.messages.length).toBe(sent);
+    const [invalid] = await admin`SELECT status,last_error_code,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${corrupt.otpId}`;
+    expect(invalid).toMatchObject({ status: 'FAILED', last_error_code: 'CONFIG_UNAVAILABLE', ciphertext: null });
+    const narrow = await issueRecovery();
+    await admin`UPDATE public.password_reset_otps SET
+      requested_at=v.at-interval '13 minutes 50 seconds',expires_at=v.at+interval '70 seconds'
+      FROM (SELECT clock_timestamp() at) v WHERE id=${narrow.otpId}`;
+    expect(await recoveryWorker.tick()).toBe('IDLE');
+    const [window] = await admin`SELECT status,last_error_code,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${narrow.otpId}`;
+    expect(window).toMatchObject({ status: 'FAILED', last_error_code: 'DELIVERY_WINDOW_CLOSED', ciphertext: null });
+    const expired = await issueRecovery();
+    await admin`UPDATE public.password_reset_otps SET
+      requested_at=v.at-interval '16 minutes',expires_at=v.at-interval '1 minute'
+      FROM (SELECT clock_timestamp() at) v WHERE id=${expired.otpId}`;
+    expect(await recoveryWorker.sweep()).toBeGreaterThanOrEqual(1);
+    const [ended] = await admin`SELECT status,ciphertext FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${expired.otpId}`;
+    expect(ended).toMatchObject({ status: 'EXPIRED', ciphertext: null });
+    await admin`UPDATE educore_r4.recovery_otp_deliveries SET completed_at=clock_timestamp()-interval '8 days' WHERE otp_id=${expired.otpId}`;
+    await recoveryWorker.sweep();
+    const [retained] = await admin`SELECT count(*)::int total FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${expired.otpId}`;
+    expect(retained.total).toBe(0);
+  });
+  native('R8 C01 SMTP already in flight cannot be recalled but DB fence rejects late finish', async () => {
+    const { f, otpId } = await issueRecovery();
+    let started!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let attempts = 0;
+    const slow = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), {
+      send: async () => { attempts++; started(); await held; return 'ACCEPTED'; },
+    });
+    const pending = slow.tick();
+    await entered;
+    expect(attempts).toBe(1);
+    await admin`UPDATE public.users SET email_normalized=${randomUUID() + '@r4.invalid'} WHERE id=${f.user}`;
+    release();
+    expect(await pending).toBe('STALE');
+    const [task] = await admin`SELECT status,last_error_code,ciphertext,lease_owner FROM educore_r4.recovery_otp_deliveries WHERE otp_id=${otpId}`;
+    expect(task).toMatchObject({ status: 'CANCELLED', last_error_code: 'RECIPIENT_CHANGED', ciphertext: null, lease_owner: null });
+  });
+  native('R8 C03 preregistered account enumeration timing protocol', async () => {
+    const runToken = randomBytes(4).toString('hex');
+    const knownEmail = (index: number) => `r8k${runToken}${String(index).padStart(4, '0')}@r4.invalid`;
+    const unknownEmail = (index: number) => `r8u${runToken}${String(index).padStart(4, '0')}@r4.invalid`;
+    await admin`INSERT INTO public.users(id,email_normalized,display_name,status,updated_at)
+      SELECT gen_random_uuid(),'r8k' || ${runToken} || lpad(g::text,4,'0') || '@r4.invalid','Benchmark','ACTIVE',clock_timestamp()
+      FROM generate_series(0,1249) g`;
+    const express = app.getHttpAdapter().getInstance() as { set: (key: string, value: unknown) => void };
+    express.set('trust proxy', 'loopback');
+    let randomState = 0xD01C03;
+    const random = () => ((randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+    // Balance every concurrent slot across the run. The former independent shuffle
+    // put 38 known and 62 unknown requests in slot 1; slot latency itself drifted
+    // by 1-2 ms, enough to bias an AUC measured after the common 100 ms floor.
+    const balancedOrders = () => {
+      const orders: boolean[][] = [];
+      for (let pair = 0; pair < 50; pair++) {
+        const order = Array.from({ length: 8 }, (_, index) => index < 4);
+        for (let i = order.length - 1; i > 0; i--) {
+          const j = Math.floor(random() * (i + 1));
+          [order[i], order[j]] = [order[j], order[i]];
+        }
+        orders.push(order, order.map((known) => !known));
+      }
+      for (let i = orders.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [orders[i], orders[j]] = [orders[j], orders[i]];
+      }
+      return orders;
+    };
+    const responseShape = (response: Awaited<ReturnType<ReturnType<typeof request>['post']>>) => ({
+      status: response.status, body: response.text,
+      contentType: response.headers['content-type'], cacheControl: response.headers['cache-control'],
+      contentLength: response.headers['content-length'], vary: response.headers.vary ?? null,
+      retryAfter: response.headers['retry-after'] ?? null, setCookie: response.headers['set-cookie'] ?? null,
+    });
+    const call = async (address: string, block: number, range: number) => {
+      const ip = `198.${range}.${Math.floor(block / 256)}.${block % 256}`;
+      const start = process.hrtime.bigint();
+      const response = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+        .set('X-Forwarded-For', ip).send({ email: address });
+      const ms = Number(process.hrtime.bigint() - start) / 1_000_000;
+      expect(response.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/i);
+      return { response, ms };
+    };
+    let reference: ReturnType<typeof responseShape> | undefined;
+    const results: Record<string, unknown> = { seed: 0xD01C03, samplesPerGroupPerCondition: 400,
+      bootstrapResamples: 10_000, conditions: {} };
+    try {
+      for (let block = 0; block < 13; block++) {
+        const jobs = Array.from({ length: Math.min(8, 100 - block * 8) }, (_, j) => {
+          const index = block * 8 + j;
+          return () => call(index % 2 ? `r8k${runToken}${String(1200 + Math.floor(index / 2)).padStart(4, '0')}@r4.invalid`
+            : `r8u${runToken}${String(1200 + Math.floor(index / 2)).padStart(4, '0')}@r4.invalid`, block, 19);
+        });
+        for (let start = 0; start < jobs.length; start += 4) await Promise.all(jobs.slice(start, start + 4).map((job) => job()));
+      }
+      while (await recoveryWorker.tick() !== 'IDLE') { /* drain warm-up */ }
+      for (let condition = 0; condition < 3; condition++) {
+        const orders = balancedOrders();
+        let active = true;
+        let pumpError: unknown;
+        const smtp = new RecoveryWorker(recoveryDb, new Map([[recoveryKey.id, recoveryKey]]), {
+          send: async () => {
+            if (condition === 1) { await new Promise((resolve) => setTimeout(resolve, 20)); return 'TRANSIENT'; }
+            return 'ACCEPTED';
+          },
+        });
+        const pump = (async () => {
+          try {
+            while (active) {
+              if (await smtp.tick() === 'IDLE') await new Promise((resolve) => setTimeout(resolve, 2));
+            }
+          } catch (error) { pumpError = error; }
+        })();
+        const rows: Timing[] = [];
+        const serviceMs: Timing[] = [];
+        const originalIssue = auth.requestOtp.bind(auth);
+        auth.requestOtp = async (address, purpose) => {
+          const start = performance.now();
+          try { return await originalIssue(address, purpose); }
+          finally { serviceMs.push({ known: address.startsWith(`r8k${runToken}`), ms: performance.now() - start,
+            block: Math.floor(serviceMs.length / 8) }); }
+        };
+        let headerEquivalent = true;
+        try {
+          for (let block = 0; block < 100; block++) {
+            const order = orders[block];
+            let knownIndex = 0, unknownIndex = 0;
+            const jobs = order.map((known) => {
+              const index = condition * 400 + block * 4 + (known ? knownIndex++ : unknownIndex++);
+              return { known, task: () => call(known ? knownEmail(index) : unknownEmail(index), condition * 100 + block, 18) };
+            });
+            for (let start = 0; start < 8; start += 4) {
+              const wave = await Promise.all(jobs.slice(start, start + 4).map((j) => j.task()));
+              wave.forEach(({ response, ms }, offset) => {
+                const shape = responseShape(response);
+                reference ??= shape;
+                if (shape.status !== 202 || shape.body !== JSON.stringify({ accepted: true })
+                  || shape.contentType !== 'application/json; charset=utf-8'
+                  || shape.cacheControl !== 'no-store' || shape.retryAfter !== null || shape.setCookie !== null
+                  || JSON.stringify(shape) !== JSON.stringify(reference)) headerEquivalent = false;
+                rows.push({ known: jobs[start + offset].known, ms, block });
+              });
+            }
+          }
+        } finally { auth.requestOtp = originalIssue; active = false; await pump; }
+        if (pumpError) throw Error('BENCHMARK_WORKER_FAILED');
+        const analysis = timingAnalysis(rows, 0xD01C03 + condition);
+        const serviceKnown = serviceMs.filter((row) => row.known).map((row) => row.ms);
+        const serviceUnknown = serviceMs.filter((row) => !row.known).map((row) => row.ms);
+        (results.conditions as Record<string, unknown>)[['healthy', 'slow_reject', 'concurrency_four'][condition]] = {
+          status: headerEquivalent && analysis.pass ? 'PASS' : 'FAIL', headerEquivalent, ...analysis,
+          slotKnownCounts: Array.from({ length: 8 }, (_, slot) => rows.filter((row, index) => index % 8 === slot && row.known).length),
+          serviceDuration: { knownMedian: quantile(serviceKnown, .5), unknownMedian: quantile(serviceUnknown, .5),
+            knownP95: quantile(serviceKnown, .95), unknownP95: quantile(serviceUnknown, .95),
+            knownCount: serviceKnown.length, unknownCount: serviceUnknown.length },
+          rawTimings: rows,
+        };
+      }
+      const previousReady = auth.recoveryReady.bind(auth);
+      auth.recoveryReady = async () => { throw Error('GLOBAL_FAULT'); };
+      let globalEquivalent = true;
+      try {
+        for (let i = 0; i < 200; i++) {
+          const response = (await call(i % 2 ? knownEmail(i % 100) : unknownEmail(i % 100), Math.floor(i / 8), 20)).response;
+          const shape = responseShape(response);
+          if (shape.status !== 503 || response.body.code !== 'SERVICE_UNAVAILABLE'
+            || response.body.message !== 'SERVICE_UNAVAILABLE'
+            || response.body.correlationId !== response.headers['x-request-id']
+            || shape.cacheControl !== 'no-store' || shape.setCookie !== null || shape.retryAfter !== null) globalEquivalent = false;
+        }
+      } finally { auth.recoveryReady = previousReady; }
+      results.global503 = { known: 100, unknown: 100, status: globalEquivalent ? 'PASS' : 'FAIL' };
+      const previousRequest = auth.requestOtp.bind(auth);
+      auth.requestOtp = async (address, purpose) => { await previousRequest(address, purpose); throw Error('POSTLOOKUP_FAULT'); };
+      try {
+        const known = await call(knownEmail(0), 0, 21);
+        const unknown = await call(unknownEmail(0), 1, 21);
+        const probe = await call(unknownEmail(1), 2, 21);
+        results.postlookup = { status: [known, unknown, probe].every((entry) =>
+          JSON.stringify(responseShape(entry.response)) === JSON.stringify(reference)) ? 'PASS' : 'FAIL' };
+      } finally { auth.requestOtp = previousRequest; }
+    } finally {
+      express.set('trust proxy', false);
+      await admin`UPDATE public.password_reset_otps SET consumed_at=clock_timestamp()
+        WHERE consumed_at IS NULL AND user_id IN
+        (SELECT id FROM public.users WHERE email_normalized LIKE ${'r8k' + runToken + '%@r4.invalid'})`;
+      evidence.benchmark = results;
+    }
+    expect(Object.values(results.conditions as Record<string, { status: string }>).every((v) => v.status === 'PASS')).toBe(true);
+    expect((results.global503 as { status: string }).status).toBe('PASS');
+    expect((results.postlookup as { status: string }).status).toBe('PASS');
+  });
   native('A20 migrated navigation exists and unauthenticated HTTP is denied', async () => {
     const [row] = await admin`SELECT to_regprocedure('educore_r4.navigation_access(uuid)') IS NOT NULL installed`;
     expect(row.installed).toBe(true);
@@ -499,7 +1163,11 @@ describe('R4 native PostgreSQL', () => {
     const f = await fresh();
     const [user] = await admin`SELECT email_normalized FROM users WHERE id=${f.user}`;
     const verified = await browserAuthJourney({ authUrl: authConnection, apiUrl: apiConnection, config: auth.config,
-      email: user.email_normalized as string, password, tenantId: f.tenant });
+      email: user.email_normalized as string, password, tenantId: f.tenant,
+      recoveryOtp: async (address) => {
+        await recoveryWorker.tick();
+        return delivery.messages.find((message) => message.email === address && message.purpose === 'PASSWORD_RESET')?.otp;
+      } });
     expect(Object.values(verified).every((value) => value === true)).toBe(true);
     const [row] = await admin`SELECT count(*)::int revoked FROM auth_sessions WHERE user_id=${f.user} AND revoked_at IS NOT NULL`;
     expect(row.revoked).toBeGreaterThanOrEqual(1);
@@ -632,6 +1300,7 @@ describe('R4 native PostgreSQL', () => {
         .send({ email: randomUUID() + '@r4.invalid' })
         .expect(202);
       expect(known.body).toEqual(unknown.body);
+      expect(await recoveryWorker.tick()).toBe('DONE');
       const otp = delivery.messages.at(-1)!.otp;
       const newPassword = 'New password 123!';
       await request(app.getHttpServer())
@@ -664,6 +1333,7 @@ describe('R4 native PostgreSQL', () => {
     const f = await fresh(),
       s = await sessionFor(f);
     await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    expect(await recoveryWorker.tick()).toBe('DONE');
     const otp = delivery.messages.at(-1)!.otp;
     for (let i = 0; i < 5; i++)
       await expect(
@@ -684,6 +1354,7 @@ describe('R4 native PostgreSQL', () => {
   native('A08b wrong OTP purpose leaves password and session unchanged', async () => {
     const f = await fresh(), s = await sessionFor(f);
     await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    expect(await recoveryWorker.tick()).toBe('DONE');
     const otp = delivery.messages.at(-1)!.otp;
     await expect(auth.reset(s.email, otp, 'new password 123', 'ACTIVATION')).rejects.toThrow('INVALID_OTP');
     expect(await auth.me(s.accessToken)).toBeTruthy();
@@ -699,6 +1370,7 @@ describe('R4 native PostgreSQL', () => {
     const before = delivery.messages.length;
     await auth.requestOtp(s.email, 'PASSWORD_RESET');
     await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    expect(await recoveryWorker.tick()).toBe('DONE');
     expect(delivery.messages.length - before).toBe(1);
     const [row] = await admin`SELECT count(*)::int count FROM password_reset_otps WHERE user_id=${f.user} AND purpose='PASSWORD_RESET'`;
     expect(row.count).toBe(1);
@@ -2502,7 +3174,7 @@ describe('R4 native PostgreSQL', () => {
           .send({ email: u.email_normalized })
           .timeout({ response: 5000 })
           .expect(202);
-        expect(started).toBe(true);
+        expect(started).toBe(false);
         const unknown = await request(isolated.getHttpServer())
           .post('/api/v1/auth/password/otp/request')
           .send({ email: randomUUID() + '@r4.invalid' })
@@ -2523,6 +3195,7 @@ describe('R4 native PostgreSQL', () => {
         s = await sessionFor(f);
       await actor(f, 'MANAGER');
       await auth.requestOtp(s.email, 'PASSWORD_RESET');
+      expect(await recoveryWorker.tick()).toBe('DONE');
       const otp = delivery.messages.at(-1)!.otp;
       await admin`UPDATE password_reset_otps SET requested_at=statement_timestamp()-interval '16 minutes',expires_at=statement_timestamp()-interval '1 minute' WHERE user_id=${f.user} AND consumed_at IS NULL`;
       await expect(

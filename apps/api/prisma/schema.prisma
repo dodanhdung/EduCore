@@ -363,6 +363,7 @@ model PasswordResetOtp {
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId, purpose, consumedAt, expiresAt])
+  @@unique([id, purpose], map: "r8_otp_id_purpose_uq")
   @@map("password_reset_otps")
 }
 

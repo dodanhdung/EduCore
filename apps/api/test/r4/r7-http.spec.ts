@@ -22,6 +22,7 @@ describe('R7 browser ↔ NestJS authentication HTTP contract', () => {
     selectTenant: vi.fn(async (_token: string, tenantId: string) => ({ accessToken: 'selected-access', expiresInSeconds: 900, principal: { ...principal, tenantId } })),
     logout: vi.fn(async () => undefined),
     requestOtp: vi.fn(async () => undefined),
+    recoveryReady: vi.fn(async () => undefined),
     reset: vi.fn(async () => undefined),
   };
   beforeAll(async () => {
@@ -111,6 +112,24 @@ describe('R7 browser ↔ NestJS authentication HTTP contract', () => {
     const invalid = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request').send({ email: 'bad' });
     expect(invalid.status).toBe(400);
     expect(invalid.body.code).toBe('INVALID_INPUT');
+  });
+  it('maps global prelookup failure to the exact neutral 503 and keeps postlookup failures at 202', async () => {
+    service.recoveryReady.mockRejectedValueOnce(Error('DATABASE_UNAVAILABLE'));
+    const unavailable = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+      .send({ email: 'known@example.test' });
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.body).toEqual({ code: 'SERVICE_UNAVAILABLE', message: 'SERVICE_UNAVAILABLE', correlationId: unavailable.headers['x-request-id'] });
+    expect(unavailable.headers['cache-control']).toBe('no-store');
+    expect(unavailable.headers['content-type']).toBe('application/json; charset=utf-8');
+    service.requestOtp.mockRejectedValueOnce(Error('POSTLOOKUP_FAILURE'));
+    const known = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+      .send({ email: 'known@example.test' });
+    const probe = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+      .send({ email: 'unknown@example.test' });
+    expect(known.status).toBe(202);
+    expect(probe.status).toBe(202);
+    expect(known.body).toEqual({ accepted: true });
+    expect(probe.body).toEqual(known.body);
   });
   it('password reset accepts only exact DTO and returns an empty HTTP 204', async () => {
     const body = { email: 'person@example.test', otp: '123456', newPassword: 'new password 123' };

@@ -94,6 +94,8 @@ describe('R4 authentication crypto and deployment boundaries', () => {
       R4_JWT_ISSUER: 'educore',
       R4_JWT_AUDIENCE: 'web',
       R4_WEB_ORIGINS: 'https://web.educore.example',
+      R4_RECOVERY_ACTIVE_KEY_ID: 'r8-test',
+      R4_RECOVERY_ACTIVE_KEY: Buffer.alloc(32, 7).toString('base64'),
       R4_OTP_MODE: 'capture',
     };
     expect(() => runtimeConfig(env)).toThrow('INVALID_OTP_MODE');
