@@ -1,51 +1,52 @@
-# R8 Member & Relationship Management MVP — báo cáo review
+# R8 OP01–OP03 — báo cáo owner review cuối
 
-Ngày 24/10/2026. Trạng thái: **R8_MANAGEMENT_MVP_PARTIAL**.
+Ngày 24/10/2026. Trạng thái: **R8_MANAGEMENT_MVP_READY_FOR_OWNER_REVIEW**. Nhánh `feat/r8-member-relationships-mvp`, baseline đầu đợt đóng MVP: `33b4cccf08087257716a145fb383d93687c212ed`. Chỉ thay đổi local; chưa commit, push, tạo PR hoặc deploy đợt đóng này.
 
-## Scope và baseline
+## Scope và nguồn
 
-- Nhánh thực tế: `feat/r8-member-relationships-mvp`; HEAD trước sửa: `f6ac1445b10e3afd60e9b75741b56a57221e7c25`; working tree ban đầu sạch.
-- OP01: đọc danh sách thành viên thật theo tenant, trang 20 bản ghi, tìm/lọc trong trang, tạo thành viên, vô hiệu hóa bằng writer hiện có và lý do, trạng thái lỗi. Global user mới nhận `PENDING_ACTIVATION`, tự kích hoạt AU06. Writer hiện có gắn user ACTIVE đã tồn tại với membership ACTIVE; không thay đổi quy tắc này trong R8.
-- OP02: có reader chi tiết với tất cả role/scope hiện hành, role seed catalog, form gán/thu hồi với lý do và xác nhận. **Chưa truy cập được trong production** vì R7 navigation chưa phê duyệt OP02.
-- OP03: có reader quan hệ, selector Parent/Student được phân quyền theo tenant, tạo pending, xác minh và thu hồi với lý do/xác nhận. Nếu selector lỗi hoặc hơn 100 bản ghi, thao tác tạo bị tắt. **Chưa truy cập được trong production** vì R7 navigation chưa phê duyệt OP03.
+OP01–OP03 theo UC-04–06, FR-02–06, BR-08/10/14; Owner approval `APPROVE_R8_OP02_OP03_NAVIGATION_MVP`. 11 file implementation trước đó đã được owner review và có trong commit baseline. Migration mới chỉ sửa navigation; mọi writer vẫn dùng kiểm tra permission/tenant/scope riêng ở Backend.
 
-## API và quyền
+## Hoàn thành
 
-- Thêm `GET /api/v1/tenants/:tenantId/members/:id`, `GET /api/v1/tenants/:tenantId/parent-student-links`, `GET /api/v1/tenants/:tenantId/parent-student-links/parents`, `GET /api/v1/tenants/:tenantId/parent-student-links/students`.
-- Mở rộng projection của `GET /api/v1/tenants/:tenantId/members` qua `educore_r4.management_read`; không sửa writer lịch sử.
-- Tái sử dụng `POST /members`, `PATCH /members/:id` (`DISABLED`), `GET /roles`, `POST /members/:id/role-assignments`, `POST /members/:id/role-assignments/:assignmentId/revoke`, `POST /parent-student-links`, `POST /parent-student-links/:id/verify`, `POST /parent-student-links/:id/revoke`.
-- Reader mới gọi `educore_r4.authorize` trên live session/current tenant: `member.read`, `relationship.read`, `relationship.create` hoặc `student.read` theo loại. Selector Student yêu cầu TENANT-level `student.read`. Hàm `SECURITY DEFINER` thuộc `educore_r4_owner`; `EXECUTE` chỉ cấp `educore_r4_api`, không cấp PUBLIC. Writer hiện có và FK cùng tenant giữ các kiểm tra mutation. Preview fixtures không được import vào production.
+- **OP01:** danh sách thành viên thật theo tenant, trang 20 mục, tìm/lọc trong trang, tạo thành viên, vô hiệu hóa với lý do/xác nhận; liên kết đến đúng membership OP02 khi server cấp screen grant. Tài khoản global mới chờ AU06 `PENDING_ACTIVATION`; writer hiện có có thể gắn tài khoản global ACTIVE đã tồn tại với membership ACTIVE.
+- **OP02:** route production được mở khi có đồng thời TENANT-level `member.read` và `role.read`; đọc detail, nhiều role/scope hiện hành, catalog seed; gán/thu hồi qua writer hiện có với lý do/xác nhận. Screen grant không thay quyền writer.
+- **OP03:** route production được mở khi có TENANT-level `relationship.read`; đọc pending/active/inactive, tạo pending, xác minh, thu hồi qua writer hiện có. Parent selector yêu cầu `relationship.create`, Student selector yêu cầu TENANT-level `student.read`; nếu thiếu quyền, lỗi hoặc hơn 100 mục thì form tạo tắt. Quan hệ pending không mở quyền xem học sinh; quan hệ verified không tự cấp ưu đãi anh/chị/em.
 
-## NEEDS_OWNER_DECISION — navigation
+## Navigation, API và migrations
 
-Đề xuất tối thiểu để owner duyệt riêng: OP02 chỉ khi cùng tenant có **cả** TENANT-level `member.read` và `role.read`; OP03 chỉ khi có TENANT-level `relationship.read`. Các mutation và selector vẫn phải dùng permission riêng tại Backend; screen grant không cấp resource operation. Cần migration forward-only sửa `navigation_access`, cập nhật allowlist client và native negative matrix (không quyền, scope CLASS/STUDENT, tenant khác, phiên bị thu hồi, multi-role không ghép phạm vi). R8 hiện không cấp OP02/OP03. Frontend negative test xác nhận cả hai vẫn bị từ chối dù response không duyệt chứa ID đó.
+- Migration mới `202610240004_r8_navigation_mvp`: giữ OP01=`member.read`, OP04/05=`approval.read`, OP06=`audit.read`, OP07=`job.read`; thêm OP02=`member.read` **và** `role.read`, OP03=`relationship.read`. Dùng `has_permission(t,m,p,NULL,NULL)` sau fresh principal và tenant check, giữ expiry 60 giây/phiên. Không dùng role name hay resource ID để cấp navigation. Function owner, `SECURITY DEFINER`, search path và restricted EXECUTE giữ nguyên.
+- Migration `202610240003_r8_management_reads` từ implementation trước cung cấp projection đọc. API thêm: `GET /members/:id`, `GET /parent-student-links`, `GET /parent-student-links/parents`, `GET /parent-student-links/students`; mở rộng `GET /members` (đều dưới `/api/v1/tenants/:tenantId`).
+- API tái sử dụng: `POST /members`, `PATCH /members/:id` (`DISABLED`), `GET /roles`, `POST /members/:id/role-assignments`, `POST /members/:id/role-assignments/:assignmentId/revoke`, `POST /parent-student-links`, `POST /parent-student-links/:id/verify`, `POST /parent-student-links/:id/revoke`.
 
-## Files changed
+## Files trong ZIP (repository-relative)
 
-- `apps/api/prisma/migrations/202610240003_r8_management_reads/migration.sql` **NEW**
+- `apps/api/prisma/migrations/202610240003_r8_management_reads/migration.sql`
+- `apps/api/prisma/migrations/202610240004_r8_navigation_mvp/migration.sql` **NEW — owner review trước Git**
+- `apps/api/src/identity-access/navigation.dto.ts`
 - `apps/api/src/workflow-approval/runtime.controller.ts`
 - `apps/api/src/workflow-approval/runtime.service.ts`
-- `apps/api/test/r4/management-http.spec.ts` **NEW**
+- `apps/api/test/r4/management-http.spec.ts`
+- `apps/api/test/r4/navigation-proposal.cases.ts`
+- `apps/api/test/r4/navigation.spec.ts`
 - `apps/api/test/r4/r4.postgres.test.ts`
-- `apps/web/src/api.ts`
 - `apps/web/src/App.tsx`
-- `apps/web/src/screens/Management & Operations/ProductionManagement.tsx` **NEW**
-- `apps/web/src/screens/Management & Operations/management-production.test.mjs` **NEW**
+- `apps/web/src/api.ts`
+- `apps/web/src/navigation.ts`
+- `apps/web/src/r7.test.mjs`
+- `apps/web/src/screens/Management & Operations/ProductionManagement.tsx`
+- `apps/web/src/screens/Management & Operations/management-production.test.mjs`
 - `apps/web/src/screens/Management & Operations/management.test.mjs`
-- `docs/ai/integration/R8_MEMBER_RELATIONSHIPS_MVP_REPORT.md` **NEW**
+- `docs/ai/integration/R8_MEMBER_RELATIONSHIPS_MVP_REPORT.md`
 
-## Tests actually run
+## Tests thực chạy cho đợt đóng MVP
 
-- `pnpm.cmd --filter web test`: PASS 242/242 (trước chỉnh sửa UI cuối); focused management sau chỉnh sửa: PASS 27/27; production OP01: PASS 1/1.
-- `pnpm.cmd --dir apps/api exec vitest run test/r4/management-http.spec.ts test/r4/navigation.spec.ts`: PASS 8/8.
-- R4 safe disposable PostgreSQL runner `-TestFilter R8`: PASS 14, SKIP 80 (gồm 2 reader tests mới; migration triển khai trên cluster riêng). `-TestFilter 'A11|A13|A14|X01|X03|X04'`: PASS 6, SKIP 88 (Manager cuối, onboarding, duplicate role, tenant isolation, parent revoke).
-- `pnpm.cmd --filter web build`, `pnpm.cmd --filter api build`, `pnpm.cmd --filter api lint`, `pnpm.cmd --filter web lint`, `git diff --check`: PASS. Web lint còn 1 warning cũ ở `AT03/LeaveRequestFormScreen.tsx` ngoài scope.
+- PostgreSQL 16 disposable qua R4 safe runner, filter navigation/member/relationship: **19 PASS, 80 SKIP**. Bao gồm OP02 đủ/thiếu từng permission, OP03 có/không `relationship.read`, CLASS/STUDENT không mở tenant screen, grant/phiên revoked, tenant khác, selector allowed/denied và writer từ chối dù navigation được mở. Migration mới được apply trong fresh cluster.
+- Frontend focused browser/navigation: **71 PASS**; cập nhật thêm một assertion ở `r7.test.mjs`, chạy riêng sau đó **40 PASS**. Bao gồm OP01→OP02 đúng membership, OP03 selector fail closed và mutation 403 không báo thành công.
+- Backend focused HTTP/navigation: **8 PASS**.
+- `pnpm.cmd --filter web build`, `pnpm.cmd --filter api build`, web/api lint, `git diff --check`: **PASS**. Web lint còn một warning cũ ở AT03 ngoài scope.
 
-## Risks/deferred
+## Blocker và cải tiến để sau
 
-- OP02/OP03 production navigation cần owner duyệt mapping và negative tests trên migration tương lai. Không có đường vòng từ OP01.
-- Tìm/lọc chỉ trong trang hiện tại; selector quan hệ giới hạn 100 mục và fail closed. Cần reader tìm kiếm có phân trang khi dữ liệu lớn.
-- Native test mới xác minh reader/permission/trạng thái; các trường hợp writer và race trọng yếu dùng test R4 sẵn có. Không chạy full native suite, stress, benchmark, shared DB.
-- Chưa commit/push/PR/deploy. Toàn bộ file **NEW** ở trên cần owner review trước Git.
+Không còn blocker MVP đã biết trong phạm vi OP01–OP03. Tìm/lọc hiện theo từng trang; Parent/Student selector giới hạn 100 và cần reader tìm kiếm phân trang khi dữ liệu lớn. Chưa chạy full regression, benchmark, stress hoặc shared DB. Deployment cần phê duyệt riêng.
 
-Review ZIP: `artifacts/educore-r8-member-relationships-mvp-review.zip`.
+Review ZIP: `artifacts/educore-r8-member-relationships-final-review.zip`.

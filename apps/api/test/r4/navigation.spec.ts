@@ -34,12 +34,15 @@ describe('Phase B navigation DTO and service boundary', () => {
   });
   it('accepts only the reviewed sorted screen subset and exact identity fields', () => {
     expect(navigationAccess(good()).screenIds).toEqual(['OP01', 'OP04', 'OP05']);
+    expect(navigationAccess({ ...good(), screenIds: ['OP01', 'OP02', 'OP03', 'OP04', 'OP05'] }).screenIds)
+      .toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05']);
     expect(navigationAccess({ ...good(), screenIds: [] }).screenIds).toEqual([]);
     for (const bad of [
       { ...good(), screenIds: ['AC01'] },
       { ...good(), screenIds: ['OP05'] },
       { ...good(), screenIds: ['OP04', 'OP04', 'OP05'] },
       { ...good(), screenIds: ['OP05', 'OP04'] },
+      { ...good(), screenIds: ['OP02'] },
       { ...good(), screenIds: ['OP01'], extra: true },
       { ...good(), userId: 'user' },
       { ...good(), validUntil: Number.MAX_SAFE_INTEGER + 1 },

@@ -2784,6 +2784,19 @@ describe('R4 native PostgreSQL', () => {
     const other = await fresh();
     await expect(runtime.managementRead(s.accessToken, other.tenant, 'RELATIONSHIPS')).rejects.toThrow();
   });
+  native('R8 relationship selectors require their own TENANT read permissions', async () => {
+    const f = await fresh();
+    const academic = await actor(f, 'ACADEMIC_STAFF');
+    const parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    const parents = await runtime.managementRead(academic.accessToken, f.tenant, 'PARENTS') as { items: { id: string }[] };
+    const students = await runtime.managementRead(academic.accessToken, f.tenant, 'STUDENTS') as { items: { id: string }[] };
+    expect(parents.items.some((p) => p.id === parent.member)).toBe(true);
+    expect(students.items.some((s) => s.id === f.student)).toBe(true);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await expect(runtime.managementRead(accountant.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await expect(runtime.managementRead(accountant.accessToken, f.tenant, 'STUDENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await expect(runtime.managementRead(parent.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+  });
   native(
     'A15 unrelated TENANT role cannot widen a CLASS financial grant',
     async () => {
