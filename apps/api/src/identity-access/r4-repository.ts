@@ -41,6 +41,19 @@ export class R4Repository {
       );
       if (!rows[0]?.safe) throw Error('UNSAFE_R4_RUNTIME_LOGIN');
     }
+    const navigation = await this.api.$queryRawUnsafe<{ safe: boolean }[]>(`
+      SELECT p.prosecdef AND p.provolatile='v'
+        AND p.proconfig @> ARRAY['search_path=pg_catalog, educore_r4, pg_temp']::text[]
+        AND owner.rolname='educore_r4_owner' AND NOT owner.rolcanlogin
+        AND NOT owner.rolsuper AND NOT owner.rolbypassrls
+        AND NOT EXISTS (SELECT FROM aclexplode(p.proacl) acl WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE')
+        AND has_function_privilege('educore_r4_api','educore_r4.navigation_access(uuid)','EXECUTE')
+        AND NOT has_function_privilege('educore_r4_auth','educore_r4.navigation_access(uuid)','EXECUTE')
+        AND NOT has_function_privilege('educore_r4_worker','educore_r4.navigation_access(uuid)','EXECUTE')
+        AND NOT has_function_privilege('educore_r4_operator','educore_r4.navigation_access(uuid)','EXECUTE') safe
+      FROM pg_proc p JOIN pg_roles owner ON owner.oid=p.proowner
+      WHERE p.oid=to_regprocedure('educore_r4.navigation_access(uuid)')`);
+    if (!navigation[0]?.safe) throw Error('UNSAFE_R4_NAVIGATION');
   }
   transaction<T>(token: string, action: (tx: R4Tx) => Promise<T>) {
     return this.api.$transaction(

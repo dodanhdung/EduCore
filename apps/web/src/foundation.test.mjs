@@ -9,6 +9,8 @@ const otherId = '9ac0015f-35fa-4905-9abb-f4d7391ef212'
 const principal = { id: 'user', sessionId: 'session', tenantId, allowedTenants: [{ id: tenantId, name: 'Trung tâm A' }] }
 const session = { accessToken: 'memory-only', csrfToken: 'csrf', expiresAt: Date.now() + 60_000, principal, tenantEpoch: 1 }
 const authenticated = { status: 'authenticated', session }
+const evidence = (screenIds, extra = {}) => ({ tenantId, userId: principal.id, sessionId: principal.sessionId,
+  tenantEpoch: session.tenantEpoch, validUntil: session.expiresAt, screenIds, ...extra })
 
 test('public routes work, checking and unauthenticated states never render protected screens', () => {
   assert.equal(resolveRoute('/login', { status: 'unauthenticated' }).kind, 'public')
@@ -19,7 +21,8 @@ test('public routes work, checking and unauthenticated states never render prote
 test('tenant and permission gates fail closed without authoritative grants', () => {
   assert.equal(resolveRoute(`/app/${otherId}/me`, authenticated).kind, 'forbidden')
   assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated).kind, 'forbidden')
-  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated, { tenantId, screenIds: ['AC01'] }).kind, 'screen')
+  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated, evidence(['AC01'])).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantId}/settings/members`, authenticated, evidence(['OP01'])).kind, 'screen')
   assert.equal(canView(routes.find((r) => r.id === 'AC01'), session, otherId, { tenantId: otherId, screenIds: ['AC01'] }), false)
 })
 
@@ -43,9 +46,10 @@ test('all dynamic route parameters are available without changing tenant guard i
   assert.equal(student?.tenantId, tenantId)
 
   const invoice = resolveRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`, authenticated,
-    { tenantId, screenIds: ['BL10'] })
-  assert.equal(invoice.kind, 'screen')
-  assert.deepEqual(invoice.params, { tenantId, invoiceId: 'invoice-42' })
+    evidence(['BL10']))
+  assert.equal(invoice.kind, 'forbidden')
+  assert.deepEqual(matchRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`)?.params,
+    { tenantId, invoiceId: 'invoice-42' })
 
   const encoded = matchRoute(`/app/${tenantId}/students/H%E1%BB%8Dc%20sinh`)
   assert.equal(encoded?.params.studentId, 'Học sinh')

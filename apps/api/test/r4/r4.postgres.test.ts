@@ -34,6 +34,8 @@ import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { RuntimeService } from '../../src/workflow-approval/runtime.service.js';
 import { R4Worker } from '../../src/automation-jobs/worker.js';
+import { registerNavigationProposalTests } from './navigation-proposal.cases.js';
+import { browserAuthJourney, browserAvailable } from './browser-auth.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
@@ -61,6 +63,8 @@ const native = (name: string, fn: () => Promise<void>) =>
   it(name, async () => {
     await fn();
   });
+registerNavigationProposalTests({ admin: () => admin, repository: () => repository, auth: () => auth,
+  apiUrl: () => apiConnection, fresh: () => fresh(), actor });
 const connect = (url: string) => {
   const q = postgres(url, {
     max: 1,
@@ -421,6 +425,86 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  native('A20 migrated navigation exists and unauthenticated HTTP is denied', async () => {
+    const [row] = await admin`SELECT to_regprocedure('educore_r4.navigation_access(uuid)') IS NOT NULL installed`;
+    expect(row.installed).toBe(true);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${fixture.tenant}/access/navigation`).expect(401);
+  });
+  native('A21 navigation HTTP binds identity, tenant, no-store and exact five-field response', async () => {
+    const f = await fresh(), principalSession = await sessionFor(f);
+    const path = `/api/v1/tenants/${f.tenant}/access/navigation`;
+    const get = () => request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${principalSession.accessToken}`);
+    const response = await get().expect(200);
+    expect(Object.keys(response.body).sort()).toEqual(['screenIds', 'sessionId', 'tenantId', 'userId', 'validUntil']);
+    expect(response.body).toMatchObject({ userId: f.user, tenantId: f.tenant,
+      screenIds: ['OP01', 'OP04', 'OP05', 'OP06', 'OP07'] });
+    expect(response.body.sessionId).toBe(auth.tokens.verify(principalSession.accessToken).sid);
+    expect(response.body.validUntil).toBeGreaterThan(Date.now());
+    const [serverClock] = await admin`SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms`;
+    expect(response.body.validUntil).toBeLessThanOrEqual(Number(serverClock.now_ms) + 60_000);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers.etag).toBeUndefined();
+    const conditional = await get().set('If-None-Match', '*').expect(200);
+    expect(conditional.headers['cache-control']).toBe('no-store');
+    expect(conditional.headers.etag).toBeUndefined();
+    expect(response.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(response.headers['set-cookie']).toBeUndefined();
+    for (const bad of [await get().query({ role: 'MANAGER' }).expect(400),
+      await get().send({ screenIds: ['OP01'] }).expect(400)]) {
+      expect(bad.body.code).toBe('INVALID_INPUT');
+      expect(bad.headers['cache-control']).toBe('no-store');
+      expect(bad.headers.etag).toBeUndefined();
+    }
+    const wrong = await request(app.getHttpServer()).get(`/api/v1/tenants/${randomUUID()}/access/navigation`)
+      .set('Authorization', `Bearer ${principalSession.accessToken}`).expect(403);
+    expect(wrong.body.code).toBe('FORBIDDEN');
+    const none = await actor(f, 'ACADEMIC_STAFF');
+    const empty = await request(app.getHttpServer()).get(path)
+      .set('Authorization', `Bearer ${none.accessToken}`).expect(200);
+    expect(empty.body.screenIds).toEqual([]);
+    await admin`UPDATE tenant_memberships SET status='DISABLED',left_at=clock_timestamp() WHERE id=${none.member}`;
+    const denied = await request(app.getHttpServer()).get(path)
+      .set('Authorization', `Bearer ${none.accessToken}`).expect(403);
+    expect(denied.body.code).toBe('FORBIDDEN');
+    const sid = auth.tokens.verify(principalSession.accessToken).sid;
+    await admin`UPDATE auth_sessions SET access_expires_at=clock_timestamp()-interval '1 second' WHERE id=${sid}`;
+    const expired = await get().expect(401);
+    expect(expired.body.code).toBe('AUTH_REQUIRED');
+  });
+  native('A22 OP05 menu evidence cannot resolve an unrelated approval resource', async () => {
+    const f = await fresh(), accountant = await actor(f, 'ACCOUNTANT');
+    const authorization = `Bearer ${accountant.accessToken}`;
+    const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .set('Authorization', authorization).expect(200);
+    expect(menu.body.screenIds).toEqual(['OP04', 'OP05']);
+    const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
+      .set('Authorization', authorization).expect(404);
+    expect(resource.body.code).toBe('NOT_FOUND');
+  });
+  native('A18 no-membership account authenticates but cannot select a tenant', async () => {
+    const isolatedEmail = randomUUID() + '@r4.invalid';
+    const user = await put(admin as unknown as Query, 'users', { email_normalized: isolatedEmail, display_name: 'No membership', status: 'ACTIVE' });
+    await admin`INSERT INTO credentials(user_id,password_hash,password_changed_at) VALUES(${user},${sharedPasswordHash},clock_timestamp())`;
+    const login = await request(app.getHttpServer()).post('/api/v1/auth/login').set('Origin', auth.config.origins[0])
+      .send({ email: isolatedEmail, password }).expect(200);
+    expect(login.body.allowedTenants).toEqual([]);
+    const me = await request(app.getHttpServer()).get('/api/v1/auth/me').set('Authorization', `Bearer ${login.body.accessToken}`).expect(200);
+    expect(me.body.tenantId).toBeNull();
+    expect(me.body.allowedTenants).toEqual([]);
+    await request(app.getHttpServer()).post('/api/v1/auth/select-tenant').set('Authorization', `Bearer ${login.body.accessToken}`)
+      .send({ tenantId: fixture.tenant }).expect(403);
+    await request(app.getHttpServer()).post('/api/v1/auth/logout').set('Authorization', `Bearer ${login.body.accessToken}`).expect(204);
+  });
+  it.skipIf(!browserAvailable)('A19 actual Edge → React → NestJS → restricted PostgreSQL journey', async () => {
+    const f = await fresh();
+    const [user] = await admin`SELECT email_normalized FROM users WHERE id=${f.user}`;
+    const verified = await browserAuthJourney({ authUrl: authConnection, apiUrl: apiConnection, config: auth.config,
+      email: user.email_normalized as string, password, tenantId: f.tenant });
+    expect(Object.values(verified).every((value) => value === true)).toBe(true);
+    const [row] = await admin`SELECT count(*)::int revoked FROM auth_sessions WHERE user_id=${f.user} AND revoked_at IS NOT NULL`;
+    expect(row.revoked).toBeGreaterThanOrEqual(1);
+    (evidence.cases as Record<string, unknown>).browser = verified;
+  });
   it('D01 restricted runtime starts; anonymous principal cannot bind', async () => {
     expect(() => auth.me('invalid')).toThrow('AUTH_REQUIRED');
     await expect(

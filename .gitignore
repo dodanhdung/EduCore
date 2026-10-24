@@ -28,5 +28,7 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
-# Review
+# Tài liệu nội bộ
 artifacts/
+.agents/
+/roadmap.md
