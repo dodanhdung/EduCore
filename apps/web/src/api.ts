@@ -89,6 +89,15 @@ export class ApiClient {
     return this.request<void>('/api/v1/auth/password/reset',
       { method: 'POST', body: { email, otp, newPassword }, signal, expectedStatus: 204 })
   }
+  async requestActivationOtp(email: string, signal?: AbortSignal) {
+    const result = await this.request<{ accepted: boolean }>('/api/v1/auth/activation/otp/request',
+      { method: 'POST', body: { email }, signal, expectedStatus: 202 })
+    if (result?.accepted !== true) throw new ApiError(502, 'INVALID_RESPONSE')
+  }
+  completeActivation(email: string, otp: string, newPassword: string, signal?: AbortSignal) {
+    return this.request<void>('/api/v1/auth/activation/complete',
+      { method: 'POST', body: { email, otp, newPassword }, signal, expectedStatus: 204 })
+  }
   me(accessToken: string, signal?: AbortSignal) {
     return this.request<Principal>('/api/v1/auth/me', { accessToken, signal })
   }
