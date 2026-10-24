@@ -9,8 +9,12 @@ required for the built-in asynchronous Argon2id implementation.
 From the repository root, with an installed local Docker Engine:
 
 ```powershell
+pnpm.cmd --dir apps/api build
 powershell -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r4-native.ps1 -RunTests
 ```
+
+The build is required by the R8 process-kill fixture, which starts compiled API
+and worker code in child processes. It does not authorize any database target.
 
 The runner creates a unique PostgreSQL 16 cluster, database and anonymous volume,
 admits only a fresh literal-loopback target, generates passwords in memory,
@@ -22,10 +26,39 @@ For a focused rerun, append `-TestFilter 'C06|X13'`. The harness invokes Node
 directly for this case so regex metacharacters never pass through `pnpm.cmd`.
 Filtered skips are not full-suite evidence. Each rerun still uses a new cluster.
 
-`test:r4:native` requires `R4_TEST_URL` and the explicit
-`R4_TEST_DISPOSABLE=I_OWN_THIS_DISPOSABLE_CLUSTER` admission. Never set these for a
-shared database. It does not fall back to `DATABASE_URL`. Evidence JSON and
-sanitized environment metadata are written to the OS temporary directory.
+Run native tests only with `powershell -NoProfile -ExecutionPolicy Bypass -File
+apps/api/test/r4/start-r4-native.ps1 -RunTests` from the repository root. The
+runner creates and verifies a new isolated PostgreSQL 16 cluster before it sets
+`R4_TEST_URL` and `R4_TEST_DISPOSABLE` inside its process. Manually setting those
+variables is not test admission. Never use a shared, populated, development,
+staging or production database. Evidence JSON and sanitized environment metadata
+are written to the OS temporary directory.
+
+## R8 local recovery worker
+
+The password-recovery route now issues an OTP and encrypted delivery task in one
+SQL transaction. Set `R4_RECOVERY_ACTIVE_KEY_ID` and `R4_RECOVERY_ACTIVE_KEY`
+(base64 of a **test-only** 32-byte key) on the API process. Start the separate
+local worker with `node apps/api/dist/identity-access/recovery-worker-main.js`
+and only these worker secrets: `R4_OTP_WORKER_URL` (a restricted LOGIN whose sole
+group is `educore_r4_otp_delivery`), `R4_RECOVERY_KEYS` (JSON key-id to base64
+test-key map), `R4_SMTP_HOST` (`127.0.0.1`), `R4_SMTP_PORT`, and
+`R4_SMTP_FROM` ending in `.invalid`; `R4_SMTP_USER` and `R4_SMTP_PASSWORD` are
+optional for a local fake server. The local worker refuses production mode,
+non-loopback SMTP and non-`.invalid` recipients. Do not copy test keys or SMTP
+credentials into source, logs, reports or archives. Do not use customer addresses.
+
+`R4_OTP_MODE` and the existing activation delivery adapter remain for the legacy
+ACTIVATION flow; D01 does not claim that flow's SMTP credential is isolated from
+the API process. The new recovery worker never loads JWT, OTP pepper, API or
+business-worker credentials. SMTP acceptance means server acceptance only; UC-03
+alternative 2a and production SMTP/key custody remain open for separate approval.
+
+The native suite kills child API/worker processes after commit, before send,
+during fake SMTP and after a fake SMTP 250 reply. It advances only the runner's
+disposable task lease and retry clocks to test recovery without waiting minutes.
+The same eligible OTP is retried; SMTP delivery can occur twice when a process
+dies after server acceptance. No inbox delivery or exactly-once guarantee follows.
 
 Real Nest HTTP tests log in with Argon2id credentials and persistent sessions;
 there is no fake principal override. SQL races use independently connected
@@ -49,6 +82,7 @@ different restricted LOGINs through the operator's secure credential procedure:
 | `R4_API_URL`       | `educore_r4_api`      | Inherits R2/R3 command roles; verified transaction binding required        |
 | `R4_WORKER_URL`    | `educore_r4_worker`   | Claim/fenced execution/outbox functions only                               |
 | `R4_OPERATOR_URL`  | `educore_r4_operator` | CLI bootstrap/static seed/global disable; never loaded by the HTTP runtime |
+| `R4_OTP_WORKER_URL` | `educore_r4_otp_delivery` | R8 local worker delivery functions only; no API/auth/business role membership |
 
 LOGINs must be NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOBYPASSRLS, without schema or
 database CREATE, owner-role membership, raw credential SELECT or combined
@@ -86,13 +120,13 @@ signing key, migration URL fallback or wildcard credentialed CORS exists.
 an injected object for tests/local debugging and exposes no capture HTTP route.
 `R4_OTP_MODE=unavailable` explicitly disables delivery while preserving auth
 implementation and generic OTP request responses. This is **not an operational
-password recovery configuration**. SMTP uses authenticated TLS on 465 or required
-STARTTLS on 587, certificate validation, bounded timeouts, no debug logging,
-attachments, filesystem content or URL content. Actual delivery must be verified
-separately with authorized credentials. No SMTP send was performed in this task.
-Delivery starts after OTP persistence without delaying the generic response, so
-SMTP latency does not identify eligible emails. It is best effort; a restart
-during delivery may require an explicit resend after the throttle window.
+password recovery configuration**. That SMTP adapter is the existing ACTIVATION
+path only. Its production configuration is not approval to run the R8 recovery
+worker with real SMTP or keys. R8 recovery sends only through its separate local
+loopback fake-SMTP worker; HTTP never waits for that transport. A committed task
+survives an API restart, and a worker restart can retry it after lease expiry.
+Fake SMTP 250 is server acceptance, not proof of inbox arrival. Production SMTP
+and key custody require separate owner approval.
 
 Review reverse-proxy/database logging: never log Authorization/Cookie/OTP bodies,
 connection URLs or SQL bind values. In particular, configure PostgreSQL parameter

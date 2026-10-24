@@ -9,7 +9,7 @@ import { Test } from '@nestjs/testing';
 import { R4Module, configureR4Http } from '../../src/identity-access/r4.module.js';
 import { R4Repository } from '../../src/identity-access/r4-repository.js';
 import type { AuthConfig } from '../../src/identity-access/auth.service.js';
-import { UnavailableOtpDelivery } from '../../src/identity-access/otp-delivery.js';
+import { CaptureOtpDelivery } from '../../src/identity-access/otp-delivery.js';
 
 export const edgePath = process.env.R7_TEST_EDGE_PATH ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 export const browserAvailable = existsSync(edgePath);
@@ -59,6 +59,7 @@ async function cdp(url: string) {
 
 export async function browserAuthJourney(options: {
   authUrl: string; apiUrl: string; config: AuthConfig; email: string; password: string; tenantId: string;
+  recoveryOtp?: (email: string) => Promise<string | undefined>;
 }) {
   if (!browserAvailable) throw Error('EDGE_TEST_ENVIRONMENT_UNAVAILABLE');
   if (process.env.R4_TEST_DISPOSABLE !== 'I_OWN_THIS_DISPOSABLE_CLUSTER') throw Error('DISPOSABLE_REQUIRED');
@@ -66,7 +67,8 @@ export async function browserAuthJourney(options: {
   await repository.assertRuntime();
   const origin = 'http://localhost:5173';
   const config = { ...options.config, production: false, origins: [origin] };
-  const module = await Test.createTestingModule({ imports: [R4Module.register(repository, config, new UnavailableOtpDelivery())] }).compile();
+  const delivery = new CaptureOtpDelivery();
+  const module = await Test.createTestingModule({ imports: [R4Module.register(repository, config, delivery)] }).compile();
   const app = module.createNestApplication();
   configureR4Http(app, config);
   const webRoot = fileURLToPath(new URL('../../../web/', import.meta.url));
@@ -108,7 +110,8 @@ export async function browserAuthJourney(options: {
       if (event.method !== 'Network.responseReceived') return;
       const { response } = event.params as { response: { url: string; status: number } };
       const url = new URL(response.url);
-      if (['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', '/api/v1/auth/logout'].includes(url.pathname)
+      if (['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', '/api/v1/auth/logout',
+        '/api/v1/auth/password/otp/request', '/api/v1/auth/password/reset'].includes(url.pathname)
         || url.pathname.endsWith('/access/navigation')) {
         network.push({ path: url.pathname, status: response.status, expectedApiOrigin: url.origin === apiOrigin });
       }
@@ -122,12 +125,12 @@ export async function browserAuthJourney(options: {
     await send('Page.enable', {}, sessionId);
     await send('Network.enable', {}, sessionId);
     await send('Page.navigate', { url: `${origin}/login` }, sessionId);
-    const login = async () => {
+    const login = async (loginPassword = options.password) => {
       await until(() => evaluate<boolean>('!!document.querySelector("#login-email")'), 'LOGIN_FORM');
       await evaluate('document.getElementById("login-email").focus()');
       await send('Input.insertText', { text: options.email }, sessionId);
       await evaluate('document.getElementById("login-password").focus()');
-      await send('Input.insertText', { text: options.password }, sessionId);
+      await send('Input.insertText', { text: loginPassword }, sessionId);
       await evaluate('document.querySelector("form").requestSubmit()');
       try {
         await until(() => evaluate<boolean>('location.pathname === "/select-tenant" && document.querySelectorAll(".ec-tenant-choice").length === 1'), 'TENANT_SELECTION');
@@ -161,10 +164,40 @@ export async function browserAuthJourney(options: {
     await evaluate('document.querySelector(".top-actions button").click()');
     await until(() => evaluate<boolean>('location.pathname === "/login" && !document.querySelector(".app-shell") && document.body.textContent.includes("Bạn đã đăng xuất.")'), 'LOGOUT');
     await until(async () => network.some((entry) => entry.path === '/api/v1/auth/logout' && entry.status === 204 && entry.expectedApiOrigin), 'LOGOUT_HTTP_CONFIRMATION');
+    await send('Page.navigate', { url: `${origin}/forgot-password` }, sessionId);
+    await until(() => evaluate<boolean>('!!document.querySelector("#recovery-email")'), 'RECOVERY_FORM');
+    await evaluate('document.getElementById("recovery-email").focus()');
+    await send('Input.insertText', { text: options.email }, sessionId);
+    await evaluate('document.querySelector("form").requestSubmit()');
+    await until(() => evaluate<boolean>(`!!document.querySelector('a[href="/reset-password"]')`), 'RECOVERY_ACCEPTED');
+    const capture = await until(async () => {
+      const code = await options.recoveryOtp?.(options.email);
+      return code ? { otp: code } : delivery.messages.find((message) => message.email === options.email && message.purpose === 'PASSWORD_RESET') ?? false;
+    }, 'TEST_OTP_CAPTURE');
+    await evaluate(`document.querySelector('a[href="/reset-password"]').click()`);
+    await until(() => evaluate<boolean>('location.pathname === "/reset-password" && !!document.querySelector("#reset-email")'), 'RESET_FORM');
+    await send('Page.navigate', { url: `${origin}/reset-password` }, sessionId);
+    await until(() => evaluate<boolean>('location.pathname === "/reset-password" && !!document.querySelector("#reset-email")'), 'RESET_DIRECT_RELOAD');
+    const recoveryDirectReload = await evaluate<boolean>('location.search === "" && document.querySelector("#reset-email").value === ""');
+    const newPassword = 'Recovery password 1234!';
+    for (const [selector, value] of [
+      ['reset-email', options.email], ['reset-otp', capture.otp], ['reset-password', newPassword], ['reset-confirm', newPassword],
+    ]) {
+      await evaluate(`document.getElementById(${JSON.stringify(selector)}).focus()`);
+      await send('Input.insertText', { text: value }, sessionId);
+    }
+    await evaluate('document.querySelector("form").requestSubmit()');
+    await until(() => evaluate<boolean>('location.pathname === "/login" && !!document.querySelector("#login-email")'), 'RESET_COMPLETE');
+    const recoveryStorageClear = await evaluate<boolean>('location.search === "" && localStorage.length === 0 && sessionStorage.length === 0');
+    const recoverySecretsAbsent = await evaluate<boolean>(`!document.body.textContent.includes(${JSON.stringify(capture.otp)}) && !document.body.textContent.includes(${JSON.stringify(newPassword)})`);
+    await login(newPassword);
+    const recoveryHttpSequence = network.some((entry) => entry.path === '/api/v1/auth/password/otp/request' && entry.status === 202 && entry.expectedApiOrigin)
+      && network.some((entry) => entry.path === '/api/v1/auth/password/reset' && entry.status === 204 && entry.expectedApiOrigin);
     const actualHttpSequence = ['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', `/api/v1/tenants/${options.tenantId}/access/navigation`]
       .every((path) => network.some((entry) => entry.path === path && entry.status === 200 && entry.expectedApiOrigin));
     return { actualBrowser: true, actualNestPostgres: true, actualHttpSequence, noStorage, noPasswordInDOM, noTokensInDOM, httpOnlyRefreshCookie,
-      authorizedNavigation, unreviewedRouteDenied: true, reloadFailClosed: true, logout: true };
+      authorizedNavigation, unreviewedRouteDenied: true, reloadFailClosed: true, logout: true,
+      recoveryHttpSequence, recoveryDirectReload, recoveryStorageClear, recoverySecretsAbsent, recoveryNewPasswordLogin: true };
   } finally {
     if (protocol) { await protocol.send('Browser.close').catch(() => undefined); protocol.close(); }
     if (browser && browser.exitCode === null) { await delay(500); if (browser.exitCode === null) browser.kill(); }

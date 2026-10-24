@@ -30,11 +30,11 @@ export function TextInput({ id, className = '', ...props }: InputHTMLAttributes<
   return <input id={id} className={`ec-text-input ${className}`} aria-describedby={props['aria-describedby'] ?? (props['aria-invalid'] ? `${id}-error` : undefined)} {...props} />
 }
 
-export function PasswordInput({ id, placeholder, value, onChange, error }: { id: string; placeholder: string; value: string; onChange: (value: string) => void; error?: string }) {
+export function PasswordInput({ id, placeholder, value, onChange, error, disabled = false }: { id: string; placeholder: string; value: string; onChange: (value: string) => void; error?: string; disabled?: boolean }) {
   const [visible, setVisible] = useState(false)
   return <div className="ec-password-input">
-    <input id={id} type={visible ? 'text' : 'password'} autoComplete="new-password" placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined} />
-    <button type="button" aria-label={visible ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} aria-pressed={visible} onClick={() => setVisible((current) => !current)}>{visible ? 'Ẩn' : 'Hiện'}</button>
+    <input id={id} type={visible ? 'text' : 'password'} autoComplete="new-password" placeholder={placeholder} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined} />
+    <button type="button" aria-label={visible ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'} aria-pressed={visible} disabled={disabled} onClick={() => setVisible((current) => !current)}>{visible ? 'Ẩn' : 'Hiện'}</button>
   </div>
 }
 

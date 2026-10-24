@@ -111,6 +111,8 @@ export class R4ErrorFilter implements ExceptionFilter {
       status = 401;
     if (['INVALID_OTP', 'PASSWORD_POLICY'].includes(e.message ?? ''))
       status = 400;
+    const globalRecoveryFailure = e.message === 'RECOVERY_GLOBAL_UNAVAILABLE';
+    if (globalRecoveryFailure) status = 503;
     const code =
       (
         {
@@ -122,7 +124,7 @@ export class R4ErrorFilter implements ExceptionFilter {
           422: 'BUSINESS_RULE',
           429: 'RATE_LIMITED',
         } as Record<number, string>
-      )[status] ?? 'INTERNAL_ERROR';
+      )[status] ?? (globalRecoveryFailure ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_ERROR');
     const correlationId = res.getHeader('X-Request-Id') ?? correlation(req);
     if (status >= 500)
       this.logger.error(
@@ -138,7 +140,7 @@ export class R4ErrorFilter implements ExceptionFilter {
       message: code,
       correlationId,
     };
-    if (/\/access\/navigation\/?$/.test(req.path ?? ''))
+    if (status === 503 || /\/access\/navigation\/?$/.test(req.path ?? ''))
       res.status(status).set('Content-Type', 'application/json; charset=utf-8').end(JSON.stringify(body));
     else res.status(status).json(body);
   }
@@ -237,9 +239,21 @@ export class AuthController {
   @Post('password/otp/request')
   @HttpCode(202)
   async otp(@Body() input: unknown, @Req() req: Request) {
-    await this.limit(req, 'otp', 10);
     const b = object(input, ['email']);
-    await this.auth.requestOtp(email(b), 'PASSWORD_RESET');
+    const normalized = email(b);
+    // Register the common response deadline before account-dependent SQL work.
+    // Otherwise timer insertion order itself can follow known/unknown query time.
+    const responseFloor = new Promise<void>((resolve) => setTimeout(resolve, 100));
+    try { await this.limit(req, 'otp', 10); }
+    catch (failure) {
+      if (failure instanceof HttpException && failure.getStatus() === 429) throw failure;
+      throw Error('RECOVERY_GLOBAL_UNAVAILABLE');
+    }
+    try { await this.auth.recoveryReady(); }
+    catch { throw Error('RECOVERY_GLOBAL_UNAVAILABLE'); }
+    try { await this.auth.requestOtp(normalized, 'PASSWORD_RESET'); }
+    catch { Logger.warn('R8_RECOVERY_ISSUE_FAILED'); }
+    await responseFloor;
     return { accepted: true };
   }
   @Post('activation/otp/request')

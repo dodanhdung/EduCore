@@ -8,6 +8,7 @@ import {
 } from './crypto.js';
 import { R4Repository, result } from './r4-repository.js';
 import type { OtpDeliveryPort } from './otp-delivery.js';
+import { encryptRecovery, type RecoveryKey } from './recovery-envelope.js';
 
 export interface AuthConfig {
   jwtSecret: string;
@@ -16,6 +17,7 @@ export interface AuthConfig {
   otpPepper: string;
   origins: string[];
   production: boolean;
+  recoveryKey?: RecoveryKey;
 }
 export class AuthService {
   readonly tokens: AccessTokens;
@@ -165,6 +167,20 @@ export class AuthService {
     );
   }
   async requestOtp(email: string, purpose: 'ACTIVATION' | 'PASSWORD_RESET') {
+    if (purpose === 'PASSWORD_RESET') {
+      const key = this.config.recoveryKey;
+      if (!key) throw Error('RECOVERY_GLOBAL_UNAVAILABLE');
+      const otpId = randomUUID();
+      const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
+      const envelope = encryptRecovery(otpId, email, otp, key);
+      await result<boolean>(
+        this.repository.auth,
+        'SELECT educore_r4.request_recovery_otp($1::text,$2::uuid,$3::text,$4::text,$5::bytea,$6::bytea,$7::bytea) result',
+        email, otpId, this.otpHash(email, purpose, otp), envelope.keyId,
+        envelope.nonce, envelope.ciphertext, envelope.tag,
+      );
+      return;
+    }
     const otp = randomInt(0, 1_000_000).toString().padStart(6, '0');
     const accepted = await result<boolean>(
       this.repository.auth,
@@ -181,6 +197,10 @@ export class AuthService {
         console.warn('R4_OTP_DELIVERY_FAILED');
       });
     }
+  }
+  async recoveryReady() {
+    if (!this.config.recoveryKey) throw Error('RECOVERY_GLOBAL_UNAVAILABLE');
+    await result<number>(this.repository.auth, 'SELECT 1::int result');
   }
   async reset(
     email: string,

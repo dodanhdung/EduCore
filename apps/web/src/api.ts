@@ -46,7 +46,7 @@ export class ApiClient {
 
   async request<T>(path: string, options: {
     method?: 'GET' | 'POST'; body?: unknown; accessToken?: string; csrfToken?: string;
-    credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache
+    credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache; expectedStatus?: number
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
@@ -60,6 +60,8 @@ export class ApiClient {
       signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     })
     const requestId = response.headers.get('x-request-id') ?? undefined
+    if (options.expectedStatus !== undefined && response.ok && response.status !== options.expectedStatus)
+      throw new ApiError(502, 'INVALID_RESPONSE', requestId)
     if (response.status === 204) {
       if (!response.ok) throw new ApiError(response.status, 'HTTP_ERROR', requestId)
       return undefined as T
@@ -77,6 +79,24 @@ export class ApiClient {
 
   login(email: string, password: string, signal?: AbortSignal) {
     return this.request<LoginResponse>('/api/v1/auth/login', { method: 'POST', body: { email, password }, credentials: 'include', signal })
+  }
+  async requestPasswordResetOtp(email: string, signal?: AbortSignal) {
+    const result = await this.request<{ accepted: boolean }>('/api/v1/auth/password/otp/request',
+      { method: 'POST', body: { email }, signal, expectedStatus: 202 })
+    if (result?.accepted !== true) throw new ApiError(502, 'INVALID_RESPONSE')
+  }
+  completePasswordReset(email: string, otp: string, newPassword: string, signal?: AbortSignal) {
+    return this.request<void>('/api/v1/auth/password/reset',
+      { method: 'POST', body: { email, otp, newPassword }, signal, expectedStatus: 204 })
+  }
+  async requestActivationOtp(email: string, signal?: AbortSignal) {
+    const result = await this.request<{ accepted: boolean }>('/api/v1/auth/activation/otp/request',
+      { method: 'POST', body: { email }, signal, expectedStatus: 202 })
+    if (result?.accepted !== true) throw new ApiError(502, 'INVALID_RESPONSE')
+  }
+  completeActivation(email: string, otp: string, newPassword: string, signal?: AbortSignal) {
+    return this.request<void>('/api/v1/auth/activation/complete',
+      { method: 'POST', body: { email, otp, newPassword }, signal, expectedStatus: 204 })
   }
   me(accessToken: string, signal?: AbortSignal) {
     return this.request<Principal>('/api/v1/auth/me', { accessToken, signal })

@@ -54,6 +54,19 @@ export class R4Repository {
       FROM pg_proc p JOIN pg_roles owner ON owner.oid=p.proowner
       WHERE p.oid=to_regprocedure('educore_r4.navigation_access(uuid)')`);
     if (!navigation[0]?.safe) throw Error('UNSAFE_R4_NAVIGATION');
+    const recovery = await this.auth.$queryRawUnsafe<{ safe: boolean }[]>(`
+      SELECT owner.rolname='educore_r4_owner' AND NOT owner.rolcanlogin
+       AND p.prosecdef AND p.provolatile='v'
+       AND p.proconfig @> ARRAY['search_path=pg_catalog, educore_r4, pg_temp']::text[]
+       AND NOT EXISTS(SELECT FROM aclexplode(p.proacl) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
+       AND has_function_privilege('educore_r4_auth','educore_r4.request_recovery_otp(text,uuid,text,text,bytea,bytea,bytea)','EXECUTE')
+       AND NOT has_function_privilege('educore_r4_api','educore_r4.request_recovery_otp(text,uuid,text,text,bytea,bytea,bytea)','EXECUTE')
+       AND NOT has_function_privilege('educore_r4_worker','educore_r4.request_recovery_otp(text,uuid,text,text,bytea,bytea,bytea)','EXECUTE')
+       AND NOT has_table_privilege('educore_r4_auth','educore_r4.recovery_otp_deliveries','SELECT')
+       AND NOT has_table_privilege('educore_r4_api','educore_r4.recovery_otp_deliveries','SELECT') safe
+      FROM pg_proc p JOIN pg_roles owner ON owner.oid=p.proowner
+      WHERE p.oid=to_regprocedure('educore_r4.request_recovery_otp(text,uuid,text,text,bytea,bytea,bytea)')`);
+    if (!recovery[0]?.safe) throw Error('UNSAFE_R8_RECOVERY');
   }
   transaction<T>(token: string, action: (tx: R4Tx) => Promise<T>) {
     return this.api.$transaction(
