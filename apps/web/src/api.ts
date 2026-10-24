@@ -45,7 +45,7 @@ export class ApiClient {
   }
 
   async request<T>(path: string, options: {
-    method?: 'GET' | 'POST'; body?: unknown; accessToken?: string; csrfToken?: string;
+    method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string; csrfToken?: string;
     credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache; expectedStatus?: number
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
@@ -104,6 +104,12 @@ export class ApiClient {
   navigation(accessToken: string, tenantId: string, signal?: AbortSignal) {
     return this.request<unknown>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/access/navigation`,
       { accessToken, credentials: 'omit', cache: 'no-store', signal })
+  }
+  management<T>(tenantId: string, path: string, accessToken: string, options: {
+    method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; signal?: AbortSignal
+  } = {}) {
+    return this.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}${path}`,
+      { ...options, accessToken, cache: 'no-store' })
   }
   selectTenant(accessToken: string, tenantId: string, signal?: AbortSignal) {
     return this.request<SelectTenantResponse>('/api/v1/auth/select-tenant', { method: 'POST', body: { tenantId }, accessToken, signal })

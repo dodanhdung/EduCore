@@ -26,6 +26,11 @@ const html = (id, extra) => renderToStaticMarkup(React.createElement(ManagementS
 const suffixes = ['/overview', '/settings/members', '/settings/members/MB-031', '/relationships', '/approvals', '/approvals/YC-24018', '/audit', '/operations/jobs']
 const session = { accessToken: 'TEST', csrfToken: 'TEST', expiresAt: Date.now() + 3600000, tenantEpoch: 1, principal: { id: 'user', sessionId: 'session', tenantId: data.tenantId, allowedTenants: [{ id: data.tenantId, name: data.tenantName }] } }
 const state = { status: 'authenticated', session }
+test('OP02 and OP03 stay closed with unreviewed navigation IDs', () => {
+  const evidence = { userId: session.principal.id, sessionId: session.principal.sessionId, tenantId: data.tenantId,
+    tenantEpoch: 1, validUntil: Date.now() + 30_000, screenIds: ['OP01', 'OP02', 'OP03'] }
+  for (const id of ['OP02', 'OP03']) assert.equal(canView(routes.find((r) => r.id === id), session, data.tenantId, evidence), false)
+})
 function doc(source) { return new JSDOM(source).window.document }
 async function mounted(id, extra, run) {
   const root = createRoot(document.getElementById('root'))

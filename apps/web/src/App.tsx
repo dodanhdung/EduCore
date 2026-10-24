@@ -50,6 +50,7 @@ import { MyBillingScreen } from './screens/Role Portals/PO05/MyBillingScreen.tsx
 import { portalPath } from './screens/Role Portals/PortalNavigation.ts'
 import './App.css'
 import { ManagementScreen } from './screens/Management & Operations/ManagementScreens.tsx'
+import { ProductionManagement } from './screens/Management & Operations/ProductionManagement.tsx'
 import { managementIds } from './screens/Management & Operations/ManagementTypes.ts'
 import type { ManagementId } from './screens/Management & Operations/ManagementTypes.ts'
 
@@ -208,7 +209,11 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} viewerId={session?.principal.id} tenantId={tenant.id} />
       : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
       : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
-      : (managementIds as readonly string[]).includes(result.route.id) ? <ManagementScreen id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId ?? result.params.requestId} />
+      : (managementIds as readonly string[]).includes(result.route.id) ? ['OP01', 'OP02', 'OP03'].includes(result.route.id)
+        ? <ProductionManagement key={`${tenant.id}:${result.route.id}:${result.params.membershipId ?? ''}`} id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId} session={session!}
+          open={(screen, recordId) => navigate(screen === 'OP01' ? tenantPath(tenant.id, '/settings/members')
+            : tenantPath(tenant.id, `/settings/members/${encodeURIComponent(recordId ?? '')}`))} />
+        : <ManagementScreen id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId ?? result.params.requestId} />
       : <ScreenPlaceholder route={result.route} />
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout} navigation={navigationRoutes(session!)}>
     {screen}
