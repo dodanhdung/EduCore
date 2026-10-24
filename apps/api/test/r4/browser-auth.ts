@@ -108,7 +108,8 @@ export async function browserAuthJourney(options: {
       if (event.method !== 'Network.responseReceived') return;
       const { response } = event.params as { response: { url: string; status: number } };
       const url = new URL(response.url);
-      if (['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', '/api/v1/auth/logout'].includes(url.pathname)) {
+      if (['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', '/api/v1/auth/logout'].includes(url.pathname)
+        || url.pathname.endsWith('/access/navigation')) {
         network.push({ path: url.pathname, status: response.status, expectedApiOrigin: url.origin === apiOrigin });
       }
     });
@@ -135,7 +136,7 @@ export async function browserAuthJourney(options: {
         throw Error('BROWSER_AUTH_HANDOFF_FAILED ' + JSON.stringify({ form, network }));
       }
       await evaluate('document.querySelector(".ec-tenant-choice").click()');
-      await until(() => evaluate<boolean>(`location.pathname === ${JSON.stringify(`/app/${options.tenantId}/me`)} && !!document.querySelector('.app-shell')`), 'PROFILE');
+      await until(() => evaluate<boolean>(`location.pathname === ${JSON.stringify(`/app/${options.tenantId}/settings/members`)} && !!document.querySelector('.app-shell')`), 'AUTHORIZED_LANDING');
     };
     await login();
     const noStorage = await evaluate<boolean>('localStorage.length === 0 && sessionStorage.length === 0 && !document.cookie.includes("educore_refresh")');
@@ -143,7 +144,15 @@ export async function browserAuthJourney(options: {
     const noTokensInDOM = await evaluate<boolean>('!(/\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b/).test(document.body.textContent)');
     const cookies = await send<{ cookies: { name: string; httpOnly: boolean; path: string; sameSite: string }[] }>('Network.getCookies', { urls: [`${apiOrigin}/api/v1/auth/refresh`] }, sessionId);
     const httpOnlyRefreshCookie = cookies.cookies.some((cookie) => cookie.name === 'educore_refresh' && cookie.httpOnly && cookie.path === '/api/v1/auth' && cookie.sameSite === 'Lax');
-    await evaluate(`history.pushState(null, '', ${JSON.stringify(`/app/${options.tenantId}/settings/members`)}); dispatchEvent(new PopStateEvent('popstate'))`);
+    const authorizedNavigation = await evaluate<boolean>(`(() => {
+      const desktop = Array.from(document.querySelectorAll('.sidebar a')).map(a => a.getAttribute('href'));
+      const mobile = Array.from(document.querySelectorAll('.mobile-nav a')).map(a => a.getAttribute('href'));
+      const expected = ${JSON.stringify(['settings/members', 'approvals', 'audit', 'operations/jobs'].map((suffix) => `/app/${options.tenantId}/${suffix}`))};
+      return expected.every(path => desktop.includes(path) && mobile.includes(path))
+        && !desktop.some(path => path?.includes('/students') || path?.includes('/approvals/'))
+        && !mobile.some(path => path?.includes('/students') || path?.includes('/approvals/'));
+    })()`);
+    await evaluate(`history.pushState(null, '', ${JSON.stringify(`/app/${options.tenantId}/students`)}); dispatchEvent(new PopStateEvent('popstate'))`);
     await until(() => evaluate<boolean>('!document.querySelector(".app-shell") && document.body.textContent.includes("Không đủ quyền")'), 'FORBIDDEN');
     await send('Page.navigate', { url: `${origin}/app/${options.tenantId}/me` }, sessionId);
     await until(() => evaluate<boolean>('!document.querySelector(".app-shell") && document.body.textContent.includes("Cần đăng nhập")'), 'RELOAD_FAIL_CLOSED');
@@ -152,10 +161,10 @@ export async function browserAuthJourney(options: {
     await evaluate('document.querySelector(".top-actions button").click()');
     await until(() => evaluate<boolean>('location.pathname === "/login" && !document.querySelector(".app-shell") && document.body.textContent.includes("Bạn đã đăng xuất.")'), 'LOGOUT');
     await until(async () => network.some((entry) => entry.path === '/api/v1/auth/logout' && entry.status === 204 && entry.expectedApiOrigin), 'LOGOUT_HTTP_CONFIRMATION');
-    const actualHttpSequence = ['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant']
+    const actualHttpSequence = ['/api/v1/auth/login', '/api/v1/auth/me', '/api/v1/auth/select-tenant', `/api/v1/tenants/${options.tenantId}/access/navigation`]
       .every((path) => network.some((entry) => entry.path === path && entry.status === 200 && entry.expectedApiOrigin));
     return { actualBrowser: true, actualNestPostgres: true, actualHttpSequence, noStorage, noPasswordInDOM, noTokensInDOM, httpOnlyRefreshCookie,
-      forbiddenWithoutEvidence: true, reloadFailClosed: true, logout: true };
+      authorizedNavigation, unreviewedRouteDenied: true, reloadFailClosed: true, logout: true };
   } finally {
     if (protocol) { await protocol.send('Browser.close').catch(() => undefined); protocol.close(); }
     if (browser && browser.exitCode === null) { await delay(500); if (browser.exitCode === null) browser.kill(); }

@@ -1,14 +1,14 @@
 import type { ScreenRoute } from './routes.ts'
 import { matchRoute, routes, tenantPath } from './routes.ts'
 import { ApiClient, ApiError } from './api.ts'
+import { NAVIGATION_SCREENS, navigationResponse } from './navigation.ts'
 
 export type Tenant = { id: string; name: string }
 export type Principal = { id: string; sessionId: string; tenantId: string | null; allowedTenants: Tenant[] }
 export type Session = { accessToken: string; expiresAt: number; csrfToken: string; principal: Principal; tenantEpoch: number; refreshDeadline?: number; navigation?: PermissionEvidence }
 export type AuthState = { status: 'checking' } | { status: 'unauthenticated'; reason?: 'session-expired' | 'access-revoked' | 'unavailable' | 'logged-out' | 'logout-unconfirmed' } | { status: 'authenticated'; session: Session }
 
-// Consumption contract only: /auth/me currently has no navigation grants.
-// Production has NO reader until the endpoint, mapping and SQL pass owner review.
+// Navigation evidence is separate from /auth/me and never authorizes resource APIs.
 export type NavigationResponse = { userId: string; sessionId: string; tenantId: string; screenIds: readonly string[]; validUntil: number }
 export type PermissionEvidence = NavigationResponse & { tenantEpoch: number }
 export type NavigationReader = (token: string, tenantId: string) => Promise<NavigationResponse>
@@ -18,6 +18,7 @@ export function canView(route: ScreenRoute, session: Session, tenantId: string, 
   if (session.expiresAt <= Date.now() || session.principal.tenantId !== tenantId) return false
   if (!session.principal.allowedTenants.some((tenant) => tenant.id === tenantId)) return false
   if (route.selfService) return true
+  if (!NAVIGATION_SCREENS.includes(route.id as typeof NAVIGATION_SCREENS[number])) return false
   return evidence?.tenantId === tenantId && evidence.userId === session.principal.id
     && evidence.sessionId === session.principal.sessionId && evidence.tenantEpoch === session.tenantEpoch
     && evidence.validUntil > Date.now() && evidence.validUntil <= session.expiresAt
@@ -105,16 +106,16 @@ export class SessionController {
   private async grants(session: Session, revision: number) {
     if (!this.navigationReader || !session.principal.tenantId) return session
     try {
-      const grant = await this.navigationReader(session.accessToken, session.principal.tenantId)
+      const deadline = Date.now() + 60_000
+      const grant = navigationResponse(await this.navigationReader(session.accessToken, session.principal.tenantId))
       if (revision !== this.revision) return session
       if (grant.userId !== session.principal.id || grant.sessionId !== session.principal.sessionId
-        || grant.tenantId !== session.principal.tenantId || !Number.isFinite(grant.validUntil)
-        || grant.validUntil <= Date.now() || !Array.isArray(grant.screenIds)
-        || grant.screenIds.some((id) => !routes.some((route) => route.id === id && !route.public && !route.selfService))) {
+        || grant.tenantId !== session.principal.tenantId
+        || grant.validUntil <= Date.now() || deadline <= Date.now()) {
         throw new ApiError(502, 'INVALID_NAVIGATION')
       }
-      return { ...session, navigation: { ...grant, screenIds: [...new Set(grant.screenIds)], tenantEpoch: session.tenantEpoch,
-        validUntil: Math.min(grant.validUntil, session.expiresAt, Date.now() + 60_000) } }
+      return { ...session, navigation: { ...grant, tenantEpoch: session.tenantEpoch,
+        validUntil: Math.min(grant.validUntil, session.expiresAt, deadline) } }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) throw error
       // No fallback grants on forbidden, missing contract, conflict or network error.
@@ -122,6 +123,16 @@ export class SessionController {
     }
   }
   private publish(session: Session) {
+    this.active = session
+    this.set({ status: 'authenticated', session })
+  }
+  expireNavigation(evidence: PermissionEvidence) {
+    const state = this.current
+    if (state.status !== 'authenticated' || state.session.navigation !== evidence
+      || state.session.principal.id !== evidence.userId || state.session.principal.sessionId !== evidence.sessionId
+      || state.session.principal.tenantId !== evidence.tenantId || state.session.tenantEpoch !== evidence.tenantEpoch
+      || evidence.validUntil > Date.now()) return
+    const session = { ...state.session, navigation: undefined }
     this.active = session
     this.set({ status: 'authenticated', session })
   }

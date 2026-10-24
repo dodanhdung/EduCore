@@ -108,15 +108,8 @@ Test consumer HTTP double không chứng minh DB/security end-to-end. Native R4 
 powershell -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r4-native.ps1 -RunTests
 ```
 
-Runner tự tạo cluster PostgreSQL16 unique, admission fresh-loopback, secret memory, restricted LOGINs; giữ lại resource để inspect, không xóa/reset DB có sẵn. Nếu Docker daemon không chạy thì dừng, không set admission thủ công. Không lấy `DATABASE_URL` của ứng dụng làm `R4_TEST_URL`. Navigation SQL proposal không chạy mặc định. Owner đã cho phép fixtures trong DB disposable của task verification; production vẫn PENDING_REVIEW. Để tái lập riêng chế độ test đã được phép, trong process terminal dành riêng:
-
-```powershell
-$env:R7_NAVIGATION_PROPOSAL_TESTS='OWNER_APPROVED_DISPOSABLE_PROPOSAL_TEST'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r4-native.ps1 -RunTests
-Remove-Item Env:R7_NAVIGATION_PROPOSAL_TESTS
-```
-
-Mỗi invocation tạo cluster mới. Không đặt acknowledgement này trong `.env` ứng dụng hoặc production. A19 dùng Edge headless nếu binary có sẵn (Windows default hoặc `R7_TEST_EDGE_PATH`); khởi động Vite strict localhost5173, Nest ephemeral port và restricted PostgreSQL thật. Thiếu browser thì A19 SKIP, không được báo browser PASS. Profile/cookie/CDP payload nằm ngoài artifact; không archive profile hay environment secrets.
+Runner tự tạo cluster PostgreSQL16 unique, admission fresh-loopback, secret memory, restricted LOGINs; giữ lại resource để inspect, không xóa/reset DB có sẵn. Nếu Docker daemon không chạy thì dừng, không set admission thủ công. Không lấy `DATABASE_URL` của ứng dụng làm `R4_TEST_URL`. Từ Phase B, migration `202610240001_r7_navigation_access` và security fixtures N01–N17 chạy mặc định trong fresh disposable native runner; không dùng biến `R7_NAVIGATION_PROPOSAL_TESTS` cũ. Trước khi chạy, Docker daemon local phải hoạt động. Production deployment, shared DB migration và Git actions cần quyền riêng; local test không phải production activation.
+A19 dùng Edge headless nếu binary có sẵn (Windows default hoặc `R7_TEST_EDGE_PATH`); khởi động Vite strict localhost5173, Nest ephemeral port và restricted PostgreSQL thật. Thiếu browser thì A19 SKIP, không được báo browser PASS. Profile/cookie/CDP payload nằm ngoài artifact; không archive profile hay environment secrets.
 
 ## Windows checkout và baseline integrity
 

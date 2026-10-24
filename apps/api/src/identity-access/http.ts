@@ -133,11 +133,14 @@ export class R4ErrorFilter implements ExceptionFilter {
           ...(sql && /^[0-9A-Z]{5}$/.test(sql) ? { sqlState: sql } : {}),
         }),
       );
-    res.status(status).json({
+    const body = {
       code,
       message: code,
       correlationId,
-    });
+    };
+    if (/\/access\/navigation\/?$/.test(req.path ?? ''))
+      res.status(status).set('Content-Type', 'application/json; charset=utf-8').end(JSON.stringify(body));
+    else res.status(status).json(body);
   }
 }
 @Controller('api/v1/auth')

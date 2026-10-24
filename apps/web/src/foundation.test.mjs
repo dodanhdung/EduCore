@@ -21,7 +21,8 @@ test('public routes work, checking and unauthenticated states never render prote
 test('tenant and permission gates fail closed without authoritative grants', () => {
   assert.equal(resolveRoute(`/app/${otherId}/me`, authenticated).kind, 'forbidden')
   assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated).kind, 'forbidden')
-  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated, evidence(['AC01'])).kind, 'screen')
+  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated, evidence(['AC01'])).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantId}/settings/members`, authenticated, evidence(['OP01'])).kind, 'screen')
   assert.equal(canView(routes.find((r) => r.id === 'AC01'), session, otherId, { tenantId: otherId, screenIds: ['AC01'] }), false)
 })
 
@@ -46,8 +47,9 @@ test('all dynamic route parameters are available without changing tenant guard i
 
   const invoice = resolveRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`, authenticated,
     evidence(['BL10']))
-  assert.equal(invoice.kind, 'screen')
-  assert.deepEqual(invoice.params, { tenantId, invoiceId: 'invoice-42' })
+  assert.equal(invoice.kind, 'forbidden')
+  assert.deepEqual(matchRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`)?.params,
+    { tenantId, invoiceId: 'invoice-42' })
 
   const encoded = matchRoute(`/app/${tenantId}/students/H%E1%BB%8Dc%20sinh`)
   assert.equal(encoded?.params.studentId, 'Học sinh')

@@ -18,7 +18,7 @@ const { ApiClient } = await vite.ssrLoadModule('/src/api.ts')
 const { SessionController, navigationRoutes } = await vite.ssrLoadModule('/src/auth.ts')
 const { routes } = await vite.ssrLoadModule('/src/routes.ts')
 const tenantId = '00000000-0000-4000-8000-000000000001'
-const principal = { id: 'user', sessionId: 'session', tenantId: null, allowedTenants: [{ id: tenantId, name: 'Trung tâm thật' }] }
+const principal = { id: '00000000-0000-4000-8000-000000000003', sessionId: '00000000-0000-4000-8000-000000000004', tenantId: null, allowedTenants: [{ id: tenantId, name: 'Trung tâm thật' }] }
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status })
 
 function backend(fault, navigation = false) {
@@ -36,7 +36,7 @@ function backend(fault, navigation = false) {
       selected = true
       return json({ accessToken: 'TEST_SECRET_SELECTED', expiresInSeconds: 900, principal: { ...principal, tenantId } })
     }
-    if (path.endsWith('/navigation')) return json({ userId: 'user', sessionId: 'session', tenantId, screenIds: ['AC01'], validUntil: Date.now() + 30_000 })
+    if (path.endsWith('/navigation')) return json({ userId: principal.id, sessionId: principal.sessionId, tenantId, screenIds: ['OP01'], validUntil: Date.now() + 30_000 })
     if (path.endsWith('/logout')) return new Response(null, { status: 204 })
     return json({}, 404)
   })
@@ -140,9 +140,9 @@ test('R7 UI AppShell consumes only eligible links and protected screens remain d
   const { controller } = backend(undefined, true)
   await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
   const state = controller.getSnapshot()
-  const props = { state, path: `/app/${tenantId}/students`, controller, navigate() {}, onLogout() {} }
+  const props = { state, path: `/app/${tenantId}/settings/members`, controller, navigate() {}, onLogout() {} }
   const markup = renderToStaticMarkup(React.createElement(AppView, props))
-  assert.match(markup, new RegExp(`href="/app/${tenantId}/students"`))
+  assert.match(markup, new RegExp(`href="/app/${tenantId}/settings/members"`))
   assert.doesNotMatch(markup, /href="[^"]*finance|href="[^"]*teachers|Dữ liệu mẫu|PREVIEW_ONLY/)
   const denied = renderToStaticMarkup(React.createElement(AppView, { ...props, state: { ...state, session: { ...state.session, navigation: undefined } } }))
   assert.match(denied, /Không đủ quyền/)
@@ -153,12 +153,12 @@ test('R7 UI mobile menu has native keyboard control, active link and tenant/self
   const { controller } = backend(undefined, true)
   await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
   const { session } = controller.getSnapshot()
-  const markup = renderToStaticMarkup(React.createElement(AppShell, { route: routes.find((r) => r.id === 'AC01'), tenant: principal.allowedTenants[0],
+  const markup = renderToStaticMarkup(React.createElement(AppShell, { route: routes.find((r) => r.id === 'OP01'), tenant: principal.allowedTenants[0],
     navigation: navigationRoutes(session), navigate() {}, onLogout() {} }, 'Nội dung'))
   const dom = new JSDOM(markup)
   try {
     assert.ok(dom.window.document.querySelector('.mobile-nav details summary'))
-    assert.equal(dom.window.document.querySelector('[aria-current="page"]').textContent, 'Danh sách học sinh')
+    assert.equal(dom.window.document.querySelector('[aria-current="page"]').textContent, 'Tài khoản người dùng')
     assert.match(markup, /Trung tâm thật/)
     assert.ok(dom.window.document.querySelector(`a[href="/app/${tenantId}/me"]`))
   } finally { dom.window.close() }
@@ -186,5 +186,35 @@ test('R7 actual App expiry timer removes AppShell without requiring navigation o
     assert.equal(controller.getSnapshot().status, 'unauthenticated')
     assert.equal(view.document.querySelector('.app-shell'), null)
     assert.match(view.document.body.textContent, /hết hạn hoặc bị thu hồi/)
+  } finally { await act(async () => root.unmount()); dom.window.close() }
+})
+
+test('Phase B App timer removes expired navigation on desktop and mobile while retaining AU05', async () => {
+  const { controller } = backend(undefined, true)
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/login' })
+  globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement
+  const timers = new Map()
+  let nextTimer = 0
+  dom.window.setTimeout = (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id }
+  dom.window.clearTimeout = (id) => { timers.delete(id) }
+  const root = createRoot(dom.window.document.getElementById('root'))
+  const view = { dom, document: dom.window.document }
+  try {
+    await act(async () => root.render(React.createElement(App, { controller })))
+    await fill(view); await submit(view)
+    await act(async () => view.document.querySelector('.ec-tenant-choice').click())
+    const evidence = controller.getSnapshot().session.navigation
+    assert.ok(evidence)
+    assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
+    await act(async () => view.document.querySelector(`.sidebar a[href="/app/${tenantId}/me"]`).click())
+    assert.equal(timers.size, 3)
+    const evidenceTimer = [...timers.values()].sort((a, b) => a.delay - b.delay)[0]
+    assert.ok(evidenceTimer.delay <= 30_000)
+    evidence.validUntil = Date.now() - 1
+    await act(async () => evidenceTimer.callback())
+    assert.equal(controller.getSnapshot().session.navigation, undefined)
+    assert.doesNotMatch(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
+    assert.doesNotMatch(view.document.querySelector('.mobile-nav').textContent, /Tài khoản người dùng/)
+    assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản/)
   } finally { await act(async () => root.unmount()); dom.window.close() }
 })

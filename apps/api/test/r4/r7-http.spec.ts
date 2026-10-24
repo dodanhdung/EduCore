@@ -93,7 +93,7 @@ describe('R7 browser ↔ NestJS authentication HTTP contract', () => {
     expect(service.logout).toHaveBeenCalledWith('test-access');
     expect(response.headers['set-cookie'][0]).toContain('educore_refresh=;');
   });
-  it('unapproved navigation endpoint remains absent', async () => {
+  it('auth-only unit module does not mount the navigation endpoint', async () => {
     const response = await request(app.getHttpServer()).get('/api/v1/tenants/00000000-0000-4000-8000-000000000001/access/navigation');
     expect(response.status).toBe(404);
   });

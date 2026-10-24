@@ -46,7 +46,7 @@ export class ApiClient {
 
   async request<T>(path: string, options: {
     method?: 'GET' | 'POST'; body?: unknown; accessToken?: string; csrfToken?: string;
-    credentials?: 'include' | 'omit'; signal?: AbortSignal
+    credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
@@ -56,6 +56,7 @@ export class ApiClient {
       method: options.method ?? 'GET', headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       credentials: options.credentials ?? 'omit',
+      cache: options.cache,
       signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     })
     const requestId = response.headers.get('x-request-id') ?? undefined
@@ -79,6 +80,10 @@ export class ApiClient {
   }
   me(accessToken: string, signal?: AbortSignal) {
     return this.request<Principal>('/api/v1/auth/me', { accessToken, signal })
+  }
+  navigation(accessToken: string, tenantId: string, signal?: AbortSignal) {
+    return this.request<unknown>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/access/navigation`,
+      { accessToken, credentials: 'omit', cache: 'no-store', signal })
   }
   selectTenant(accessToken: string, tenantId: string, signal?: AbortSignal) {
     return this.request<SelectTenantResponse>('/api/v1/auth/select-tenant', { method: 'POST', body: { tenantId }, accessToken, signal })

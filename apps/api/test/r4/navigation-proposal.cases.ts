@@ -1,10 +1,8 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-import type postgres from 'postgres';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import postgres from 'postgres';
 import { result, type R4Repository } from '../../src/identity-access/r4-repository.js';
 import type { AuthService } from '../../src/identity-access/auth.service.js';
-import { put, type Query, type seed } from '../schema-integrity/support.js';
+import { put, waitBlocked, type Query, type seed } from '../schema-integrity/support.js';
 
 type Fixture = Awaited<ReturnType<typeof seed>>;
 type Actor = { accessToken: string; member: string; assignment: string; userId: string };
@@ -13,6 +11,7 @@ type Context = {
   admin: () => postgres.Sql;
   repository: () => R4Repository;
   auth: () => AuthService;
+  apiUrl: () => string;
   fresh: () => Promise<Fixture>;
   actor: (f: Fixture, role: string, scope?: 'TENANT' | 'CLASS' | 'STUDENT', target?: string) => Promise<Actor>;
 };
@@ -25,21 +24,12 @@ async function denied(operation: Promise<unknown>, expected: string) {
   expect(code).toBe(expected);
 }
 
-// Opt-in fixture only. No production migration, endpoint or default SQL activation.
+// Runs against the Phase B migration in the fresh disposable native harness.
 export function registerNavigationProposalTests(ctx: Context) {
-  const enabled = process.env.R7_NAVIGATION_PROPOSAL_TESTS === 'OWNER_APPROVED_DISPOSABLE_PROPOSAL_TEST';
-  describe.skipIf(!enabled)('R7 UNAPPROVED navigation SQL — isolated proposal fixtures', () => {
+  describe('R7 migrated navigation SQL — disposable fixtures', () => {
     const admin = () => ctx.admin();
     const read = (token: string, tenant: string | null) => ctx.repository().transaction(token,
       (tx) => result<Evidence>(tx, 'SELECT educore_r4.navigation_access($1::uuid) result', tenant));
-    beforeAll(async () => {
-      const url = new URL(process.env.R4_TEST_URL ?? '');
-      if (process.env.R4_TEST_DISPOSABLE !== 'I_OWN_THIS_DISPOSABLE_CLUSTER'
-        || url.hostname !== '127.0.0.1' || !/^\/educore_r4_native_[a-f0-9]{32}$/.test(url.pathname)) throw Error('PROPOSAL_REQUIRES_FRESH_R4_RUNNER');
-      // Parent harness owns fresh-cluster admission and migrations. The additional
-      // owner-review acknowledgement is intentionally never set by the normal runner.
-      await admin().unsafe(readFileSync(resolve('../../docs/ai/integration/proposals/R7_navigation_access.sql'), 'utf8'));
-    });
     it('N01 denies an unbound restricted API connection', async () => {
       const f = await ctx.fresh();
       await denied(ctx.repository().api.$queryRawUnsafe('SELECT educore_r4.navigation_access($1::uuid)', f.tenant), '28000');
@@ -97,8 +87,9 @@ export function registerNavigationProposalTests(ctx: Context) {
       const [row] = await admin()`SELECT
         has_function_privilege('educore_r4_api','educore_r4.navigation_access(uuid)','EXECUTE') api,
         has_function_privilege('educore_r4_auth','educore_r4.navigation_access(uuid)','EXECUTE') auth,
-        has_function_privilege('educore_r4_worker','educore_r4.navigation_access(uuid)','EXECUTE') worker`;
-      expect(row).toMatchObject({ api: true, auth: false, worker: false });
+        has_function_privilege('educore_r4_worker','educore_r4.navigation_access(uuid)','EXECUTE') worker,
+        has_function_privilege('educore_r4_operator','educore_r4.navigation_access(uuid)','EXECUTE') operator`;
+      expect(row).toMatchObject({ api: true, auth: false, worker: false, operator: false });
     });
     it('N12 response has only bounded identity/navigation fields, no resource IDs or secrets', async () => {
       const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACCOUNTANT');
@@ -156,5 +147,36 @@ export function registerNavigationProposalTests(ctx: Context) {
       expect(row).toMatchObject({ prosecdef: true, rolname: 'educore_r4_owner', rolcanlogin: false, public_denied: true });
       expect(row.proconfig).toContain('search_path=pg_catalog, educore_r4, pg_temp');
     });
+    for (const change of ['expiry', 'rotation'] as const) {
+      it(`N17 NC-01 maps ${change} during an observed User-lock wait to auth loss`, async () => {
+        const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACCOUNTANT');
+        const sid = ctx.auth().tokens.verify(actor.accessToken).sid;
+        const blocker = postgres(process.env.R4_TEST_URL!, { max: 1, prepare: false, onnotice: () => undefined });
+        const waiter = postgres(ctx.apiUrl(), { max: 1, prepare: false, onnotice: () => undefined });
+        let blockerOpen = false, waiterOpen = false;
+        try {
+          await blocker`BEGIN`; blockerOpen = true;
+          await blocker`SELECT id FROM users WHERE id=${actor.userId} FOR UPDATE`;
+          await waiter`BEGIN`; waiterOpen = true;
+          await waiter`SELECT educore_r4.bind(${actor.accessToken})`;
+          const apid = (await blocker`SELECT pg_backend_pid() pid`)[0].pid as number;
+          const bpid = (await waiter`SELECT pg_backend_pid() pid`)[0].pid as number;
+          const pending = waiter`SELECT educore_r4.navigation_access(${f.tenant}::uuid) result`
+            .then(() => null, (error) => (error as { code: string }).code);
+          await waitBlocked(admin(), bpid, apid);
+          if (change === 'expiry')
+            await blocker`UPDATE auth_sessions SET access_expires_at=clock_timestamp()-interval '1 second' WHERE id=${sid}`;
+          else
+            await blocker`UPDATE auth_sessions SET access_token_hash=${'f'.repeat(64)} WHERE id=${sid}`;
+          await blocker`COMMIT`; blockerOpen = false;
+          expect(await pending).toBe('28000');
+          await waiter`ROLLBACK`; waiterOpen = false;
+        } finally {
+          if (blockerOpen) await blocker`ROLLBACK`;
+          if (waiterOpen) await waiter`ROLLBACK`;
+          await blocker.end(); await waiter.end();
+        }
+      });
+    }
   });
 }

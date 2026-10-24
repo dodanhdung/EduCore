@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ApiClient } from './api.ts'
+import { createNavigationReader } from './navigation.ts'
 import { landingPath, navigationRoutes, resolveRoute, SessionController } from './auth.ts'
 import type { AuthState, Tenant } from './auth.ts'
 import type { ScreenRoute } from './routes.ts'
@@ -52,7 +53,8 @@ import { ManagementScreen } from './screens/Management & Operations/ManagementSc
 import { managementIds } from './screens/Management & Operations/ManagementTypes.ts'
 import type { ManagementId } from './screens/Management & Operations/ManagementTypes.ts'
 
-const sessions = new SessionController(new ApiClient(import.meta.env.VITE_API_BASE_URL ?? ''))
+const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
+const sessions = new SessionController(api, createNavigationReader(api))
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname)
@@ -215,6 +217,12 @@ export default function App({ controller = sessions }: { controller?: SessionCon
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { path, navigate } = usePath()
   useEffect(() => { controller.finishInitialCheck() }, [controller])
+  useEffect(() => {
+    if (state.status !== 'authenticated' || !state.session.navigation) return
+    const evidence = state.session.navigation
+    const timer = window.setTimeout(() => controller.expireNavigation(evidence), Math.max(0, evidence.validUntil - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [state, controller])
   useEffect(() => {
     if (state.status !== 'authenticated') return
     const remaining = state.session.expiresAt - Date.now()

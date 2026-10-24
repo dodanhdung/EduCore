@@ -3,9 +3,11 @@ import test from 'node:test'
 import { ApiClient, ApiError, safeErrorMessage } from './api.ts'
 import { canView, landingPath, navigationRoutes, resolveRoute, SessionController } from './auth.ts'
 import { routes } from './routes.ts'
+import { createNavigationReader, navigationResponse } from './navigation.ts'
 
 const tenantA = '00000000-0000-4000-8000-000000000001'
 const tenantB = '00000000-0000-4000-8000-000000000002'
+const userA = '00000000-0000-4000-8000-000000000003'
 const tenants = [{ id: tenantA, name: 'Trung tâm A' }, { id: tenantB, name: 'Trung tâm B' }]
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status })
 function deferred() { let resolve; const promise = new Promise((r) => { resolve = r }); return { promise, resolve } }
@@ -14,7 +16,7 @@ function deferred() { let resolve; const promise = new Promise((r) => { resolve 
 function setup({ fault, navigation = false } = {}) {
   let number = 0, current = null
   const calls = [], records = new Map()
-  const state = { screenIds: ['AC01'], denied: false, principalOverride: null }
+  const state = { screenIds: ['OP01'], denied: false, principalOverride: null }
   const api = new ApiClient('http://localhost:3000', async (url, options) => {
     const path = new URL(url).pathname
     calls.push({ path, options })
@@ -24,7 +26,7 @@ function setup({ fault, navigation = false } = {}) {
     if (path.endsWith('/login')) {
       const accessToken = `test-access-${++number}`
       current = accessToken
-      records.set(accessToken, { id: 'user', sessionId: `session-${number}`, tenantId: null, allowedTenants: tenants })
+      records.set(accessToken, { id: userA, sessionId: `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`, tenantId: null, allowedTenants: tenants })
       return json({ accessToken, csrfToken: 'test-csrf', expiresInSeconds: 900, requiresTenantSelection: true, allowedTenants: tenants })
     }
     if (path.endsWith('/refresh')) {
@@ -137,7 +139,7 @@ test('R7 overlapping login responses cannot revive stale sessions; cookie mutati
   gate.resolve()
   assert.equal(await old, false)
   assert.equal(await latest, true)
-  assert.equal(controller.getSnapshot().session.principal.sessionId, 'session-2')
+  assert.equal(controller.getSnapshot().session.principal.sessionId, '00000000-0000-4000-8000-000000000002')
   assert.deepEqual(calls.map((c) => c.path.split('/').at(-1)), ['login', 'me', 'logout', 'login', 'me'])
 })
 
@@ -245,7 +247,7 @@ test('R7 previous tenant evidence disappears synchronously and rapid switches us
   assert.equal(await first, false); assert.equal(await second, true)
   const live = controller.getSnapshot().session
   assert.equal(live.principal.tenantId, tenantA)
-  assert.equal(canView(routes.find((r) => r.id === 'AC01'), live, tenantA, old), false)
+  assert.equal(canView(routes.find((r) => r.id === 'OP01'), live, tenantA, old), false)
 })
 
 test('R7 refresh follows cookie/CSRF contract, rotates memory secrets and reload remains signed out', async () => {
@@ -312,11 +314,43 @@ test('R7 expired access loses both business and self-service routes', async () =
 test('R7 reviewed-reader consumption binds grants to session, user, tenant, epoch and freshness', async () => {
   const { controller } = await selected({ navigation: true })
   const { session } = controller.getSnapshot()
-  assert.equal(resolveRoute(`/app/${tenantA}/students`, controller.getSnapshot()).kind, 'screen')
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'screen')
   for (const change of [{ userId: 'other' }, { sessionId: 'other' }, { tenantId: tenantB }, { tenantEpoch: 0 }, { validUntil: 0 }, { validUntil: session.expiresAt + 1 }]) {
-    assert.equal(canView(routes.find((r) => r.id === 'AC01'), session, tenantA, { ...session.navigation, ...change }), false)
+    assert.equal(canView(routes.find((r) => r.id === 'OP01'), session, tenantA, { ...session.navigation, ...change }), false)
   }
-  assert.equal(landingPath(session), `/app/${tenantA}/students`)
+  assert.equal(landingPath(session), `/app/${tenantA}/settings/members`)
+})
+
+test('Phase B reader requests no-store and rejects malformed or unreviewed navigation', async () => {
+  const calls = []
+  const api = new ApiClient('', async (url, options) => {
+    calls.push({ url, options })
+    return json({ userId: userA, sessionId: '00000000-0000-4000-8000-000000000004',
+      tenantId: tenantA, screenIds: ['OP04', 'OP05'], validUntil: Date.now() + 30_000 })
+  })
+  const value = await createNavigationReader(api)('token', tenantA)
+  assert.deepEqual(value.screenIds, ['OP04', 'OP05'])
+  assert.equal(calls[0].options.cache, 'no-store')
+  assert.equal(calls[0].options.credentials, 'omit')
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer token')
+  for (const bad of [
+    { ...value, screenIds: ['AC01'] }, { ...value, screenIds: ['OP04'] },
+    { ...value, screenIds: ['OP05', 'OP04'] }, { ...value, screenIds: ['OP04', 'OP04', 'OP05'] },
+    { ...value, screenIds: ['OP01'], mutation: true }, { ...value, validUntil: 1.5 },
+  ]) assert.throws(() => navigationResponse(bad), (error) => error.status === 502)
+})
+
+test('Phase B evidence timer clears only its captured session and keeps AU05', async () => {
+  const { controller } = await selected({ navigation: true })
+  const state = controller.getSnapshot()
+  const evidence = state.session.navigation
+  controller.expireNavigation({ ...evidence, validUntil: Date.now() - 1 })
+  assert.equal(controller.getSnapshot().session.navigation, evidence)
+  evidence.validUntil = Date.now() - 1
+  controller.expireNavigation(evidence)
+  assert.equal(controller.getSnapshot().session.navigation, undefined)
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantA}/me`, controller.getSnapshot()).kind, 'screen')
 })
 
 test('R7 no evidence or role labels alone grant no business routes', async () => {
@@ -330,14 +364,14 @@ test('R7 no evidence or role labels alone grant no business routes', async () =>
 
 test('R7 navigation grants do not infer resource access, arbitrary IDs still reach backend denial', async () => {
   const { controller, api } = await selected({ navigation: true })
-  assert.equal(resolveRoute(`/app/${tenantA}/students`, controller.getSnapshot()).kind, 'screen')
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'screen')
   assert.equal(resolveRoute(`/app/${tenantA}/students/other-student`, controller.getSnapshot()).kind, 'forbidden')
   await assert.rejects(api.request(`/api/v1/tenants/${tenantA}/students/other-student`, { accessToken: controller.getSnapshot().session.accessToken }), (error) => error.status === 403)
 })
 
 test('R7 permission loss removes navigation and previous protected route', async () => {
   const { controller, state } = await selected({ navigation: true })
-  assert.ok(navigationRoutes(controller.getSnapshot().session).some((r) => r.id === 'AC01'))
+  assert.ok(navigationRoutes(controller.getSnapshot().session).some((r) => r.id === 'OP01'))
   state.screenIds = []
   await controller.revalidate()
   assert.deepEqual(navigationRoutes(controller.getSnapshot().session).map((r) => r.id), ['AU05'])
@@ -363,6 +397,29 @@ test('R7 stale navigation response cannot restore access after logout', async ()
   const logout = controller.logout()
   gate.resolve()
   assert.equal(await select, false); await logout
+  assert.equal(controller.getSnapshot().status, 'unauthenticated')
+})
+
+test('Phase B navigation response arriving after its request deadline cannot grant access', async () => {
+  const gate = deferred(), entered = deferred()
+  const { controller } = setup({ navigation: true, fault: async (path) => {
+    if (path.endsWith('/navigation')) { entered.resolve(); await gate.promise }
+  } })
+  await controller.login('person@example.test', 'test password')
+  const select = controller.selectTenant(tenantA)
+  await entered.promise
+  const now = Date.now
+  const started = now()
+  Date.now = () => started + 60_001
+  try { gate.resolve(); assert.equal(await select, true) } finally { Date.now = now }
+  assert.equal(controller.getSnapshot().session.navigation, undefined)
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'forbidden')
+})
+
+test('Phase B navigation 401 invalidates the local session', async () => {
+  const { controller } = setup({ navigation: true, fault: (path) => path.endsWith('/navigation') && json({ code: 'AUTH_REQUIRED' }, 401) })
+  await controller.login('person@example.test', 'test password')
+  await assert.rejects(controller.selectTenant(tenantA), (error) => error.status === 401)
   assert.equal(controller.getSnapshot().status, 'unauthenticated')
 })
 

@@ -8,6 +8,8 @@ import { RuntimeController } from '../workflow-approval/runtime.controller.js';
 import { R4Worker } from '../automation-jobs/worker.js';
 import { requestTrace } from './request-context.js';
 import { SessionGuard } from './session.guard.js';
+import { NavigationController } from './navigation.controller.js';
+import { NavigationService } from './navigation.service.js';
 import { AssignmentService } from '../assignments-grading/assignment.service.js';
 import {
   AssignmentController,
@@ -33,6 +35,7 @@ export class R4Module {
       module: R4Module,
       controllers: [
         AuthController,
+        NavigationController,
         RuntimeController,
         AssignmentController,
         SubmissionController,
@@ -55,6 +58,11 @@ export class R4Module {
           useFactory: () => new R4Worker(repository, workerEnabled),
         },
         SessionGuard,
+        {
+          provide: NavigationService,
+          inject: [AuthService],
+          useFactory: (auth: AuthService) => new NavigationService(auth),
+        },
         {
           provide: AssignmentService,
           inject: [AuthService],
