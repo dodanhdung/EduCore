@@ -431,19 +431,22 @@ describe('R4 native PostgreSQL', () => {
     await request(app.getHttpServer()).get(`/api/v1/tenants/${fixture.tenant}/access/navigation`).expect(401);
   });
   native('A21 navigation HTTP binds identity, tenant, no-store and exact five-field response', async () => {
-    const f = await fresh(), actor = await sessionFor(f);
+    const f = await fresh(), principalSession = await sessionFor(f);
     const path = `/api/v1/tenants/${f.tenant}/access/navigation`;
-    const get = () => request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${actor.accessToken}`);
+    const get = () => request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${principalSession.accessToken}`);
     const response = await get().expect(200);
     expect(Object.keys(response.body).sort()).toEqual(['screenIds', 'sessionId', 'tenantId', 'userId', 'validUntil']);
     expect(response.body).toMatchObject({ userId: f.user, tenantId: f.tenant,
       screenIds: ['OP01', 'OP04', 'OP05', 'OP06', 'OP07'] });
-    expect(response.body.sessionId).toBe(auth.tokens.verify(actor.accessToken).sid);
+    expect(response.body.sessionId).toBe(auth.tokens.verify(principalSession.accessToken).sid);
     expect(response.body.validUntil).toBeGreaterThan(Date.now());
     const [serverClock] = await admin`SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms`;
     expect(response.body.validUntil).toBeLessThanOrEqual(Number(serverClock.now_ms) + 60_000);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers.etag).toBeUndefined();
+    const conditional = await get().set('If-None-Match', '*').expect(200);
+    expect(conditional.headers['cache-control']).toBe('no-store');
+    expect(conditional.headers.etag).toBeUndefined();
     expect(response.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
     expect(response.headers['set-cookie']).toBeUndefined();
     for (const bad of [await get().query({ role: 'MANAGER' }).expect(400),
@@ -453,7 +456,7 @@ describe('R4 native PostgreSQL', () => {
       expect(bad.headers.etag).toBeUndefined();
     }
     const wrong = await request(app.getHttpServer()).get(`/api/v1/tenants/${randomUUID()}/access/navigation`)
-      .set('Authorization', `Bearer ${actor.accessToken}`).expect(403);
+      .set('Authorization', `Bearer ${principalSession.accessToken}`).expect(403);
     expect(wrong.body.code).toBe('FORBIDDEN');
     const none = await actor(f, 'ACADEMIC_STAFF');
     const empty = await request(app.getHttpServer()).get(path)
@@ -463,7 +466,7 @@ describe('R4 native PostgreSQL', () => {
     const denied = await request(app.getHttpServer()).get(path)
       .set('Authorization', `Bearer ${none.accessToken}`).expect(403);
     expect(denied.body.code).toBe('FORBIDDEN');
-    const sid = auth.tokens.verify(actor.accessToken).sid;
+    const sid = auth.tokens.verify(principalSession.accessToken).sid;
     await admin`UPDATE auth_sessions SET access_expires_at=clock_timestamp()-interval '1 second' WHERE id=${sid}`;
     const expired = await get().expect(401);
     expect(expired.body.code).toBe('AUTH_REQUIRED');

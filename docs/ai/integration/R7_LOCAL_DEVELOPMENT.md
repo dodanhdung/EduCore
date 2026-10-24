@@ -62,7 +62,7 @@ Tạo tenant/Manager bằng controlled operator CLI hiện có, không public bo
 | R4_OPERATOR_URL | Chỉ operator CLI; không cần/không cung cấp cho HTTP | Secret riêng process operator |
 | VITE_API_BASE_URL | Public API origin: `http://localhost:3000` | HTTPS API same-site đã review; không secret |
 
-Runtime nguồn: `main.ts`, `identity-access/config.ts`, `crypto.ts`, `otp-delivery.ts`, `r4-repository.ts`, `tenant-policy/operator-cli.ts`, `file-management/private-volume.adapter.ts`; Prisma `prisma.config.ts`; web `App.tsx`/`api.ts`. Không có biến VITE để bật navigation chưa được review.
+Runtime nguồn: `main.ts`, `identity-access/config.ts`, `crypto.ts`, `otp-delivery.ts`, `r4-repository.ts`, `tenant-policy/operator-cli.ts`, `file-management/private-volume.adapter.ts`; Prisma `prisma.config.ts`; web `App.tsx`/`api.ts`. Phase B đã nối NavigationReader trong source của feature branch; API startup yêu cầu function đã migrate cùng owner/ACL hợp lệ. Đây chưa phải xác minh production deployment.
 
 ## Private storage
 
@@ -127,6 +127,12 @@ Raw migration checksum phụ thuộc byte/EOL. Không dùng checkout repair này
 
 ## Hành vi hiện tại / giới hạn
 
-Login → me → AU02 → selected principal → AU05 khi chưa có business evidence. Self-service account là landing hợp lệ. Navigation endpoint/mapping chưa được review nên business routes trả 403, không cấp quyền theo role. Màn hình business chưa nối data provider hiển thị pending/empty theo component hiện có, không lấy Preview fixtures. Preview chỉ DEV dynamic import; production build không chứa fixture modules.
+Login → me → AU02 → selected principal → navigation GET. Khi function và restricted runtime hợp lệ, server chỉ trả eligibility cho OP01/04/05/06/07 theo TENANT read grant đã duyệt; OP05 không có link menu vì cần resource ID. Không có grant thì `screenIds:[]` và AU05 vẫn truy cập được khi session còn sống. Resource API luôn kiểm quyền riêng; read eligibility không cho phép approve/execute/retry. Màn hình business chưa nối data provider hiển thị pending/empty theo component hiện có, không lấy Preview fixtures. Preview chỉ DEV dynamic import; production build không chứa fixture modules.
 
 Access/CSRF chỉ memory. Reload yêu cầu login; cookie refresh một mình không đủ bootstrap. Refresh trong phiên có cookie + CSRF; revalidation/expiry/network failure không khôi phục grants cũ. Logout local có hiệu lực ngay kể cả API lỗi, UI nói rõ chưa xác nhận server revocation. Production TLS/same-site domains/SMTP/Volume ACL và multi-tab refresh coordination cần kiểm tra riêng.
+
+## Phase B native verification follow-up — 24/10/2026
+
+Feature branch HEAD `ac2db77139c50400d03bfd2f65bd506dbba4e754` đã chứa source Phase B; 21 file trong checkpoint khớp entry và SHA-256 nội dung của ZIP review trước đó. Docker CLI 29.8.2 dùng context local `default`. Engine ban đầu không kết nối được từ sandbox, nhưng sau khi khởi động và dùng phiên lệnh có quyền truy cập named pipe, runner đã tạo năm cluster PostgreSQL 16 disposable mới, riêng biệt; không dùng database có sẵn. Lượt đầu 76/77 PASS do test A21 tự che khuất helper `actor()`; một lượt sau gặp timeout Prisma D08, rồi chạy lại thành công. Sau sửa test và bổ sung phép thử lỗi SQL bất ngờ, lượt cuối **78/78 PASS, 0 FAIL, 0 SKIP** trên PostgreSQL 16.15. Migration Phase B áp dụng thành công; function body, owner, SECURITY DEFINER, search path, ACL, replay và schema drift được kiểm tra. N01–N17, NC-01 lock-wait, A20–A22 restricted HTTP và A19 Edge→React→NestJS→PostgreSQL đều PASS. Chi tiết và giới hạn từng lớp bằng chứng ở [báo cáo Phase B](NAVIGATION_PHASE_B_IMPLEMENTATION_REPORT.md).
+
+Backend build/lint và 81 unit/static tests PASS; frontend build/lint và 233 tests PASS. Frontend lint còn một warning cũ tại AT03. Các cluster và evidence do runner tạo được giữ lại cho owner review theo chính sách runner; không tự dọn. Source và migration chỉ được xác minh trên feature branch/disposable database; production chưa deploy, và shared/production migration cần phê duyệt riêng.

@@ -178,5 +178,31 @@ export function registerNavigationProposalTests(ctx: Context) {
         }
       });
     }
+    it('N17 unexpected SQL cancellation propagates instead of returning empty navigation', async () => {
+      const f = await ctx.fresh(), principal = await ctx.actor(f, 'ACCOUNTANT');
+      const blocker = postgres(process.env.R4_TEST_URL!, { max: 1, prepare: false, onnotice: () => undefined });
+      const waiter = postgres(ctx.apiUrl(), { max: 1, prepare: false, onnotice: () => undefined });
+      let blockerOpen = false, waiterOpen = false;
+      try {
+        await blocker`BEGIN`; blockerOpen = true;
+        await blocker`SELECT id FROM users WHERE id=${principal.userId} FOR UPDATE`;
+        await waiter`BEGIN`; waiterOpen = true;
+        await waiter`SELECT educore_r4.bind(${principal.accessToken})`;
+        const apid = (await blocker`SELECT pg_backend_pid() pid`)[0].pid as number;
+        const bpid = (await waiter`SELECT pg_backend_pid() pid`)[0].pid as number;
+        const pending = waiter`SELECT educore_r4.navigation_access(${f.tenant}::uuid) result`
+          .then(() => 'SUCCESS', (error) => (error as { code: string }).code);
+        await waitBlocked(admin(), bpid, apid);
+        const [cancelled] = await admin()`SELECT pg_cancel_backend(${bpid}) cancelled`;
+        expect(cancelled.cancelled).toBe(true);
+        expect(await pending).toBe('57014');
+        await waiter`ROLLBACK`; waiterOpen = false;
+        await blocker`ROLLBACK`; blockerOpen = false;
+      } finally {
+        if (waiterOpen) await waiter`ROLLBACK`;
+        if (blockerOpen) await blocker`ROLLBACK`;
+        await blocker.end(); await waiter.end();
+      }
+    });
   });
 }
