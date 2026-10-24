@@ -681,6 +681,28 @@ describe('R4 native PostgreSQL', () => {
       auth.reset(s.email, otp, 'short', 'PASSWORD_RESET'),
     ).rejects.toThrow('PASSWORD_POLICY');
   });
+  native('A08b wrong OTP purpose leaves password and session unchanged', async () => {
+    const f = await fresh(), s = await sessionFor(f);
+    await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    const otp = delivery.messages.at(-1)!.otp;
+    await expect(auth.reset(s.email, otp, 'new password 123', 'ACTIVATION')).rejects.toThrow('INVALID_OTP');
+    expect(await auth.me(s.accessToken)).toBeTruthy();
+    expect((await auth.login(s.email, password)).accessToken).toBeTypeOf('string');
+    await auth.reset(s.email, otp, 'new password 123', 'PASSWORD_RESET');
+    await expect(auth.login(s.email, password)).rejects.toThrow('INVALID_CREDENTIALS');
+  });
+  native('A08c PostgreSQL OTP throttle and per-user resend window', async () => {
+    const f = await fresh(), s = await sessionFor(f);
+    const ip = randomUUID();
+    for (let attempt = 0; attempt < 10; attempt++) expect(await auth.throttle(ip, 'otp', 10)).toBe(true);
+    expect(await auth.throttle(ip, 'otp', 10)).toBe(false);
+    const before = delivery.messages.length;
+    await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    await auth.requestOtp(s.email, 'PASSWORD_RESET');
+    expect(delivery.messages.length - before).toBe(1);
+    const [row] = await admin`SELECT count(*)::int count FROM password_reset_otps WHERE user_id=${f.user} AND purpose='PASSWORD_RESET'`;
+    expect(row.count).toBe(1);
+  });
   native(
     'A09 bootstrap O-11 A, operator provenance, activation and no public bootstrap',
     async () => {

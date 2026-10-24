@@ -22,6 +22,14 @@ describe('R4 authentication crypto and deployment boundaries', () => {
     await expect(passwordHash('too short')).rejects.toThrow('PASSWORD_POLICY');
     expect(await passwordMatches('anything', '$plain$text')).toBe(false);
   });
+  it('enforces 12 Unicode code points and at most 1024 UTF-8 bytes', async () => {
+    await expect(passwordHash('😀'.repeat(11))).rejects.toThrow('PASSWORD_POLICY');
+    await expect(passwordHash('😀'.repeat(12))).resolves.toMatch(/^\$argon2id\$/);
+    await expect(passwordHash('a'.repeat(1024))).resolves.toMatch(/^\$argon2id\$/);
+    await expect(passwordHash('a'.repeat(1025))).rejects.toThrow('PASSWORD_POLICY');
+    await expect(passwordHash('😀'.repeat(256))).resolves.toMatch(/^\$argon2id\$/);
+    await expect(passwordHash('😀'.repeat(257))).rejects.toThrow('PASSWORD_POLICY');
+  });
   it('uses a strict JWT algorithm, issuer, audience and 15-minute lifespan', () => {
     const token = tokens.issue('user', 'session', 'tenant'),
       claims = tokens.verify(token);

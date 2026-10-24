@@ -154,8 +154,8 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
         if (await controller.login(email, password)) navigate('/select-tenant')
       }} />
     </>
-    if (result.route.id === 'AU03') return <RecoveryRequestScreen navigate={navigate} />
-    if (result.route.id === 'AU04') return <ResetPasswordScreen navigate={navigate} />
+    if (result.route.id === 'AU03') return <RecoveryRequestScreen navigate={navigate} onRequest={(email, signal) => api.requestPasswordResetOtp(email, signal)} />
+    if (result.route.id === 'AU04') return <ResetPasswordScreen navigate={navigate} onReset={(email, otp, password, signal) => api.completePasswordReset(email, otp, password, signal)} />
     if (result.route.id === 'AU06') return <ActivationScreen navigate={navigate} />
     return <PublicLayout route={result.route} navigate={navigate} />
   }

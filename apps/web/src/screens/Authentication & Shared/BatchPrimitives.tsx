@@ -1,16 +1,16 @@
-import type { MouseEvent, ReactNode } from 'react'
+import type { MouseEvent, ReactNode, Ref } from 'react'
 import { AuthPageLayout } from './AuthComponents.tsx'
 import './BatchScreens.css'
 
 export type Navigate = (path: string) => void
 
-export function AppLink({ to, navigate, className, children }: { to: string; navigate: Navigate; className?: string; children: ReactNode }) {
+export function AppLink({ to, navigate, className, children, ref }: { to: string; navigate: Navigate; className?: string; children: ReactNode; ref?: Ref<HTMLAnchorElement> }) {
   function onClick(event: MouseEvent<HTMLAnchorElement>) {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
     event.preventDefault()
     navigate(to)
   }
-  return <a className={className} href={to} onClick={onClick}>{children}</a>
+  return <a className={className} href={to} onClick={onClick} ref={ref}>{children}</a>
 }
 
 export function AuthCard({ children }: { children: ReactNode }) {

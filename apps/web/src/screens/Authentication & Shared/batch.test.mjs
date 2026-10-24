@@ -55,8 +55,9 @@ async function submit(view) {
   await act(async () => view.document.querySelector('form').dispatchEvent(new view.dom.window.Event('submit', { bubbles: true, cancelable: true })))
 }
 
-test('AU03 validates email, keeps the form editable, and clears stale feedback', async () => {
-  const view = mount(RecoveryRequestScreen, { navigate: () => {} })
+test('AU03 validates email and shows neutral acceptance after the request succeeds', async () => {
+  const requests = []
+  const view = mount(RecoveryRequestScreen, { navigate: () => {}, onRequest: async (email) => { requests.push(email) } })
   try {
     await view.render()
     await type(view, '#recovery-email', 'bad')
@@ -67,13 +68,15 @@ test('AU03 validates email, keeps the form editable, and clears stale feedback',
     await type(view, '#recovery-email', 'person@example.com')
     assert.equal(view.document.querySelector('#recovery-email-error'), null)
     await submit(view)
-    assert.match(view.document.body.textContent, /PENDING_API/)
+    assert.equal(requests.length, 1)
+    assert.match(view.document.body.textContent, /Nếu tài khoản đủ điều kiện/)
+    assert.ok(view.document.querySelector('a[href="/reset-password"]'))
     assert.equal(view.document.querySelector('#recovery-email').value, 'person@example.com')
     assert.ok(view.document.querySelector('form'))
     await type(view, '#recovery-email', 'another@example.com')
     assert.doesNotMatch(view.document.body.textContent, /PENDING_API/)
     await submit(view)
-    assert.match(view.document.body.textContent, /PENDING_API/)
+    assert.equal(requests.length, 2)
     assert.doesNotMatch(view.document.body.textContent, /đã gửi|gửi thành công/i)
   } finally { await view.close() }
 })
@@ -127,12 +130,12 @@ test('AU06 rejects invalid OTP, short password and mismatch; valid data stays pe
   } finally { await view.close() }
 })
 
-test('AU04 exposes errors with stable IDs and does not claim reset success', async () => {
-  const view = mount(ResetPasswordScreen, { navigate: () => {} })
+test('AU04 exposes email and credential errors with stable IDs', async () => {
+  const view = mount(ResetPasswordScreen, { navigate: () => {}, onReset: async () => {} })
   try {
     await view.render()
     await submit(view)
-    for (const id of ['reset-otp', 'reset-password', 'reset-confirm']) {
+    for (const id of ['reset-email', 'reset-otp', 'reset-password', 'reset-confirm']) {
       const input = view.document.getElementById(id)
       assert.equal(input.getAttribute('aria-invalid'), 'true')
       assert.equal(input.getAttribute('aria-describedby'), `${id}-error`)
