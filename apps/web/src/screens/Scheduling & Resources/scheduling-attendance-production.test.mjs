@@ -11,7 +11,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const tenant = '00000000-0000-4000-8000-000000000001'
 const session = '00000000-0000-4000-8000-000000000002'
 const calls = []
+let responseOverride = null
 globalThis.fetch = async (url, options) => {
+  if (responseOverride) return responseOverride(url, options)
   calls.push({ url, authorization: options.headers.Authorization })
   const body = url.includes('/capabilities')
     ? { scheduleCreate: false, scheduleConfirm: false, scheduleUpdate: false, scheduleCancel: false, roomManage: false, resourceManage: false }
@@ -53,4 +55,58 @@ test('AT04 scoped read never presents approval controls when canDecide is false'
     assert.ok(calls.some((call) => call.url.startsWith(`/api/v1/tenants/${tenant}/attendance/leaves?`)))
     assert.equal([...document.querySelectorAll('button')].some((button) => button.textContent === 'Duyệt'), false)
   } finally { await act(async () => root.unmount()) }
+})
+
+test('AT02 blocks finalization until changed marks are saved and confirmed by the server', async () => {
+  const root = createRoot(document.getElementById('root'))
+  const writes = []
+  let persistedStatus = 'ATTENDED'
+  let revision = 1
+  let failFirstSave = true
+  responseOverride = async (url, options) => {
+    const path = String(url)
+    const response = (body, status = 200) => new Response(JSON.stringify(body),
+      { status, headers: { 'content-type': 'application/json' } })
+    if (path.endsWith(`/attendance/sessions/${session}`) && options.method === 'GET') return response({
+      sessionId: session, classId: 'class', startsAt: new Date().toISOString(),
+      endsAt: new Date(Date.now() + 3600_000).toISOString(), status: 'CONFIRMED',
+      timeZone: 'Asia/Ho_Chi_Minh', finalized: false,
+      participants: [{ id: 'participant', studentId: 'student', name: 'Learner', enrollmentId: 'enrollment',
+        attendanceId: 'record', status: persistedStatus, revision, approvedLeave: false,
+        billingSourceLocked: false, invoiceIssued: false }],
+    })
+    if (path.endsWith(`/attendance/sessions/${session}/marks`)) {
+      writes.push('mark')
+      if (failFirstSave) { failFirstSave = false; return response({ code: 'REVISION_STALE' }, 409) }
+      persistedStatus = JSON.parse(options.body).status
+      revision += 1
+      return response({ id: 'record', revision }, 201)
+    }
+    if (path.endsWith(`/attendance/sessions/${session}/finalize`)) {
+      writes.push('finalize')
+      return response({ id: session }, 201)
+    }
+    throw Error(`Unexpected API call: ${path}`)
+  }
+  const button = (label) => [...document.querySelectorAll('button')].find((element) => element.textContent === label)
+  try {
+    await act(async () => { root.render(React.createElement(SchedulingAttendanceProduction,
+      { id: 'AT02', tenantId: tenant, token: 'live-token', selectedId: session, navigate() {} }));
+    await new Promise((resolve) => setTimeout(resolve, 30)) })
+    assert.equal(button('Xác nhận đầy đủ').disabled, false)
+    await act(async () => {
+      const select = document.querySelector('select[aria-label="Điểm danh Learner"]')
+      select.value = 'UNEXCUSED'
+      select.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    })
+    assert.equal(button('Xác nhận đầy đủ').disabled, true)
+    await act(async () => { button('Lưu nháp').click(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+    assert.deepEqual(writes, ['mark'])
+    assert.equal(button('Xác nhận đầy đủ').disabled, true)
+    await act(async () => { button('Lưu nháp').click(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+    assert.deepEqual(writes, ['mark', 'mark'])
+    assert.equal(button('Xác nhận đầy đủ').disabled, false)
+    await act(async () => { button('Xác nhận đầy đủ').click(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+    assert.deepEqual(writes, ['mark', 'mark', 'finalize'])
+  } finally { await act(async () => root.unmount()); responseOverride = null }
 })

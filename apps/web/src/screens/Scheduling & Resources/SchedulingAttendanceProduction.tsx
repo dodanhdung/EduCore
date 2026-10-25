@@ -180,11 +180,29 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
         { participantId: p.id, status: value, revision: p.revision, reason: 'Lưu nháp điểm danh' })
       if (!result) return
     }
-    setNotice('Bản nháp đã lưu. Xác nhận là bước riêng.')
+    try {
+      const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
+      setSheet(persisted)
+      setNotice('Bản nháp đã lưu. Xác nhận là bước riêng.')
+    } catch (cause) { setError(phaseMessage(cause)) }
   }
+  const hasUnsavedMarks = !!sheet && sheet.participants.some((p) => (form[`status:${p.id}`] ?? p.status) !== p.status)
   const finalize = async () => {
-    if (!sheet || !sheet.participants.length || sheet.participants.some((p) => !p.status)) { setError('Cần lưu đủ kết quả trước khi xác nhận.'); return }
-    await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' })
+    if (!sheet || hasUnsavedMarks) { setError('Lưu thay đổi điểm danh trước khi xác nhận.'); return }
+    setBusy(true)
+    try {
+      const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
+      const unchanged = persisted.participants.length === sheet.participants.length && persisted.participants.every((p) => {
+        const displayed = sheet.participants.find((row) => row.id === p.id)
+        return displayed && displayed.status === p.status && displayed.revision === p.revision
+      })
+      setSheet(persisted)
+      if (!unchanged || persisted.finalized) { setError('Điểm danh đã thay đổi. Kiểm tra lại trước khi xác nhận.'); return }
+      if (!persisted.participants.length || persisted.participants.some((p) => !p.status)) {
+        setError('Cần lưu đủ kết quả trước khi xác nhận.'); return
+      }
+      await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' })
+    } catch (cause) { setError(phaseMessage(cause)) } finally { setBusy(false) }
   }
   const localDay = (iso: string) => tenantLocalDate(zone, new Date(iso)) ?? ''
   const filteredCalendar = calendar.filter((s) => (!classFilter || s.classId === classFilter)
@@ -282,7 +300,7 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
           {' '}· {dateTime(s.startsAt, zone)} · {s.expectedCount} học sinh · {s.finalized ? 'Đã xác nhận' : 'Chưa xác nhận'}</li>)}</ul> : <p>Không có buổi cần điểm danh.</p>}</>}
       {id === 'AT02' && sheet && <><p>{dateTime(sheet.startsAt, zone)} · {sheet.finalized ? 'Đã xác nhận' : 'Bản nháp'}</p>
         {sheet.participants.length ? <ul>{sheet.participants.map((p) => <li key={p.id}><strong>{p.name}</strong> · {p.enrollmentId ?? 'Không có ghi danh'}
-          {!sheet.finalized && <select aria-label={`Điểm danh ${p.name}`} value={form[`status:${p.id}`] ?? p.status ?? ''} onChange={(e) => update(`status:${p.id}`, e.target.value)}>
+          {!sheet.finalized && <select aria-label={`Điểm danh ${p.name}`} disabled={busy || loading} value={form[`status:${p.id}`] ?? p.status ?? ''} onChange={(e) => update(`status:${p.id}`, e.target.value)}>
             <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option>
             <option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>}
           {sheet.finalized && <span> {p.status ?? 'Chưa có'} · {p.approvedLeave ? 'Đã duyệt nghỉ' : 'Không có đơn nghỉ được duyệt'}</span>}
@@ -296,7 +314,7 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
               { status: form[`correct:${p.id}`], revision: p.revision, reason: form[`reason:${p.id}`] }) }, p.billingSourceLocked)}</details>}
         </li>)}</ul> : <p>Danh sách tham gia trống; không thể xác nhận.</p>}
         {!sheet.finalized && <div className="attendance-actions">{action('Lưu nháp', () => { void saveMarks() }, !sheet.participants.length)}
-          {action('Xác nhận đầy đủ', () => { void finalize() }, !sheet.participants.length || sheet.participants.some((p) => !p.status))}</div>}
+          {action('Xác nhận đầy đủ', () => { void finalize() }, loading || hasUnsavedMarks || !sheet.participants.length || sheet.participants.some((p) => !p.status))}</div>}
       </>}
       {id === 'AT03' && <><p>Đơn nghỉ đúng hạn vẫn phải chờ người có quyền duyệt. Đơn dưới 24 giờ cần quyền duyệt ngoại lệ.</p>
         <label className="attendance-field">Buổi và học sinh<select value={form.participantId ?? ''} onChange={(e) => update('participantId', e.target.value)}><option value="">Chọn</option>

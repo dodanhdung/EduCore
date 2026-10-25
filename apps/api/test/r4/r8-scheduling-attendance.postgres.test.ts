@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -96,6 +97,58 @@ describe('R8 real HTTP Scheduling to Attendance journey', () => {
     expect(calendar.body.items.some((row: { id: string }) => row.id === created.body.id)).toBe(true);
     const sheet = await bearer(request(app.getHttpServer()).get(`${base}/attendance/sessions/${created.body.id}`)).expect(200);
     expect(sheet.body.participants).toHaveLength(1);
+    const parentUser = await put(admin as unknown as Query, 'users', {
+      email_normalized: `${randomUUID()}@r8.invalid`, display_name: 'R8 parent', status: 'ACTIVE',
+    });
+    const parentMember = await put(admin as unknown as Query, 'tenant_memberships', {
+      tenant_id: fixture.tenant, user_id: parentUser, status: 'ACTIVE',
+    });
+    const [parentRole] = await admin`SELECT id FROM roles WHERE tenant_id=${fixture.tenant} AND code='PARENT'`;
+    const parentAssignment = await put(admin as unknown as Query, 'membership_roles', {
+      tenant_id: fixture.tenant, membership_id: parentMember, role_id: parentRole.id,
+      assigned_by_membership_id: fixture.member,
+    });
+    const parentScope = await put(admin as unknown as Query, 'access_scopes', {
+      tenant_id: fixture.tenant, membership_role_id: parentAssignment,
+      scope_kind: 'TENANT',
+    });
+    await admin`INSERT INTO credentials(user_id,password_hash,password_changed_at)
+      VALUES(${parentUser},${await passwordHash(password)},clock_timestamp())`;
+    const parentEmail = (await admin`SELECT email_normalized FROM users WHERE id=${parentUser}`)[0].email_normalized as string;
+    const parentLogin = await request(app.getHttpServer()).post('/api/v1/auth/login').set('Origin', origin)
+      .send({ email: parentEmail, password }).expect(200);
+    const parentSelected = await request(app.getHttpServer()).post('/api/v1/auth/select-tenant')
+      .set('Authorization', `Bearer ${parentLogin.body.accessToken}`).send({ tenantId: fixture.tenant }).expect(200);
+    const parentBearer = (r: request.Test) => r.set('Authorization', `Bearer ${parentSelected.body.accessToken}`);
+    const absenceId = await put(admin as unknown as Query, 'absence_requests', {
+      tenant_id: fixture.tenant, participant_id: sheet.body.participants[0].id,
+      requester_membership_id: fixture.member, submitted_at: new Date(), reason: 'Scoped leave read',
+      is_late_notice: false, status: 'PENDING_APPROVAL',
+    });
+    const parentLeaves = () => parentBearer(request(app.getHttpServer()).get(`${base}/attendance/leaves`));
+    expect((await parentLeaves().expect(200)).body.items).toHaveLength(0);
+    const link = await put(admin as unknown as Query, 'parent_student_links', {
+      tenant_id: fixture.tenant, parent_membership_id: parentMember, student_id: fixture.student,
+      relationship: 'PARENT', evidence_reference: 'R8 focused permission test',
+      verified_by_membership_id: fixture.member, verified_at: new Date(),
+    });
+    const visible = await parentLeaves().expect(200);
+    expect(visible.body.items.map((row: { id: string }) => row.id)).toEqual([absenceId]);
+    expect(visible.body.items[0].canDecide).toBe(false);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${fixture.tenant} AND role_id=${parentRole.id}
+      AND permission_id=(SELECT id FROM permissions WHERE code='absence.read')`;
+    expect((await parentLeaves().expect(200)).body.items).toHaveLength(0);
+    await admin.unsafe(readFileSync('prisma/migrations/202610250009_r8_parent_leave_read/migration.sql', 'utf8'));
+    expect((await parentLeaves().expect(200)).body.items.map((row: { id: string }) => row.id)).toEqual([absenceId]);
+    await parentBearer(request(app.getHttpServer()).get(`/api/v1/tenants/${randomUUID()}/attendance/leaves`)).expect(403);
+    await admin`DELETE FROM access_scopes WHERE tenant_id=${fixture.tenant} AND id=${parentScope}`;
+    expect((await parentLeaves().expect(200)).body.items).toHaveLength(0);
+    await put(admin as unknown as Query, 'access_scopes', {
+      tenant_id: fixture.tenant, membership_role_id: parentAssignment,
+      scope_kind: 'STUDENT', student_id: fixture.student,
+    });
+    await admin`UPDATE parent_student_links SET revoked_at=clock_timestamp() WHERE tenant_id=${fixture.tenant} AND id=${link}`;
+    expect((await parentLeaves().expect(200)).body.items).toHaveLength(0);
     await bearer(request(app.getHttpServer()).post(`${base}/attendance/leaves`))
       .set('Idempotency-Key', key()).send({ participantId: sheet.body.participants[0].id, reason: 'Manager cannot submit self leave' }).expect(403);
     const remaining = Date.parse(startsAt) - Date.now() + 100;
