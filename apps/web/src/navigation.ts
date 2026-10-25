@@ -2,7 +2,8 @@ import { ApiClient, ApiError } from './api.ts'
 import type { NavigationReader, NavigationResponse } from './auth.ts'
 
 export const NAVIGATION_SCREENS = ['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08',
-  'OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07'] as const
+  'AT01', 'AT02', 'AT03', 'AT04', 'OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07',
+  'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const FIELDS = ['userId', 'sessionId', 'tenantId', 'screenIds', 'validUntil']
 
@@ -22,7 +23,9 @@ export function navigationResponse(value: unknown): NavigationResponse {
     || (ids.includes('AC02') && !ids.includes('AC01'))
     || (ids.includes('AC04') && !ids.includes('AC03'))
     || (ids.includes('AC06') && !ids.includes('AC05'))
-    || (ids.includes('AC08') && !ids.includes('AC07'))) throw invalid()
+    || (ids.includes('AC08') && !ids.includes('AC07'))
+    || (ids.includes('SC05') && !ids.includes('SC01'))
+    || (ids.includes('AT02') && !ids.includes('AT01'))) throw invalid()
   return item as NavigationResponse
 }
 

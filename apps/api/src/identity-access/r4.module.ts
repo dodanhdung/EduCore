@@ -25,6 +25,8 @@ import { AcademicReadController } from '../academic/academic-read.controller.js'
 import { AcademicCommandController } from '../academic/academic-command.controller.js';
 import { AcademicProfileController } from '../academic/academic-profile.controller.js';
 import { AcademicCatalogController } from '../academic/academic-catalog.controller.js';
+import { SchedulingController } from '../scheduling/scheduling.controller.js';
+import { AttendanceController } from '../attendance/attendance.controller.js';
 
 @Module({})
 export class R4Module {
@@ -49,6 +51,8 @@ export class R4Module {
         AcademicCommandController,
         AcademicProfileController,
         AcademicCatalogController,
+        SchedulingController,
+        AttendanceController,
       ],
       providers: [
         { provide: R4Repository, useValue: repository },
