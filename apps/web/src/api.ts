@@ -45,15 +45,16 @@ export class ApiClient {
   }
 
   async request<T>(path: string, options: {
-    method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string; csrfToken?: string;
+    method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown; accessToken?: string; csrfToken?: string;
     credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache; expectedStatus?: number;
-    idempotencyKey?: string
+    idempotencyKey?: string; ifMatch?: number
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
     if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`
     if (options.csrfToken) headers['X-CSRF-Token'] = options.csrfToken
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
+    if (options.ifMatch !== undefined) headers['If-Match'] = String(options.ifMatch)
     const response = await this.transport(`${this.baseUrl}${path}`, {
       method: options.method ?? 'GET', headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -118,6 +119,31 @@ export class ApiClient {
   } = {}) {
     return this.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/academic${path}`,
       { ...options, accessToken, cache: 'no-store' })
+  }
+  learning<T>(tenantId: string, path: string, accessToken: string, options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown; signal?: AbortSignal; idempotencyKey?: string; ifMatch?: number
+  } = {}) {
+    return this.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}${path}`,
+      { ...options, accessToken, cache: 'no-store' })
+  }
+  async uploadAssignmentFile<T>(tenantId: string, recipientId: string, file: File, accessToken: string): Promise<T> {
+    const body = new FormData(); body.append('recipientId', recipientId); body.append('file', file)
+    const response = await this.transport(`${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantId)}/files`, {
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body, credentials: 'omit', cache: 'no-store'
+    })
+    const value = await response.json()
+    if (!response.ok) throw new ApiError(response.status, value?.code ?? 'HTTP_ERROR')
+    return value as T
+  }
+  async downloadAssignmentFile(tenantId: string, fileId: string, accessToken: string) {
+    const response = await this.transport(`${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantId)}/files/${encodeURIComponent(fileId)}/download`, {
+      headers: { Authorization: `Bearer ${accessToken}` }, credentials: 'omit', cache: 'no-store'
+    })
+    if (!response.ok) throw new ApiError(response.status, 'FILE_DOWNLOAD_FAILED')
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a'); link.href = objectUrl; link.download = 'assignment-file'; link.click()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
   }
   selectTenant(accessToken: string, tenantId: string, signal?: AbortSignal) {
     return this.request<SelectTenantResponse>('/api/v1/auth/select-tenant', { method: 'POST', body: { tenantId }, accessToken, signal })

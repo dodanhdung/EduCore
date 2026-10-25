@@ -785,6 +785,11 @@ describe('Checkpoint E integration', () => {
     const f = await fresh(true),
       base = '/api/v1/tenants/' + f.tenant,
       { key, operation: _operation, ...body } = createBody(f);
+    const classes = await request(app.getHttpServer())
+      .get(base + '/teaching/assignment-classes')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(classes.body.classes.some((c: { id: string }) => c.id === f.classId)).toBe(true);
     const a = await request(app.getHttpServer())
       .post(base + '/assignments')
       .auth(f.teacherActor.token, { type: 'bearer' })
@@ -798,6 +803,21 @@ describe('Checkpoint E integration', () => {
       .set('Idempotency-Key', randomUUID())
       .send({})
       .expect(201);
+    const teacherList = await request(app.getHttpServer())
+      .get(base + '/teaching/assignments')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(teacherList.body.some((item: { id: string }) => item.id === a.body.id)).toBe(true);
+    const studentList = await request(app.getHttpServer())
+      .get(base + '/my/assignments')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(studentList.body.items.find((item: { id: string }) => item.id === a.body.id)?.recipientId).toBeTruthy();
+    const teacherRecipients = await request(app.getHttpServer())
+      .get(base + '/teaching/assignments/' + a.body.id + '/recipients')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(teacherRecipients.body[0].studentName).toBeTruthy();
     const [ar] =
       await admin`SELECT id FROM assignment_recipients WHERE assignment_id=${a.body.id}`;
     const upload = await request(app.getHttpServer())
@@ -815,6 +835,20 @@ describe('Checkpoint E integration', () => {
       .set('Idempotency-Key', randomUUID())
       .send({ answerText: 'Full journey', fileIds: [upload.body.id] })
       .expect(201);
+    const queue = await request(app.getHttpServer())
+      .get(base + '/grading/queue')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(queue.body.items.find((item: { submissionId: string }) => item.submissionId === v.body.submissionId)?.versionId).toBe(v.body.versionId);
+    const gradingContext = await request(app.getHttpServer())
+      .get(base + '/submissions/' + v.body.submissionId + '/grading-context')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(gradingContext.body.currentVersionId).toBe(v.body.versionId);
+    await request(app.getHttpServer())
+      .get(base + '/submissions/' + v.body.submissionId + '/grading-context')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(403);
     const path = base + '/submission-versions/' + v.body.versionId;
     const g = await request(app.getHttpServer())
       .put(path + '/grade-draft')
@@ -837,6 +871,11 @@ describe('Checkpoint E integration', () => {
       .auth(parent.token, { type: 'bearer' })
       .expect(200);
     expect(hidden.body.items).toEqual([]);
+    const studentDraft = await request(app.getHttpServer())
+      .get(base + '/my/assignments')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(studentDraft.body.items.find((item: { id: string }) => item.id === a.body.id)?.score).toBeNull();
     await request(app.getHttpServer())
       .post(path + '/grades/publish')
       .auth(f.teacherActor.token, { type: 'bearer' })
@@ -850,6 +889,11 @@ describe('Checkpoint E integration', () => {
         .expect(200);
       expect(result.body.items[0].score).toBe('8.5');
     }
+    const studentPublished = await request(app.getHttpServer())
+      .get(base + '/my/assignments')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(studentPublished.body.items.find((item: { id: string }) => item.id === a.body.id)?.score).toBe('8.5');
     const staff = await actor(f, 'ACADEMIC_STAFF', undefined, true);
     const context = await request(app.getHttpServer())
       .get(base + '/students/' + f.student + '/placement-context')

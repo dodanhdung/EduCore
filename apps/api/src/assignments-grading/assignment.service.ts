@@ -31,6 +31,18 @@ export class AssignmentService extends RuntimeService {
       id,
     );
   }
+  teacherClasses(token: string, tenant: string) {
+    return this.run(token, 'SELECT educore_r5.teacher_classes($1::uuid) result', tenant);
+  }
+  teacherAssignments(token: string, tenant: string) {
+    return this.run(token, 'SELECT educore_r5.teacher_assignments($1::uuid) result', tenant);
+  }
+  teacherRecipients(token: string, tenant: string, id: string) {
+    return this.run(token, 'SELECT educore_r5.teacher_recipients($1::uuid,$2::uuid) result', tenant, id);
+  }
+  myAssignments(token: string, tenant: string) {
+    return this.run(token, 'SELECT educore_r5.my_assignments($1::uuid) result', tenant);
+  }
   changeRecipient(
     token: string,
     tenant: string,
