@@ -34,6 +34,12 @@ export class GradingController {
   constructor(
     @Inject(GradingService) private readonly service: GradingService,
   ) {}
+  @Get('grading/queue') queue(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string) {
+    return this.service.queue(bearer(a), uuid(t));
+  }
+  @Get('submissions/:id/grading-context') item(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string, @Param('id') id: string) {
+    return this.service.item(bearer(a), uuid(t), uuid(id));
+  }
   @Put('submission-versions/:id/grade-draft') save(
     @Headers('authorization') a: string | undefined,
     @Headers('idempotency-key') key: string,
@@ -261,6 +267,18 @@ export class AssignmentController {
   constructor(
     @Inject(AssignmentService) private readonly service: AssignmentService,
   ) {}
+  @Get('teaching/assignment-classes') classes(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string) {
+    return this.service.teacherClasses(bearer(a), uuid(t));
+  }
+  @Get('teaching/assignments') teaching(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string) {
+    return this.service.teacherAssignments(bearer(a), uuid(t));
+  }
+  @Get('teaching/assignments/:id/recipients') teachingRecipients(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string, @Param('id') id: string) {
+    return this.service.teacherRecipients(bearer(a), uuid(t), uuid(id));
+  }
+  @Get('my/assignments') mine(@Headers('authorization') a: string | undefined, @Param('tenantId') t: string) {
+    return this.service.myAssignments(bearer(a), uuid(t));
+  }
   @Post('assignment-recipients/:id/revocation') revoke(
     @Headers('authorization') a: string | undefined,
     @Headers('idempotency-key') key: string,

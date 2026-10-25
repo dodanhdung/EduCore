@@ -33,7 +33,7 @@ export function validateSelection(existing: File[], incoming: File[]) {
   for (const file of incoming) {
     const ext = file.name.split('.').at(-1)?.toLowerCase() ?? ''
     if (!allowedMime[ext] || file.type && !allowedMime[ext].includes(file.type)) { errors.push(`${file.name}: định dạng không hỗ trợ.`); continue }
-    if (file.size > 10 * 1024 * 1024) { errors.push(`${file.name}: vượt quá 10 MB.`); continue }
+    if (file.size > 10_000_000) { errors.push(`${file.name}: vượt quá 10 MB.`); continue }
     if (accepted.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)) { errors.push(`${file.name}: tệp đã được chọn.`); continue }
     if (accepted.length >= 5) { errors.push('Tối đa 5 tệp cho mỗi lần nộp.'); break }
     accepted.push(file)

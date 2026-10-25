@@ -27,6 +27,12 @@ export class GradingService extends RuntimeService {
       id,
     );
   }
+  queue(token: string, tenant: string) {
+    return this.run(token, 'SELECT educore_r5.grading_queue($1::uuid) result', tenant);
+  }
+  item(token: string, tenant: string, id: string) {
+    return this.run(token, 'SELECT educore_r5.grading_item($1::uuid,$2::uuid) result', tenant, id);
+  }
   published(
     token: string,
     tenant: string,
