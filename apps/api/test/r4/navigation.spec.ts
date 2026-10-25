@@ -37,8 +37,10 @@ describe('Phase B navigation DTO and service boundary', () => {
     expect(navigationAccess({ ...good(), screenIds: ['OP01', 'OP02', 'OP03', 'OP04', 'OP05'] }).screenIds)
       .toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05']);
     expect(navigationAccess({ ...good(), screenIds: [] }).screenIds).toEqual([]);
+    expect(navigationAccess({ ...good(), screenIds: ['AC01', 'AC02', 'OP01'] }).screenIds)
+      .toEqual(['AC01', 'AC02', 'OP01']);
     for (const bad of [
-      { ...good(), screenIds: ['AC01'] },
+      { ...good(), screenIds: ['AC02'] },
       { ...good(), screenIds: ['OP05'] },
       { ...good(), screenIds: ['OP04', 'OP04', 'OP05'] },
       { ...good(), screenIds: ['OP05', 'OP04'] },

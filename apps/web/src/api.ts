@@ -46,12 +46,14 @@ export class ApiClient {
 
   async request<T>(path: string, options: {
     method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string; csrfToken?: string;
-    credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache; expectedStatus?: number
+    credentials?: 'include' | 'omit'; signal?: AbortSignal; cache?: RequestCache; expectedStatus?: number;
+    idempotencyKey?: string
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
     if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`
     if (options.csrfToken) headers['X-CSRF-Token'] = options.csrfToken
+    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
     const response = await this.transport(`${this.baseUrl}${path}`, {
       method: options.method ?? 'GET', headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -109,6 +111,12 @@ export class ApiClient {
     method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; signal?: AbortSignal
   } = {}) {
     return this.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}${path}`,
+      { ...options, accessToken, cache: 'no-store' })
+  }
+  academic<T>(tenantId: string, path: string, accessToken: string, options: {
+    method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; signal?: AbortSignal; idempotencyKey?: string
+  } = {}) {
+    return this.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/academic${path}`,
       { ...options, accessToken, cache: 'no-store' })
   }
   selectTenant(accessToken: string, tenantId: string, signal?: AbortSignal) {
