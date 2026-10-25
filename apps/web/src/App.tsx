@@ -15,15 +15,7 @@ import { NotificationScreen } from './screens/Authentication & Shared/GL01/Notif
 import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.tsx'
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
 import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
-import { CentralScheduleScreen } from './screens/Scheduling & Resources/SC01/CentralScheduleScreen.tsx'
-import { ResourcesScreen } from './screens/Scheduling & Resources/SC02/ResourcesScreen.tsx'
-import { CreateScheduleScreen } from './screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
-import { SessionDetailScreen } from './screens/Scheduling & Resources/SC05/SessionDetailScreen.tsx'
-import { PersonalScheduleScreen } from './screens/Scheduling & Resources/SC06/PersonalScheduleScreen.tsx'
-import { AttendanceSessionListScreen } from './screens/Attendance & Leave/AT01/AttendanceSessionListScreen.tsx'
-import { AttendanceSheetScreen } from './screens/Attendance & Leave/AT02/AttendanceSheetScreen.tsx'
-import { LeaveRequestFormScreen } from './screens/Attendance & Leave/AT03/LeaveRequestFormScreen.tsx'
-import { LeaveRequestListScreen } from './screens/Attendance & Leave/AT04/LeaveRequestListScreen.tsx'
+import { SchedulingAttendanceProduction } from './screens/Scheduling & Resources/SchedulingAttendanceProduction.tsx'
 import { PriceRulesScreen } from './screens/Billing & Receivables/BL01/PriceRulesScreen.tsx'
 import { SiblingDiscountScreen } from './screens/Billing & Receivables/BL02/SiblingDiscountScreen.tsx'
 import { BillingPeriodsScreen } from './screens/Billing & Receivables/BL03/BillingPeriodsScreen.tsx'
@@ -177,15 +169,10 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       ? <AcademicProduction key={`${tenant.id}:${result.route.id}:${result.params.studentId ?? result.params.teacherId ?? result.params.classId ?? ''}`}
           id={result.route.id as AcademicId} tenantId={tenant.id} token={session!.accessToken} navigate={navigate}
           selectedId={result.params.studentId ?? result.params.teacherId ?? result.params.classId} />
-      : result.route.id === 'SC01' ? <CentralScheduleScreen />
-      : result.route.id === 'SC02' ? <ResourcesScreen />
-      : result.route.id === 'SC03' ? <CreateScheduleScreen />
-      : result.route.id === 'SC05' ? <SessionDetailScreen selectedId={result.params.sessionId} />
-      : result.route.id === 'SC06' ? <PersonalScheduleScreen />
-      : result.route.id === 'AT01' ? <AttendanceSessionListScreen onOpenSession={(id) => navigate(tenantPath(tenant.id, `/sessions/${encodeURIComponent(id)}/attendance`))} />
-      : result.route.id === 'AT02' ? <AttendanceSheetScreen sessionId={result.params.sessionId} onBack={() => navigate(tenantPath(tenant.id, '/attendance'))} />
-      : result.route.id === 'AT03' ? <LeaveRequestFormScreen onViewRequests={() => navigate(tenantPath(tenant.id, '/leave-requests'))} />
-      : result.route.id === 'AT04' ? <LeaveRequestListScreen onCreate={() => navigate(tenantPath(tenant.id, '/leave-requests/new'))} />
+      : (['SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04'] as string[]).includes(result.route.id)
+        ? <SchedulingAttendanceProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
+          id={result.route.id as 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'}
+          tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate} />
       : result.route.id === 'BL01' ? <PriceRulesScreen />
       : result.route.id === 'BL02' ? <SiblingDiscountScreen />
       : result.route.id === 'BL03' ? <BillingPeriodsScreen onOpenDrafts={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
