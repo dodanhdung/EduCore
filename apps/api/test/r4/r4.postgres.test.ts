@@ -495,6 +495,484 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  const academicRead = <T = Record<string, unknown>>(token: string, tenant: string, kind: string,
+    target?: string, search?: string, page = 1, size = 20) =>
+    runtime.run<T>(token,
+      'SELECT educore_r4.academic_read($1::uuid,$2::text,$3::uuid,$4::text,$5::int,$6::int) result',
+      tenant, kind, target ?? null, search ?? null, page, size);
+
+  native('R8 academic reader A01 migration privileges and real projections', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const s = await sessionFor(f);
+    const [privilege] = await admin`SELECT p.prosecdef,owner.rolname owner,
+      has_function_privilege('educore_r4_api',p.oid,'EXECUTE') api,
+      has_function_privilege('educore_r4_auth',p.oid,'EXECUTE') auth,
+      has_function_privilege('educore_r4_worker',p.oid,'EXECUTE') worker,
+      COALESCE((SELECT bool_or(a.grantee=0 AND a.privilege_type='EXECUTE')
+        FROM aclexplode(p.proacl) a),false) public
+      FROM pg_proc p JOIN pg_roles owner ON owner.oid=p.proowner
+      WHERE p.oid='educore_r4.academic_read(uuid,text,uuid,text,integer,integer)'::regprocedure`;
+    expect(privilege).toMatchObject({ prosecdef: true, owner: 'educore_r4_owner', api: true,
+      auth: false, worker: false, public: false });
+    const expected = [
+      ['STUDENTS', 'S1'], ['TEACHERS', 'T1'], ['SUBJECTS', 'SUB'],
+      ['LEVELS', 'L1'], ['COURSES', 'C1'], ['CLASSES', 'CL1'],
+    ] as const;
+    for (const [kind, code] of expected) {
+      const list = await academicRead<{ items: { code: string }[]; total: number; page: number }>(
+        s.accessToken, f.tenant, kind, undefined, code);
+      expect(list.items.some((item) => item.code === code)).toBe(true);
+      expect(list.total).toBeGreaterThan(0);
+      expect(list.page).toBe(1);
+    }
+    const classList = await academicRead<{ items: { code: string; enrollmentCount: number }[] }>(
+      s.accessToken, f.tenant, 'CLASSES', undefined, 'CL1');
+    expect(classList.items[0].enrollmentCount).toBe(1);
+    const pageTwo = await academicRead<{ items: unknown[]; total: number }>(
+      s.accessToken, f.tenant, 'STUDENTS', undefined, undefined, 2, 1);
+    expect(pageTwo.total).toBe(2);
+    expect(pageTwo.items).toHaveLength(1);
+    const empty = await academicRead<{ items: unknown[]; total: number }>(
+      s.accessToken, f.tenant, 'STUDENTS', undefined, 'NO_MATCH_R8');
+    expect(empty).toMatchObject({ items: [], total: 0 });
+    expect(await academicRead(s.accessToken, f.tenant, 'STUDENT', f.student)).toMatchObject({ id: f.student });
+    expect(await academicRead(s.accessToken, f.tenant, 'TEACHER', f.teacher)).toMatchObject({ id: f.teacher });
+    expect(await academicRead(s.accessToken, f.tenant, 'CLASS', f.classId)).toMatchObject({ id: f.classId });
+  });
+
+  native('R8 academic reader A02 live session, tenant, permission and missing targets', async () => {
+    const f = await fresh(), g = await fresh(), s = await sessionFor(f);
+    const raw = connect(apiConnection);
+    await expect(raw`SELECT educore_r4.academic_read(${f.tenant}::uuid,'STUDENTS')`).rejects.toMatchObject({ code: '42501' });
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students`).expect(401);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${g.tenant}/academic/students`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students/${g.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(404);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/classes/${randomUUID()}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(404);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students`)
+      .auth(accountant.accessToken, { type: 'bearer' }).expect(403);
+    const sid = auth.tokens.verify(s.accessToken).sid;
+    await admin`UPDATE auth_sessions SET revoked_at=clock_timestamp() WHERE id=${sid}`;
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(401);
+  });
+
+  native('R8 academic reader A03 TENANT versus CLASS and STUDENT scope', async () => {
+    const f = await fresh();
+    const classActor = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.classId);
+    const studentActor = await actor(f, 'ACADEMIC_STAFF', 'STUDENT', f.student);
+    expect(await academicRead(classActor.accessToken, f.tenant, 'CLASS', f.classId)).toMatchObject({ id: f.classId });
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/classes/${f.class2}`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/classes`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(403);
+    expect(await academicRead(studentActor.accessToken, f.tenant, 'STUDENT', f.student)).toMatchObject({ id: f.student });
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students/${f.student2}`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/students`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/academic/classes/${f.classId}`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(403);
+  });
+
+  native('R8 academic reader A04 restricted nested projections', async () => {
+    const f = await fresh(), staff = await actor(f, 'ACADEMIC_STAFF');
+    const assignment = await put(admin as unknown as Query, 'class_teacher_assignments', {
+      tenant_id: f.tenant, class_id: f.classId, teacher_id: f.teacher, role_kind: 'PRIMARY',
+      valid_from: '2090-01-01T00:00:00Z', assigned_by_membership_id: f.member,
+    });
+    const visibleClass = await academicRead<{ enrollments: unknown[]; teacherAssignments: { id: string }[] }>(
+      staff.accessToken, f.tenant, 'CLASS', f.classId);
+    expect(visibleClass.enrollments).toHaveLength(1);
+    expect(visibleClass.teacherAssignments[0].id).toBe(assignment);
+    const visibleTeacher = await academicRead<{ assignments: { id: string }[] }>(
+      staff.accessToken, f.tenant, 'TEACHER', f.teacher);
+    expect(visibleTeacher.assignments[0].id).toBe(assignment);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF')
+      AND permission_id IN (SELECT id FROM permissions WHERE code IN ('enrollment.read','teacher.read'))`;
+    const restrictedClass = await academicRead<Record<string, unknown>>(
+      staff.accessToken, f.tenant, 'CLASS', f.classId);
+    expect(restrictedClass).not.toHaveProperty('enrollments');
+    expect(restrictedClass).not.toHaveProperty('teacherAssignments');
+    const restrictedStudent = await academicRead<{ enrollments: unknown[] }>(
+      staff.accessToken, f.tenant, 'STUDENT', f.student);
+    expect(restrictedStudent.enrollments).toEqual([]);
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      SELECT gen_random_uuid(),${f.tenant},r.id,p.id FROM roles r CROSS JOIN permissions p
+      WHERE r.tenant_id=${f.tenant} AND r.code='ACADEMIC_STAFF' AND p.code='teacher.read'`;
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF')
+      AND permission_id=(SELECT id FROM permissions WHERE code='class.read')`;
+    const restrictedTeacher = await academicRead<{ assignments: unknown[] }>(
+      staff.accessToken, f.tenant, 'TEACHER', f.teacher);
+    expect(restrictedTeacher.assignments).toEqual([]);
+  });
+  native('R8 academic C01 placement, enrollment and pending transfer use R4 binding', async () => {
+    const f = await fresh(), s = await sessionFor(f);
+    const [course] = await admin`SELECT subject_id,level_id FROM courses WHERE id=${f.course}`;
+    const context = await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${f.tenant}/academic/classes/${f.classId}/students/${f.student2}/placement-context`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(context.body).toMatchObject({ targetSubjectId: course.subject_id,
+      targetLevelId: course.level_id, automaticRecommendation: 'DEFERRED_NO_APPROVED_RUBRIC' });
+    const enrollmentKey = randomUUID();
+    const enrollmentBody = { classId: f.classId, studentId: f.student2,
+      effectiveFrom: '2099-01-01T00:00:00Z', reason: 'Admission test', confirmed: true,
+      placement: { basis: 'STAFF_CONFIRMATION', subjectId: course.subject_id,
+        levelId: course.level_id, reason: 'Staff reviewed placement' } };
+    const created = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${f.tenant}/academic/enrollments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', enrollmentKey)
+      .send(enrollmentBody).expect(201);
+    expect(created.body).toMatchObject({ status: 'ACTIVE' });
+    const repeated = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${f.tenant}/academic/enrollments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', enrollmentKey)
+      .send(enrollmentBody).expect(201);
+    expect(repeated.body.id).toBe(created.body.id);
+    const transfer = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${f.tenant}/academic/transfers`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ enrollmentId: created.body.id, targetClassId: f.class2,
+        effectiveAt: '2099-06-01T00:00:00Z', reason: 'Requested class change', confirmed: true }).expect(201);
+    expect(transfer.body).toMatchObject({ status: 'REQUESTED' });
+    const [source] = await admin`SELECT class_id,status,effective_to FROM enrollments WHERE id=${created.body.id}`;
+    expect(source).toMatchObject({ class_id: f.classId, status: 'ACTIVE', effective_to: null });
+    const [pending] = await admin`SELECT status,target_enrollment_id FROM enrollment_transfers WHERE id=${transfer.body.id}`;
+    expect(pending).toMatchObject({ status: 'REQUESTED', target_enrollment_id: null });
+  });
+
+  native('R8 academic C02 public commands reject missing confirmation, scope and stale grants', async () => {
+    const f = await fresh(), s = await sessionFor(f), accountant = await actor(f, 'ACCOUNTANT');
+    const [course] = await admin`SELECT subject_id,level_id FROM courses WHERE id=${f.course}`;
+    const body = { classId: f.classId, studentId: f.student2,
+      effectiveFrom: '2099-01-01T00:00:00Z', reason: 'Admission test', confirmed: true,
+      placement: { basis: 'STAFF_CONFIRMATION', subjectId: course.subject_id,
+        levelId: course.level_id, reason: 'Staff reviewed placement' } };
+    const path = `/api/v1/tenants/${f.tenant}/academic/enrollments`;
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, confirmed: false }).expect(400);
+    await request(app.getHttpServer()).post(path).auth(accountant.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(body).expect(403);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body,
+        placement: { ...body.placement, levelId: randomUUID() } }).expect(422);
+    const staff = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.class2);
+    await request(app.getHttpServer()).post(path).auth(staff.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(body).expect(403);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF')
+      AND permission_id=(SELECT id FROM permissions WHERE code='enrollment.create')`;
+    await request(app.getHttpServer()).post(path).auth(staff.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, classId: f.class2 }).expect(403);
+  });
+  native('R8 closure T01 teacher assignment uses live class grant and idempotent R3 command', async () => {
+    const f = await fresh(), s = await sessionFor(f);
+    await admin`UPDATE classes SET status='PLANNED' WHERE id=${f.classId}`;
+    const path = `/api/v1/tenants/${f.tenant}/academic/teacher-assignments`;
+    const body = { classId: f.classId, teacherId: f.teacher, validFrom: '2099-01-01T00:00:00Z',
+      validTo: null, reason: 'Initial class responsibility', confirmed: true };
+    const key = randomUUID();
+    const created = await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', key).send(body).expect(201);
+    expect(created.body.status).toBe('ASSIGNED');
+    const replay = await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', key).send(body).expect(201);
+    expect(replay.body.id).toBe(created.body.id);
+    const [count] = await admin`SELECT count(*)::int n FROM class_teacher_assignments WHERE id=${created.body.id}`;
+    expect(count.n).toBe(1);
+    const [audit] = await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant}
+      AND event_type='R3:ASSIGN_TEACHER' AND entity_id=${created.body.id}`;
+    expect(audit.n).toBe(1);
+  });
+  native('R8 closure T02 teacher assignment denies conflict, wrong tenant and bad authority', async () => {
+    const f = await fresh(), g = await fresh(), s = await sessionFor(f);
+    const path = `/api/v1/tenants/${f.tenant}/academic/teacher-assignments`;
+    const teacher2 = await put(admin as unknown as Query, 'teacher_profiles', {
+      tenant_id: f.tenant, teacher_code: 'T2', full_name: 'Other Teacher', status: 'ACTIVE',
+    });
+    const body = { classId: f.classId, teacherId: teacher2, validFrom: '2099-01-01T00:00:00Z',
+      validTo: null, reason: 'Assignment review', confirmed: true };
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(body).expect(422);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, teacherId: g.teacher }).expect(422);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, confirmed: false }).expect(400);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, validTo: '2098-01-01T00:00:00Z' }).expect(400);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await request(app.getHttpServer()).post(path).auth(accountant.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, teacherId: f.teacher }).expect(403);
+    const otherClass = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.class2);
+    await request(app.getHttpServer()).post(path).auth(otherClass.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...body, teacherId: f.teacher }).expect(403);
+  });
+  native('R8 closure N01 Academic navigation requires live TENANT grants', async () => {
+    const f = await fresh(), manager = await sessionFor(f);
+    const path = `/api/v1/tenants/${f.tenant}/access/navigation`;
+    const read = (token: string) => request(app.getHttpServer()).get(path)
+      .auth(token, { type: 'bearer' });
+    const academic = (ids: string[]) => ids.filter((id) => id.startsWith('AC'));
+    expect(academic((await read(manager.accessToken).expect(200)).body.screenIds))
+      .toEqual(['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08']);
+    const scoped = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.classId);
+    expect(academic((await read(scoped.accessToken).expect(200)).body.screenIds)).toEqual([]);
+    const student = await actor(f, 'ACADEMIC_STAFF', 'STUDENT', f.student);
+    expect(academic((await read(student.accessToken).expect(200)).body.screenIds)).toEqual([]);
+    const tenantStaff = await actor(f, 'ACADEMIC_STAFF');
+    expect(academic((await read(tenantStaff.accessToken).expect(200)).body.screenIds))
+      .toEqual(['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08']);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF')
+      AND permission_id=(SELECT id FROM permissions WHERE code='academic.read')`;
+    expect(academic((await read(tenantStaff.accessToken).expect(200)).body.screenIds))
+      .toEqual(['AC01', 'AC02', 'AC03', 'AC04', 'AC07', 'AC08']);
+    const base = `/api/v1/tenants/${f.tenant}/academic`;
+    await request(app.getHttpServer()).get(`${base}/classes`)
+      .auth(tenantStaff.accessToken, { type: 'bearer' }).expect(200);
+    await request(app.getHttpServer()).get(`${base}/courses`)
+      .auth(tenantStaff.accessToken, { type: 'bearer' }).expect(403);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${tenantStaff.assignment}`;
+    expect(academic((await read(tenantStaff.accessToken).expect(200)).body.screenIds)).toEqual([]);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${randomUUID()}/access/navigation`)
+      .auth(manager.accessToken, { type: 'bearer' }).expect(403);
+  });
+  native('R8 closure J01 login to navigation, profiles, catalog, assignment, enrollment and roster', async () => {
+    const f = await fresh(), session = await sessionFor(f);
+    const base = `/api/v1/tenants/${f.tenant}/academic`;
+    const bearerToken = (path: string) => request(app.getHttpServer()).get(path)
+      .auth(session.accessToken, { type: 'bearer' });
+    const menu = await bearerToken(`/api/v1/tenants/${f.tenant}/access/navigation`).expect(200);
+    expect(menu.body.screenIds).toContain('AC07');
+    const student = await request(app.getHttpServer()).post(`${base}/profiles/students`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JST', name: 'Journey Student', reason: 'Journey' }).expect(201);
+    const teacher = await request(app.getHttpServer()).post(`${base}/profiles/teachers`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JTE', name: 'Journey Teacher', reason: 'Journey' }).expect(201);
+    expect(student.body.status).toBe('ACTIVE');
+    expect(teacher.body.status).toBe('ACTIVE');
+    const subject = await request(app.getHttpServer()).post(`${base}/catalog/subjects`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JSUB', name: 'Journey Subject', reason: 'Journey' }).expect(201);
+    const level = await request(app.getHttpServer()).post(`${base}/catalog/levels`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JLVL', name: 'Journey Level', sortOrder: 2, reason: 'Journey' }).expect(201);
+    const course = await request(app.getHttpServer()).post(`${base}/catalog/courses`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JCRS', name: 'Journey Course', subjectId: subject.body.id,
+        levelId: level.body.id, reason: 'Journey' }).expect(201);
+    const classRow = await request(app.getHttpServer()).post(`${base}/catalog/classes`)
+      .auth(session.accessToken, { type: 'bearer' })
+      .send({ code: 'JCLS', name: 'Journey Class', courseId: course.body.id,
+        capacity: 1, startDate: '2099-01-01', endDate: '2099-12-31', reason: 'Journey' }).expect(201);
+    const [createdStates] = await admin`SELECT co.status course_status,cl.status class_status
+      FROM courses co JOIN classes cl ON cl.course_id=co.id
+      WHERE co.id=${course.body.id} AND cl.id=${classRow.body.id}`;
+    expect(createdStates).toMatchObject({ course_status: 'ACTIVE', class_status: 'PLANNED' });
+    const assigned = await request(app.getHttpServer()).post(`${base}/teacher-assignments`)
+      .auth(session.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ classId: classRow.body.id, teacherId: teacher.body.id,
+        validFrom: '2099-01-01T00:00:00Z', validTo: null,
+        reason: 'Journey assignment', confirmed: true }).expect(201);
+    expect(assigned.body.status).toBe('ASSIGNED');
+    const enrolled = await request(app.getHttpServer()).post(`${base}/enrollments`)
+      .auth(session.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ classId: classRow.body.id, studentId: student.body.id,
+        effectiveFrom: '2099-02-01T00:00:00Z', reason: 'Journey', confirmed: true,
+        placement: { basis: 'STAFF_CONFIRMATION', subjectId: subject.body.id,
+          levelId: level.body.id, reason: 'Journey placement' } }).expect(201);
+    expect(enrolled.body.status).toBe('ACTIVE');
+    const classes = await bearerToken(`${base}/classes`).expect(200);
+    expect(classes.body.items.some((item: { id: string }) => item.id === classRow.body.id)).toBe(true);
+    const detail = await bearerToken(`${base}/classes/${classRow.body.id}`).expect(200);
+    expect(detail.body.enrollments).toContainEqual(expect.objectContaining({
+      id: enrolled.body.id, studentId: student.body.id, studentName: 'Journey Student',
+    }));
+    expect(detail.body.teacherAssignments).toContainEqual(expect.objectContaining({
+      id: assigned.body.id, teacherId: teacher.body.id,
+    }));
+    const enrollmentBody = { classId: classRow.body.id, studentId: student.body.id,
+      effectiveFrom: '2099-02-01T00:00:00Z', reason: 'Journey duplicate', confirmed: true,
+      placement: { basis: 'STAFF_CONFIRMATION', subjectId: subject.body.id,
+        levelId: level.body.id, reason: 'Journey placement' } };
+    const duplicate = await request(app.getHttpServer()).post(`${base}/enrollments`)
+      .auth(session.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send(enrollmentBody);
+    expect([409, 422]).toContain(duplicate.status);
+    const full = await request(app.getHttpServer()).post(`${base}/enrollments`)
+      .auth(session.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ ...enrollmentBody, studentId: f.student2 });
+    expect([409, 422]).toContain(full.status);
+    const [activeCount] = await admin`SELECT count(*)::int n FROM enrollments
+      WHERE tenant_id=${f.tenant} AND class_id=${classRow.body.id} AND status='ACTIVE'`;
+    expect(activeCount.n).toBe(1);
+    const capabilities = await bearerToken(`${base}/permissions/capabilities/current?classId=${classRow.body.id}`)
+      .expect(200);
+    expect(capabilities.body.tenantTimezone).toBe('Asia/Ho_Chi_Minh');
+  });
+  native('R8 academic A01 profile create and update preserve account separation', async () => {
+    const f = await fresh(), s = await sessionFor(f);
+    const usersBefore = await admin`SELECT count(*)::int n FROM users`;
+    const membershipsBefore = await admin`SELECT count(*)::int n FROM tenant_memberships`;
+    const rolesBefore = await admin`SELECT count(*)::int n FROM membership_roles`;
+    const student = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${f.tenant}/academic/profiles/students`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'SNEW', name: 'New Student', dateOfBirth: '2014-03-21', reason: 'Profile creation' }).expect(201);
+    expect(student.body).toMatchObject({ status: 'ACTIVE' });
+    const teacher = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${f.tenant}/academic/profiles/teachers`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'TNEW', name: 'New Teacher', contact: 'internal contact', reason: 'Profile creation' }).expect(201);
+    const studentUpdate = await request(app.getHttpServer())
+      .patch(`/api/v1/tenants/${f.tenant}/academic/profiles/students/${student.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Student', dateOfBirth: null, reason: 'Correct name' }).expect(200);
+    expect(studentUpdate.body.id).toBe(student.body.id);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/tenants/${f.tenant}/academic/profiles/teachers/${teacher.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Teacher', contact: null, reason: 'Correct name' }).expect(200);
+    const [studentRow] = await admin`SELECT student_code,full_name,date_of_birth,membership_id FROM student_profiles WHERE id=${student.body.id}`;
+    const [teacherRow] = await admin`SELECT teacher_code,full_name,contact,membership_id FROM teacher_profiles WHERE id=${teacher.body.id}`;
+    expect(studentRow).toMatchObject({ student_code: 'SNEW', full_name: 'Updated Student', date_of_birth: null, membership_id: null });
+    expect(teacherRow).toMatchObject({ teacher_code: 'TNEW', full_name: 'Updated Teacher', contact: null, membership_id: null });
+    expect((await admin`SELECT count(*)::int n FROM users`)[0].n).toBe(usersBefore[0].n);
+    expect((await admin`SELECT count(*)::int n FROM tenant_memberships`)[0].n).toBe(membershipsBefore[0].n);
+    expect((await admin`SELECT count(*)::int n FROM membership_roles`)[0].n).toBe(rolesBefore[0].n);
+  });
+
+  native('R8 academic A02 profile validation, duplicates and scope denial', async () => {
+    const f = await fresh(), g = await fresh(), s = await sessionFor(f);
+    const studentPath = `/api/v1/tenants/${f.tenant}/academic/profiles/students`;
+    const input = { code: 'S1', name: 'Duplicate', dateOfBirth: null, reason: 'Test duplicate' };
+    await request(app.getHttpServer()).post(studentPath).auth(s.accessToken, { type: 'bearer' }).send(input).expect(409);
+    await request(app.getHttpServer()).post(studentPath).auth(s.accessToken, { type: 'bearer' })
+      .send({ ...input, code: 'BAD', dateOfBirth: '2026-02-30' }).expect(400);
+    await request(app.getHttpServer()).post(studentPath).auth(s.accessToken, { type: 'bearer' })
+      .send({ ...input, code: 'BAD', membershipId: f.member }).expect(400);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await request(app.getHttpServer()).post(studentPath).auth(accountant.accessToken, { type: 'bearer' })
+      .send({ ...input, code: 'NEW' }).expect(403);
+    await request(app.getHttpServer()).patch(`${studentPath}/${g.student}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Wrong tenant', dateOfBirth: null, reason: 'Test' }).expect(404);
+    const scoped = await actor(f, 'ACADEMIC_STAFF', 'STUDENT', f.student);
+    await request(app.getHttpServer()).patch(`${studentPath}/${f.student}`)
+      .auth(scoped.accessToken, { type: 'bearer' })
+      .send({ name: 'Scoped edit', dateOfBirth: null, reason: 'Correct profile' }).expect(200);
+    await request(app.getHttpServer()).patch(`${studentPath}/${f.student2}`)
+      .auth(scoped.accessToken, { type: 'bearer' })
+      .send({ name: 'Denied edit', dateOfBirth: null, reason: 'Test' }).expect(403);
+    await request(app.getHttpServer()).post(`/api/v1/tenants/${g.tenant}/academic/profiles/students`)
+      .auth(s.accessToken, { type: 'bearer' }).send({ ...input, code: 'NEW' }).expect(403);
+    await request(app.getHttpServer()).post(`/api/v1/tenants/${f.tenant}/academic/profiles/teachers`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'T1', name: 'Duplicate', contact: null, reason: 'Test duplicate' }).expect(409);
+  });
+  native('R8 academic B01 catalog, course and class persistence with tenant references', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}/academic/catalog`;
+    const subject = await request(app.getHttpServer()).post(`${base}/subjects`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'SUB2', name: 'Second Subject', reason: 'Catalog setup' }).expect(201);
+    const level = await request(app.getHttpServer()).post(`${base}/levels`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'L2', name: 'Second Level', sortOrder: 2, reason: 'Catalog setup' }).expect(201);
+    const course = await request(app.getHttpServer()).post(`${base}/courses`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'C2', name: 'Second Course', subjectId: subject.body.id,
+        levelId: level.body.id, description: 'Course details', reason: 'Course setup' }).expect(201);
+    const classRow = await request(app.getHttpServer()).post(`${base}/classes`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'CL3', name: 'Third Class', courseId: course.body.id,
+        capacity: 12, startDate: '2099-01-01', endDate: '2099-12-31', reason: 'Class setup' }).expect(201);
+    await request(app.getHttpServer()).patch(`${base}/subjects/${subject.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Subject', reason: 'Correct display name' }).expect(200);
+    await request(app.getHttpServer()).patch(`${base}/levels/${level.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Level', sortOrder: 3, reason: 'Correct display order' }).expect(200);
+    await request(app.getHttpServer()).patch(`${base}/courses/${course.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Course', description: null, reason: 'Correct course' }).expect(200);
+    await request(app.getHttpServer()).patch(`${base}/classes/${classRow.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Updated Class', reason: 'Correct class' }).expect(200);
+    const [row] = await admin`SELECT cl.code,cl.name,cl.status,cl.capacity,cl.course_id,
+      co.subject_id,co.level_id FROM classes cl JOIN courses co ON co.id=cl.course_id WHERE cl.id=${classRow.body.id}`;
+    expect(row).toMatchObject({ code: 'CL3', name: 'Updated Class', status: 'PLANNED',
+      capacity: 12, course_id: course.body.id, subject_id: subject.body.id, level_id: level.body.id });
+    const [catalog] = await admin`SELECT s.name subject_name,l.name level_name,l.sort_order FROM subjects s
+      JOIN levels l ON l.tenant_id=s.tenant_id WHERE s.id=${subject.body.id} AND l.id=${level.body.id}`;
+    expect(catalog).toMatchObject({ subject_name: 'Updated Subject', level_name: 'Updated Level', sort_order: 3 });
+    expect((await admin`SELECT count(*)::int n FROM class_sessions WHERE tenant_id=${f.tenant} AND class_id=${classRow.body.id}`)[0].n).toBe(0);
+  });
+
+  native('R8 academic B02 duplicates, invalid references and unsafe deactivation are denied', async () => {
+    const f = await fresh(), g = await fresh(), s = await sessionFor(f);
+    const base = `/api/v1/tenants/${f.tenant}/academic/catalog`;
+    await request(app.getHttpServer()).post(`${base}/subjects`).auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'SUB', name: 'Duplicate', reason: 'Test' }).expect(409);
+    await request(app.getHttpServer()).post(`${base}/levels`).auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'L1', name: 'Duplicate', sortOrder: 1, reason: 'Test' }).expect(409);
+    await request(app.getHttpServer()).post(`${base}/classes`).auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'BAD', name: 'Bad Class', courseId: f.course, capacity: 0, reason: 'Test' }).expect(400);
+    await request(app.getHttpServer()).post(`${base}/courses`).auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'BAD', name: 'Bad Course', subjectId: g.course, levelId: randomUUID(), reason: 'Test' }).expect(422);
+    await request(app.getHttpServer()).post(`${base}/classes`).auth(s.accessToken, { type: 'bearer' })
+      .send({ code: 'BAD', name: 'Bad Class', courseId: g.course, capacity: 10, reason: 'Test' }).expect(422);
+    const [subject] = await admin`SELECT subject_id FROM courses WHERE id=${f.course}`;
+    await request(app.getHttpServer()).patch(`${base}/subjects/${subject.subject_id}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Subject', active: false, reason: 'Test deactivation' }).expect(422);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await request(app.getHttpServer()).post(`${base}/subjects`).auth(accountant.accessToken, { type: 'bearer' })
+      .send({ code: 'DENIED', name: 'Denied', reason: 'Test' }).expect(403);
+    await request(app.getHttpServer()).patch(`${base}/classes/${g.classId}`)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ name: 'Wrong tenant', reason: 'Test' }).expect(404);
+    const classActor = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.classId);
+    await request(app.getHttpServer()).patch(`${base}/classes/${f.classId}`)
+      .auth(classActor.accessToken, { type: 'bearer' })
+      .send({ name: 'Scoped Class', reason: 'Test' }).expect(200);
+    await request(app.getHttpServer()).patch(`${base}/classes/${f.class2}`)
+      .auth(classActor.accessToken, { type: 'bearer' })
+      .send({ name: 'Denied Class', reason: 'Test' }).expect(403);
+  });
+  native('R8 academic D01 capabilities mirror current tenant and class grants', async () => {
+    const f = await fresh(), manager = await sessionFor(f);
+    const path = `/api/v1/tenants/${f.tenant}/academic/permissions/capabilities/current`;
+    const managerCapabilities = await request(app.getHttpServer()).get(`${path}?classId=${f.classId}&studentId=${f.student}`)
+      .auth(manager.accessToken, { type: 'bearer' }).expect(200);
+    expect(managerCapabilities.body).toMatchObject({ studentCreate: true, classCreate: true,
+      classUpdate: true, enroll: true, transferRequest: true });
+    const classActor = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.classId);
+    const scoped = await request(app.getHttpServer()).get(`${path}?classId=${f.classId}&studentId=${f.student}`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(200);
+    expect(scoped.body).toMatchObject({ studentCreate: false, classCreate: false,
+      classUpdate: true, enroll: true });
+    const other = await request(app.getHttpServer()).get(`${path}?classId=${f.class2}&studentId=${f.student}`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(200);
+    expect(other.body).toMatchObject({ classUpdate: false, enroll: false });
+    const studentActor = await actor(f, 'ACADEMIC_STAFF', 'STUDENT', f.student);
+    const studentScoped = await request(app.getHttpServer()).get(`${path}?classId=${f.classId}&studentId=${f.student}`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(200);
+    expect(studentScoped.body).toMatchObject({ studentUpdate: true, classUpdate: false, enroll: false });
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${classActor.assignment}`;
+    const revoked = await request(app.getHttpServer()).get(`${path}?classId=${f.classId}&studentId=${f.student}`)
+      .auth(classActor.accessToken, { type: 'bearer' }).expect(200);
+    expect(revoked.body).toMatchObject({ classUpdate: false, enroll: false });
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${randomUUID()}/academic/permissions/capabilities/current`)
+      .auth(manager.accessToken, { type: 'bearer' }).expect(403);
+  });
   const issueRecovery = async () => {
     const base = await fresh();
     const address = randomUUID() + '@r4.invalid';
@@ -1100,8 +1578,9 @@ describe('R4 native PostgreSQL', () => {
     const get = () => request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${principalSession.accessToken}`);
     const response = await get().expect(200);
     expect(Object.keys(response.body).sort()).toEqual(['screenIds', 'sessionId', 'tenantId', 'userId', 'validUntil']);
-    expect(response.body).toMatchObject({ userId: f.user, tenantId: f.tenant,
-      screenIds: ['OP01', 'OP04', 'OP05', 'OP06', 'OP07'] });
+    expect(response.body).toMatchObject({ userId: f.user, tenantId: f.tenant });
+    expect(response.body.screenIds.filter((id: string) => id.startsWith('OP')))
+      .toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
     expect(response.body.sessionId).toBe(auth.tokens.verify(principalSession.accessToken).sid);
     expect(response.body.validUntil).toBeGreaterThan(Date.now());
     const [serverClock] = await admin`SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms`;
@@ -1125,7 +1604,7 @@ describe('R4 native PostgreSQL', () => {
     const none = await actor(f, 'ACADEMIC_STAFF');
     const empty = await request(app.getHttpServer()).get(path)
       .set('Authorization', `Bearer ${none.accessToken}`).expect(200);
-    expect(empty.body.screenIds).toEqual([]);
+    expect(empty.body.screenIds.filter((id: string) => id.startsWith('OP'))).toEqual(['OP03']);
     await admin`UPDATE tenant_memberships SET status='DISABLED',left_at=clock_timestamp() WHERE id=${none.member}`;
     const denied = await request(app.getHttpServer()).get(path)
       .set('Authorization', `Bearer ${none.accessToken}`).expect(403);

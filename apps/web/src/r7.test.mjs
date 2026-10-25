@@ -332,11 +332,13 @@ test('Phase B reader requests no-store and rejects malformed or unreviewed navig
   assert.deepEqual(value.screenIds, ['OP04', 'OP05'])
   assert.deepEqual(navigationResponse({ ...value, screenIds: ['OP01', 'OP02', 'OP03'] }).screenIds,
     ['OP01', 'OP02', 'OP03'])
+  assert.deepEqual(navigationResponse({ ...value, screenIds: ['AC01', 'AC02', 'OP01'] }).screenIds,
+    ['AC01', 'AC02', 'OP01'])
   assert.equal(calls[0].options.cache, 'no-store')
   assert.equal(calls[0].options.credentials, 'omit')
   assert.equal(calls[0].options.headers.Authorization, 'Bearer token')
   for (const bad of [
-    { ...value, screenIds: ['AC01'] }, { ...value, screenIds: ['OP04'] }, { ...value, screenIds: ['OP02'] },
+    { ...value, screenIds: ['AC02'] }, { ...value, screenIds: ['OP04'] }, { ...value, screenIds: ['OP02'] },
     { ...value, screenIds: ['OP05', 'OP04'] }, { ...value, screenIds: ['OP04', 'OP04', 'OP05'] },
     { ...value, screenIds: ['OP01'], mutation: true }, { ...value, validUntil: 1.5 },
   ]) assert.throws(() => navigationResponse(bad), (error) => error.status === 502)

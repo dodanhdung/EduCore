@@ -21,6 +21,10 @@ import { GradingService } from '../assignments-grading/grading.service.js';
 import type { FileStoragePort } from '../file-management/private-volume.adapter.js';
 import { FileService } from '../file-management/file.service.js';
 import { FileController } from '../file-management/file.controller.js';
+import { AcademicReadController } from '../academic/academic-read.controller.js';
+import { AcademicCommandController } from '../academic/academic-command.controller.js';
+import { AcademicProfileController } from '../academic/academic-profile.controller.js';
+import { AcademicCatalogController } from '../academic/academic-catalog.controller.js';
 
 @Module({})
 export class R4Module {
@@ -41,6 +45,10 @@ export class R4Module {
         SubmissionController,
         GradingController,
         FileController,
+        AcademicReadController,
+        AcademicCommandController,
+        AcademicProfileController,
+        AcademicCatalogController,
       ],
       providers: [
         { provide: R4Repository, useValue: repository },

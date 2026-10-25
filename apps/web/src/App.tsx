@@ -13,10 +13,8 @@ import { ProfileScreen } from './screens/Authentication & Shared/AU05/ProfileScr
 import { ActivationScreen } from './screens/Authentication & Shared/AU06/ActivationScreen.tsx'
 import { NotificationScreen } from './screens/Authentication & Shared/GL01/NotificationScreen.tsx'
 import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.tsx'
-import { AcademicScreen } from './screens/Academic Management/AcademicScreens.tsx'
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
-import { AcademicMoreScreen } from './screens/Academic Management/AcademicMoreScreens.tsx'
-import type { MoreId } from './screens/Academic Management/AcademicMoreScreens.tsx'
+import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
 import { CentralScheduleScreen } from './screens/Scheduling & Resources/SC01/CentralScheduleScreen.tsx'
 import { ResourcesScreen } from './screens/Scheduling & Resources/SC02/ResourcesScreen.tsx'
 import { CreateScheduleScreen } from './screens/Scheduling & Resources/SC03/CreateScheduleScreen.tsx'
@@ -175,10 +173,10 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
   if (!tenant) return <ErrorScreen code="403" navigate={navigate} />
   const screen = result.route.id === 'AU05'
     ? <ProfileScreen session={session!} tenant={tenant} onLogout={onLogout} />
-    : result.route.id === 'GL01' ? <NotificationScreen /> : (['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(result.route.id)
-      ? <AcademicScreen id={result.route.id as AcademicId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.studentId ?? result.params.teacherId} />
-      : (['AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
-        ? <AcademicMoreScreen id={result.route.id as MoreId} tenantId={tenant.id} navigate={navigate} selectedId={result.params.classId} />
+    : result.route.id === 'GL01' ? <NotificationScreen /> : (['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
+      ? <AcademicProduction key={`${tenant.id}:${result.route.id}:${result.params.studentId ?? result.params.teacherId ?? result.params.classId ?? ''}`}
+          id={result.route.id as AcademicId} tenantId={tenant.id} token={session!.accessToken} navigate={navigate}
+          selectedId={result.params.studentId ?? result.params.teacherId ?? result.params.classId} />
       : result.route.id === 'SC01' ? <CentralScheduleScreen />
       : result.route.id === 'SC02' ? <ResourcesScreen />
       : result.route.id === 'SC03' ? <CreateScheduleScreen />

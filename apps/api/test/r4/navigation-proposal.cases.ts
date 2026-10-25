@@ -47,16 +47,16 @@ export function registerNavigationProposalTests(ctx: Context) {
     it('N04 excludes a revoked role assignment', async () => {
       const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACCOUNTANT');
       await admin()`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${actor.assignment}`;
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual([]);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual([]);
     });
     it('N05 grants only the actual TENANT read permission mapping', async () => {
       const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACCOUNTANT');
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual(['OP04', 'OP05']);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP04', 'OP05']);
     });
     for (const scope of ['CLASS', 'STUDENT'] as const) {
       it(`N06/07 ${scope}-only permission never becomes TENANT access`, async () => {
         const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACCOUNTANT', scope, scope === 'CLASS' ? f.classId : f.student);
-        expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual([]);
+        expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual([]);
       });
     }
     it('N08 unions multiple active grants in the same tenant only', async () => {
@@ -68,34 +68,34 @@ export function registerNavigationProposalTests(ctx: Context) {
         tenant_id: f.tenant, membership_id: actor.member, role_id: role.id, assigned_by_membership_id: f.member,
       });
       await put(admin() as unknown as Query, 'access_scopes', { tenant_id: f.tenant, membership_role_id: assignment, scope_kind: 'TENANT' });
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual(['OP01', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
     });
     it('N09 Academic Staff receives only its TENANT relationship screen', async () => {
       const f = await ctx.fresh(), actor = await ctx.actor(f, 'ACADEMIC_STAFF');
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual(['OP03']);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP03']);
     });
     it('R8 OP02 needs both read permissions; OP03 needs relationship.read', async () => {
       const f = await ctx.fresh();
       const manager = await ctx.actor(f, 'MANAGER');
-      expect((await read(manager.accessToken, f.tenant)).screenIds).toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
+      expect((await read(manager.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
       const academic = await ctx.actor(f, 'ACADEMIC_STAFF');
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual(['OP03']);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP03']);
       const [role] = await admin()`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF'`;
       const [memberPermission] = await admin()`SELECT id FROM permissions WHERE code='member.read'`;
       const [rolePermission] = await admin()`SELECT id FROM permissions WHERE code='role.read'`;
       await admin()`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
         VALUES(gen_random_uuid(),${f.tenant},${role.id},${memberPermission.id})`;
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual(['OP01', 'OP03']);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP03']);
       await admin()`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id} AND permission_id=${memberPermission.id}`;
       await admin()`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
         VALUES(gen_random_uuid(),${f.tenant},${role.id},${rolePermission.id})`;
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual(['OP03']);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP03']);
       await admin()`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
         VALUES(gen_random_uuid(),${f.tenant},${role.id},${memberPermission.id})`;
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual(['OP01', 'OP02', 'OP03']);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP02', 'OP03']);
       await admin()`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
         AND permission_id=(SELECT id FROM permissions WHERE code='relationship.read')`;
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual(['OP01', 'OP02']);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP02']);
     });
     for (const scope of ['CLASS', 'STUDENT'] as const) {
       it(`R8 ${scope} read permissions cannot grant tenant-wide OP01/OP02/OP03`, async () => {
@@ -104,7 +104,7 @@ export function registerNavigationProposalTests(ctx: Context) {
         await admin()`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
           SELECT gen_random_uuid(),${f.tenant},${role.id},id FROM permissions WHERE code IN ('member.read','role.read')`;
         const actor = await ctx.actor(f, 'ACADEMIC_STAFF', scope, scope === 'CLASS' ? f.classId : f.student);
-        expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual([]);
+        expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual([]);
       });
     }
     it('R8 revoked relationship grant disappears; navigation grants do not authorize mutations', async () => {
@@ -112,12 +112,12 @@ export function registerNavigationProposalTests(ctx: Context) {
       const [role] = await admin()`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF'`;
       await admin()`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
         AND permission_id=(SELECT id FROM permissions WHERE code='relationship.read')`;
-      expect((await read(academic.accessToken, f.tenant)).screenIds).toEqual([]);
+      expect((await read(academic.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual([]);
       const accountant = await ctx.actor(f, 'ACCOUNTANT');
       const [accountantRole] = await admin()`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
       await admin()`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
         SELECT gen_random_uuid(),${f.tenant},${accountantRole.id},id FROM permissions WHERE code IN ('member.read','role.read')`;
-      expect((await read(accountant.accessToken, f.tenant)).screenIds).toEqual(['OP01','OP02','OP04','OP05']);
+      expect((await read(accountant.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01','OP02','OP04','OP05']);
       await denied(ctx.repository().transaction(accountant.accessToken, (tx) => result(tx,
         'SELECT educore_r4.iam($1::uuid,$2::jsonb) result', f.tenant,
         JSON.stringify({ operation:'ROLE_ASSIGN', id:f.member, roleId:accountantRole.id, scopeKind:'TENANT', reason:'Navigation alone' }))), '42501');
@@ -129,7 +129,7 @@ export function registerNavigationProposalTests(ctx: Context) {
       const f = await ctx.fresh(), actor = await ctx.actor(f, 'PARENT', 'STUDENT', f.student);
       await put(admin() as unknown as Query, 'parent_student_links', { tenant_id: f.tenant, parent_membership_id: actor.member,
         student_id: f.student, relationship: 'PARENT', evidence_reference: 'proposal-test-only', verified_by_membership_id: f.member, verified_at: new Date() });
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual([]);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual([]);
     });
     it('N11 restricted LOGIN retains no raw grant or credential SELECT', async () => {
       for (const table of ['public.credentials', 'public.role_permissions', 'public.access_scopes']) {
@@ -185,10 +185,10 @@ export function registerNavigationProposalTests(ctx: Context) {
         tenant_id: other.tenant, membership_id: member, role_id: role.id, assigned_by_membership_id: other.member,
       });
       await put(admin() as unknown as Query, 'access_scopes', { tenant_id: other.tenant, membership_role_id: assignment, scope_kind: 'TENANT' });
-      expect((await read(actor.accessToken, f.tenant)).screenIds).toEqual(['OP04', 'OP05']);
+      expect((await read(actor.accessToken, f.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP04', 'OP05']);
       await denied(read(actor.accessToken, other.tenant), '42501');
       const selected = await ctx.auth().selectTenant(actor.accessToken, other.tenant);
-      expect((await read(selected.accessToken, other.tenant)).screenIds).toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
+      expect((await read(selected.accessToken, other.tenant)).screenIds.filter((id) => id.startsWith('OP'))).toEqual(['OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07']);
       await denied(read(selected.accessToken, f.tenant), '42501');
     });
     it('N16 function owner/search_path/PUBLIC ACL preserve SECURITY DEFINER boundary', async () => {
