@@ -691,6 +691,164 @@ describe('R4 native PostgreSQL', () => {
       AND event_type='R3:ASSIGN_TEACHER' AND entity_id=${created.body.id}`;
     expect(audit.n).toBe(1);
   });
+  native('R8 billing H01 authenticated generation and reviewed issue bind to the selected tenant', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    const other = await fresh();
+    const base = `/api/v1/tenants/${f.tenant}/billing`;
+    const generationPath = `${base}/periods/${period}/students/${f.student}/generations`;
+    const key = randomUUID();
+    const unrelated = await actor(f, 'ACADEMIC_STAFF');
+    const financeNav = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(financeNav.body.screenIds.filter((id: string) => id.startsWith('BL')))
+      .toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07']);
+    const scopedAccountant = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    const scopedNav = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(scopedAccountant.accessToken, { type: 'bearer' }).expect(200);
+    expect(scopedNav.body.screenIds.filter((id: string) => id.startsWith('BL'))).toEqual([]);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT')
+      AND permission_id=(SELECT id FROM permissions WHERE code='billing.read')`;
+    const reducedNav = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(accountant.accessToken, { type: 'bearer' }).expect(200);
+    expect(reducedNav.body.screenIds).toContain('BL06');
+    expect(reducedNav.body.screenIds).not.toContain('BL07');
+    const tariffs = await request(app.getHttpServer()).get(`${base}/price-rules`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(tariffs.body.items).toEqual([expect.objectContaining({ scope: 'COURSE', amountVnd: '800000' })]);
+    const periods = await request(app.getHttpServer()).get(`${base}/periods`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(periods.body.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: period })]));
+    const opened = await request(app.getHttpServer()).post(`${base}/periods`)
+      .auth(s.accessToken, { type: 'bearer' }).send({ monthStart: '2025-09-01', reason: 'Monthly review' }).expect(200);
+    expect(opened.body.id).toBe(period);
+    await request(app.getHttpServer()).post(generationPath)
+      .set('Idempotency-Key', key).send({ reason: 'Monthly review' }).expect(401);
+    await request(app.getHttpServer()).post(`/api/v1/tenants/${other.tenant}/billing/periods/${period}/students/${f.student}/generations`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key)
+      .send({ reason: 'Monthly review' }).expect(403);
+    await request(app.getHttpServer()).post(generationPath)
+      .auth(unrelated.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Monthly review' }).expect(403);
+    const first = await request(app.getHttpServer()).post(generationPath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key)
+      .send({ reason: 'Monthly review' }).expect(200);
+    expect(first.body).toMatchObject({ status: 'DRAFT', totalVnd: '800000' });
+    const replay = await request(app.getHttpServer()).post(generationPath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key)
+      .send({ reason: 'Monthly review' }).expect(200);
+    expect(replay.body.id).toBe(first.body.id);
+    const draftList = await request(app.getHttpServer()).get(`${base}/drafts`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(draftList.body.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: first.body.invoiceId, totalVnd: '800000' })]));
+    const draft = await request(app.getHttpServer()).get(`${base}/drafts/${first.body.invoiceId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(draft.body).toMatchObject({ id: first.body.invoiceId, currentGenerationId: first.body.id, canIssue: true });
+    expect(draft.body.lines).toHaveLength(1);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/billing/drafts/${first.body.invoiceId}`)
+      .auth((await sessionFor(other)).accessToken, { type: 'bearer' }).expect(403);
+    const issuePath = `${base}/drafts/${first.body.invoiceId}/issue`;
+    await request(app.getHttpServer()).post(issuePath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Reviewed', confirmed: true, expectedGenerationId: randomUUID() }).expect(409);
+    const issued = await request(app.getHttpServer()).post(issuePath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key + ':issue')
+      .send({ reason: 'Reviewed', confirmed: true, expectedGenerationId: first.body.id }).expect(200);
+    expect(issued.body).toMatchObject({ id: first.body.invoiceId, status: 'ISSUED' });
+    const invoiceList = await request(app.getHttpServer()).get(`${base}/invoices`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(invoiceList.body.items).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: first.body.invoiceId, status: 'ISSUED', settlement: 'UNPAID', outstandingVnd: '800000', allocatedVnd: '0' })]));
+    const invoiceDetail = await request(app.getHttpServer()).get(`${base}/invoices/${first.body.invoiceId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(invoiceDetail.body.snapshot.appliedGenerationId).toBe(first.body.id);
+    expect(invoiceDetail.body.payments).toEqual([]);
+    const issueReplay = await request(app.getHttpServer()).post(issuePath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key + ':issue')
+      .send({ reason: 'Reviewed', confirmed: true, expectedGenerationId: first.body.id }).expect(200);
+    expect(issueReplay.body).toEqual(issued.body);
+    await request(app.getHttpServer()).post(issuePath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Reviewed again', confirmed: true, expectedGenerationId: first.body.id }).expect(422);
+    const receivable = await request(app.getHttpServer()).get(`${base}/invoices/${first.body.invoiceId}/receivable`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(receivable.body).toMatchObject({ status: 'ISSUED', outstandingVnd: '800000' });
+    const [effects] = await admin`SELECT (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${first.body.invoiceId}) payment_count,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant}) wallet_count`;
+    expect(effects).toMatchObject({ payment_count: 0, wallet_count: 0 });
+  });
+  native('R8 billing H02 price writer uses live permission, date window and idempotent evidence', async () => {
+    const f = await fresh(), other = await fresh(), manager = await sessionFor(f);
+    const path = `/api/v1/tenants/${f.tenant}/billing/price-rules`;
+    const input = { scope: 'COURSE', targetId: f.course, amountVnd: '150000',
+      effectiveFrom: '2099-01-01', effectiveTo: '2099-06-01', reason: 'Approved future tariff' };
+    const key = randomUUID();
+    const created = await request(app.getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', key).send(input).expect(200);
+    expect(created.body).toMatchObject({ scope: 'COURSE', targetId: f.course, amountVnd: '150000' });
+    const replay = await request(app.getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', key).send(input).expect(200);
+    expect(replay.body).toEqual(created.body);
+    await request(app.getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...input, amountVnd: '160000' }).expect(409);
+    await request(app.getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...input, targetId: other.course }).expect(403);
+    await request(app.getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...input, amountVnd: '-1' }).expect(400);
+    const unauthorized = await actor(f, 'ACADEMIC_STAFF');
+    await request(app.getHttpServer()).post(path).auth(unauthorized.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ ...input, scope: 'CLASS', targetId: f.classId }).expect(403);
+    const [state] = await admin`SELECT (SELECT count(*)::int FROM price_rules WHERE tenant_id=${f.tenant} AND course_id=${f.course}) rule_count,
+      (SELECT count(*)::int FROM audit_logs WHERE tenant_id=${f.tenant} AND event_type='PRICE_RULE_CREATED' AND entity_id=${created.body.id}) audit_count`;
+    expect(state).toMatchObject({ rule_count: 1, audit_count: 1 });
+  });
+  native('R8 billing H03 missing source creates NEEDS_INFORMATION without an invoice', async () => {
+    const f = await fresh({ start: '2025-09-20T10:00:00Z', end: '2025-09-20T11:00:00Z', enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const session = await sessionFor(f);
+    const period = await put(admin as unknown as Query, 'billing_periods', { tenant_id: f.tenant,
+      month_start: '2025-09-01', month_end: '2025-10-01', status: 'OPEN' });
+    const path = `/api/v1/tenants/${f.tenant}/billing/periods/${period}/students/${f.student}/generations`;
+    const response = await request(app.getHttpServer()).post(path).auth(session.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ reason: 'Monthly source review' }).expect(200);
+    expect(response.body.status).toBe('NEEDS_INFORMATION');
+    expect(response.body.invoiceId).toBeNull();
+    expect(response.body.source.missing.length).toBeGreaterThan(0);
+    const [state] = await admin`SELECT count(*)::int n FROM invoices WHERE tenant_id=${f.tenant} AND period_id=${period}`;
+    expect(state.n).toBe(0);
+  });
+  native('R8 billing H04 parent links alone do not discount; verified sibling G2 does', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    await put(admin as unknown as Query, 'enrollments', { tenant_id: f.tenant, class_id: f.classId,
+      student_id: f.student2, status: 'ACTIVE', effective_from: '2020-01-01', created_by_membership_id: f.member });
+    const parent = await actor(f, 'PARENT');
+    for (const student of [f.student, f.student2])
+      await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+        parent_membership_id: parent.member, student_id: student, relationship: 'PARENT',
+        verified_at: '2020-01-01', verified_by_membership_id: f.member });
+    const base = `/api/v1/tenants/${f.tenant}/billing`;
+    const first = await request(app.getHttpServer()).post(`${base}/periods/${period}/students/${f.student}/generations`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Monthly source review' }).expect(200);
+    expect(first.body).toMatchObject({ totalVnd: '800000', discountVnd: '0' });
+    await put(admin as unknown as Query, 'verified_sibling_relationships', { tenant_id: f.tenant,
+      student_a_id: f.student, student_b_id: f.student2, verified_by_membership_id: f.member,
+      verified_at: '2020-01-01', evidence_note: 'Reviewed family evidence' });
+    const evidence = await request(app.getHttpServer()).get(`${base}/sibling-evidence`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(evidence.body.items).toEqual([expect.objectContaining({ eligible: true })]);
+    const second = await request(app.getHttpServer()).post(`${base}/periods/${period}/students/${f.student}/recomputations`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Verified sibling evidence added', expectedBase: first.body.id,
+        expectedApplied: first.body.id }).expect(200);
+    expect(second.body).toMatchObject({ totalVnd: '720000', discountVnd: '80000', invoiceId: first.body.invoiceId });
+    const historical = await request(app.getHttpServer()).get(`${base}/drafts/${first.body.invoiceId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(historical.body.generationHistory).toHaveLength(2);
+    expect(historical.body.generationHistory[0].result.totalVnd).toBe('800000');
+    await request(app.getHttpServer()).get(`${base}/drafts/${first.body.invoiceId}`)
+      .auth(parent.accessToken, { type: 'bearer' }).expect(403);
+  });
   native('R8 closure T02 teacher assignment denies conflict, wrong tenant and bad authority', async () => {
     const f = await fresh(), g = await fresh(), s = await sessionFor(f);
     const path = `/api/v1/tenants/${f.tenant}/academic/teacher-assignments`;

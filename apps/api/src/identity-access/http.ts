@@ -96,6 +96,8 @@ export class R4ErrorFilter implements ExceptionFilter {
         '28000': 401,
         '42501': 403,
         '22023': 400,
+        '22007': 400,
+        '22008': 400,
         '22P02': 400,
         '23505': 409,
         '23514': 422,

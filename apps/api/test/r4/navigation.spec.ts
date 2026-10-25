@@ -39,12 +39,16 @@ describe('Phase B navigation DTO and service boundary', () => {
     expect(navigationAccess({ ...good(), screenIds: [] }).screenIds).toEqual([]);
     expect(navigationAccess({ ...good(), screenIds: ['AC01', 'AC02', 'OP01'] }).screenIds)
       .toEqual(['AC01', 'AC02', 'OP01']);
+    expect(navigationAccess({ ...good(), screenIds: ['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] }).screenIds)
+      .toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07']);
     for (const bad of [
       { ...good(), screenIds: ['AC02'] },
       { ...good(), screenIds: ['OP05'] },
       { ...good(), screenIds: ['OP04', 'OP04', 'OP05'] },
       { ...good(), screenIds: ['OP05', 'OP04'] },
       { ...good(), screenIds: ['OP02'] },
+      { ...good(), screenIds: ['BL05'] },
+      { ...good(), screenIds: ['BL07'] },
       { ...good(), screenIds: ['OP01'], extra: true },
       { ...good(), userId: 'user' },
       { ...good(), validUntil: Number.MAX_SAFE_INTEGER + 1 },
@@ -72,7 +76,7 @@ describe('Phase B navigation DTO and service boundary', () => {
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 500 });
     raw = { ...good(), validUntil: Date.now() - 1 };
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 401 });
-    raw = { ...good(), screenIds: ['BL01'] };
+    raw = { ...good(), screenIds: ['BL09'] };
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 500 });
   });
 });
