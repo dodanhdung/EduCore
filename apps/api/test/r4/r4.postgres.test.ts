@@ -849,6 +849,33 @@ describe('R4 native PostgreSQL', () => {
     await request(app.getHttpServer()).get(`${base}/drafts/${first.body.invoiceId}`)
       .auth(parent.accessToken, { type: 'bearer' }).expect(403);
   });
+  native('R8 billing H05 issued detail requires both live permissions and student scope', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const other = await fresh();
+    const path = `/api/v1/tenants/${f.tenant}/billing/invoices/${invoice}`;
+    const read = (token: string) => request(app.getHttpServer()).get(path)
+      .auth(token, { type: 'bearer' });
+    await read(s.accessToken).expect(200);
+    const wrongStudent = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student2);
+    await read(wrongStudent.accessToken).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/billing/invoices/${invoice}`)
+      .auth((await sessionFor(other)).accessToken, { type: 'bearer' }).expect(403);
+
+    // The same selected session must lose access immediately after a live grant
+    // changes; navigation visibility alone is not the authorization boundary.
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='MANAGER')
+      AND permission_id=(SELECT id FROM permissions WHERE code='invoice.read')`;
+    await read(s.accessToken).expect(403); // billing.read only
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      SELECT gen_random_uuid(),${f.tenant},r.id,p.id FROM roles r CROSS JOIN permissions p
+      WHERE r.tenant_id=${f.tenant} AND r.code='MANAGER' AND p.code='invoice.read'`;
+    await read(s.accessToken).expect(200);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+      AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='MANAGER')
+      AND permission_id=(SELECT id FROM permissions WHERE code='billing.read')`;
+    await read(s.accessToken).expect(403); // invoice.read only
+  });
   native('R8 closure T02 teacher assignment denies conflict, wrong tenant and bad authority', async () => {
     const f = await fresh(), g = await fresh(), s = await sessionFor(f);
     const path = `/api/v1/tenants/${f.tenant}/academic/teacher-assignments`;
