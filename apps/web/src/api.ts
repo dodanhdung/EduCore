@@ -136,13 +136,17 @@ export class ApiClient {
     return value as T
   }
   async downloadAssignmentFile(tenantId: string, fileId: string, accessToken: string) {
+    const metadata = await this.learning<{ originalFilename: string }>(tenantId, `/files/${encodeURIComponent(fileId)}`, accessToken)
+    const filename = metadata.originalFilename
+    if (typeof filename !== 'string' || filename.length > 120 || !/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*\.(?:pdf|docx|jpe?g|png)$/i.test(filename))
+      throw new ApiError(502, 'INVALID_FILENAME')
     const response = await this.transport(`${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantId)}/files/${encodeURIComponent(fileId)}/download`, {
       headers: { Authorization: `Bearer ${accessToken}` }, credentials: 'omit', cache: 'no-store'
     })
     if (!response.ok) throw new ApiError(response.status, 'FILE_DOWNLOAD_FAILED')
     const blob = await response.blob()
     const objectUrl = URL.createObjectURL(blob)
-    const link = document.createElement('a'); link.href = objectUrl; link.download = 'assignment-file'; link.click()
+    const link = document.createElement('a'); link.href = objectUrl; link.download = filename; link.click()
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
   }
   selectTenant(accessToken: string, tenantId: string, signal?: AbortSignal) {

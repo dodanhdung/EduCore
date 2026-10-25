@@ -983,6 +983,44 @@ describe('Checkpoint E integration', () => {
       .get(base + '/files/' + upload.body.id + '/download')
       .auth(f.studentActor.token, { type: 'bearer' })
       .expect(200);
+    await request(app.getHttpServer())
+      .post(base + '/assignments/' + a.body.id + '/archive')
+      .auth(f.teacherActor.token, { type: 'bearer' })
+      .set('If-Match', '2')
+      .set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Term complete' })
+      .expect(201);
+    const archived = await request(app.getHttpServer())
+      .get(base + '/my/assignments')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    const archivedItem = archived.body.items.find(
+      (item: { id: string }) => item.id === a.body.id,
+    );
+    expect(archivedItem?.status).toBe('ARCHIVED');
+    expect(archivedItem?.canSubmit).toBe(false);
+    expect(archivedItem?.score).toBe('7');
+    const archivedHistory = await request(app.getHttpServer())
+      .get(base + '/assignment-recipients/' + ar.id + '/submissions')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    expect(archivedHistory.body.versions[0].id).toBe(v.body.versionId);
+    await request(app.getHttpServer())
+      .get(base + '/files/' + upload.body.id + '/download')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(base + '/assignment-recipients/' + ar.id + '/submissions')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID())
+      .send({ answerText: 'Must be refused after archive' })
+      .expect(403);
+    await request(app.getHttpServer()).get(base + '/my/assignments').expect(401);
+    const foreign = await fresh();
+    await request(app.getHttpServer())
+      .get('/api/v1/tenants/' + foreign.tenant + '/my/assignments')
+      .auth(f.studentActor.token, { type: 'bearer' })
+      .expect(403);
   });
   it('E02 recipient override/revocation retains history; wrong tenant cannot read resources', async () => {
     const f = await submitted();

@@ -43,11 +43,11 @@ BEGIN
   'deadlineAt',GREATEST(a.deadline_at,COALESCE(ar.deadline_override_at,a.deadline_at)),
   'priority',a.priority,'status',a.status,'recipientId',ar.id,'submissionId',sub.id,
   'currentVersionId',sub.current_version_id,'versionNo',v.version_no,'submittedAt',v.submitted_at,
-  'isLate',v.is_late,'canSubmit',NOT EXISTS(SELECT FROM public.grades lock_grade JOIN public.submission_versions lock_version ON lock_version.tenant_id=t AND lock_version.id=lock_grade.submission_version_id WHERE lock_grade.tenant_id=t AND lock_version.submission_id=sub.id AND lock_grade.cancelled_at IS NULL),
+  'isLate',v.is_late,'canSubmit',a.status='PUBLISHED' AND NOT EXISTS(SELECT FROM public.grades lock_grade JOIN public.submission_versions lock_version ON lock_version.tenant_id=t AND lock_version.id=lock_grade.submission_version_id WHERE lock_grade.tenant_id=t AND lock_version.submission_id=sub.id AND lock_grade.cancelled_at IS NULL),
   'gradeId',g.id,'score',g.score::text,'feedback',g.feedback)
   ORDER BY a.deadline_at,a.id),'[]'::jsonb) INTO items
  FROM public.student_profiles sp JOIN public.assignment_recipients ar ON ar.tenant_id=t AND ar.student_id=sp.id AND ar.revoked_at IS NULL
- JOIN public.assignments a ON a.tenant_id=t AND a.id=ar.assignment_id AND a.status='PUBLISHED'
+ JOIN public.assignments a ON a.tenant_id=t AND a.id=ar.assignment_id AND a.status IN ('PUBLISHED','ARCHIVED')
  LEFT JOIN public.classes c ON c.tenant_id=t AND c.id=ar.class_id
  LEFT JOIN public.submissions sub ON sub.tenant_id=t AND sub.recipient_id=ar.id
  LEFT JOIN public.submission_versions v ON v.tenant_id=t AND v.id=sub.current_version_id
