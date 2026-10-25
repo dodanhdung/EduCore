@@ -16,13 +16,7 @@ import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
 import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
 import { SchedulingAttendanceProduction } from './screens/Scheduling & Resources/SchedulingAttendanceProduction.tsx'
-import { PriceRulesScreen } from './screens/Billing & Receivables/BL01/PriceRulesScreen.tsx'
-import { SiblingDiscountScreen } from './screens/Billing & Receivables/BL02/SiblingDiscountScreen.tsx'
-import { BillingPeriodsScreen } from './screens/Billing & Receivables/BL03/BillingPeriodsScreen.tsx'
-import { DraftInvoiceListScreen } from './screens/Billing & Receivables/BL04/DraftInvoiceListScreen.tsx'
-import { DraftInvoiceReviewScreen } from './screens/Billing & Receivables/BL05/DraftInvoiceReviewScreen.tsx'
-import { IssuedInvoiceListScreen } from './screens/Billing & Receivables/BL06/IssuedInvoiceListScreen.tsx'
-import { InvoiceDetailScreen } from './screens/Billing & Receivables/BL07/InvoiceDetailScreen.tsx'
+import { BillingProduction } from './screens/Billing & Receivables/BillingProduction.tsx'
 import { ReceivablesWalletScreen } from './screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
 import { InvoiceAdjustmentScreen } from './screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
 import { AssignmentsProduction } from './screens/Assignments & Grading/AssignmentsProduction.tsx'
@@ -167,13 +161,11 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
         ? <SchedulingAttendanceProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
           id={result.route.id as 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'}
           tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate} />
-      : result.route.id === 'BL01' ? <PriceRulesScreen />
-      : result.route.id === 'BL02' ? <SiblingDiscountScreen />
-      : result.route.id === 'BL03' ? <BillingPeriodsScreen onOpenDrafts={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
-      : result.route.id === 'BL04' ? <DraftInvoiceListScreen onOpenDraft={(id) => navigate(tenantPath(tenant.id, `/finance/drafts/${encodeURIComponent(id)}`))} />
-      : result.route.id === 'BL05' ? <DraftInvoiceReviewScreen selectedId={result.params.draftId} onBack={() => navigate(tenantPath(tenant.id, '/finance/drafts'))} />
-      : result.route.id === 'BL06' ? <IssuedInvoiceListScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
-      : result.route.id === 'BL07' ? <InvoiceDetailScreen selectedId={result.params.invoiceId} onOpenAdjustment={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}/adjust`))} onBack={() => navigate(tenantPath(tenant.id, '/finance/invoices'))} />
+      : (['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as string[]).includes(result.route.id)
+        ? <BillingProduction key={`${tenant.id}:${result.route.id}:${result.params.draftId ?? result.params.invoiceId ?? ''}`}
+            id={result.route.id as 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07'}
+            tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.draftId ?? result.params.invoiceId}
+            api={api} navigate={navigate} />
       : result.route.id === 'BL09' ? <ReceivablesWalletScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
       : result.route.id === 'BL10' ? <InvoiceAdjustmentScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(result.params.invoiceId ?? '')}`))} />
       : (['AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07'] as string[]).includes(result.route.id)

@@ -3,7 +3,9 @@ import type { NavigationReader, NavigationResponse } from './auth.ts'
 
 export const NAVIGATION_SCREENS = ['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08',
   'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07',
-  'AT01', 'AT02', 'AT03', 'AT04', 'OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07',
+  'AT01', 'AT02', 'AT03', 'AT04',
+  'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07',
+  'OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07',
   'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const FIELDS = ['userId', 'sessionId', 'tenantId', 'screenIds', 'validUntil']
@@ -30,7 +32,9 @@ export function navigationResponse(value: unknown): NavigationResponse {
     || (ids.includes('AS02') && !ids.includes('AS01'))
     || (ids.includes('AS03') && !ids.includes('AS01'))
     || (ids.includes('AS05') && !ids.includes('AS04'))
-    || (ids.includes('AS07') && !ids.includes('AS06'))) throw invalid()
+    || (ids.includes('AS07') && !ids.includes('AS06'))
+    || (ids.includes('BL05') && !ids.includes('BL04'))
+    || (ids.includes('BL07') && !ids.includes('BL06'))) throw invalid()
   return item as NavigationResponse
 }
 
