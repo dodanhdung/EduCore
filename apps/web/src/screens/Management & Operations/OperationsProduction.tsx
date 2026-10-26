@@ -43,7 +43,8 @@ export function OperationsProduction({ id, tenantId, token }: { id: 'OP06' | 'OP
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const retryKey = useRef<{ input: string; key: string } | null>(null)
+  const retryKeys = useRef(new Map<string, string>())
+  const retryInput = useRef<string | null>(null)
   const invalid = (filters.from && filters.to && filters.from > filters.to) || (filters.entityId && !uuid.test(filters.entityId))
   useEffect(() => {
     if (invalid) { queueMicrotask(() => setState('invalid')); return }
@@ -66,7 +67,10 @@ export function OperationsProduction({ id, tenantId, token }: { id: 'OP06' | 'OP
     } catch (error) { setTimelineError(safeErrorMessage(error)) }
   }
   async function showJob(row: Job) {
-    setSelectedJob(null); setJobAudit(null); setJobAuditError(''); setReason(''); setMessage(''); retryKey.current = null
+    const pendingInput = retryInput.current
+    const pendingSameJob = pendingInput !== null && pendingInput.startsWith(`${row.id}\n`) && retryKeys.current.has(pendingInput)
+    setSelectedJob(null); setJobAudit(null); setJobAuditError(''); setReason(pendingSameJob ? reason : ''); setMessage('')
+    if (!pendingSameJob) retryInput.current = null
     try {
       const detail = await api.learning<Job>(tenantId, `/jobs/${encodeURIComponent(row.id)}`, token)
       setSelectedJob(detail)
@@ -81,17 +85,25 @@ export function OperationsProduction({ id, tenantId, token }: { id: 'OP06' | 'OP
   async function retry(job: Job) {
     const input = `${job.id}\n${reason.trim()}`
     if (!job.retryEligible || !reason.trim() || !window.confirm(`Thử lại job ${job.id} với lý do đã nhập?`)) return
-    if (retryKey.current?.input !== input) retryKey.current = { input, key: crypto.randomUUID() }
+    const key = retryKeys.current.get(input) ?? crypto.randomUUID()
+    retryKeys.current.set(input, key)
+    retryInput.current = input
     setBusy(true); setMessage('')
     try {
       const result = await api.learning<{ id: string; status: string }>(tenantId, `/jobs/${encodeURIComponent(job.id)}/retry`, token,
-        { method: 'POST', body: { reason: reason.trim(), confirmed: true }, idempotencyKey: retryKey.current.key })
+        { method: 'POST', body: { reason: reason.trim(), confirmed: true }, idempotencyKey: key })
       if (result.id !== job.id || result.status !== 'READY') throw new ApiError(502, 'INVALID_RESPONSE')
+      retryKeys.current.delete(input)
+      if (retryInput.current === input) retryInput.current = null
       setSelectedJob(null)
       setMessage('Máy chủ đã nhận yêu cầu retry; đang tải trạng thái mới.'); setRevision((value) => value + 1)
       setSelectedJob(await api.learning<Job>(tenantId, `/jobs/${encodeURIComponent(job.id)}`, token))
     } catch (error) {
-      if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) setSelectedJob(null)
+      if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) {
+        retryKeys.current.delete(input)
+        if (retryInput.current === input) retryInput.current = null
+        setSelectedJob(null)
+      }
       setMessage(safeErrorMessage(error)); setRevision((value) => value + 1)
     }
     finally { setBusy(false) }

@@ -110,3 +110,52 @@ for (const status of [403, 409]) test(`OP07 removes stale retry eligibility afte
     assert.doesNotMatch(document.body.textContent, /Xác nhận retry/)
   } finally { window.confirm = previousConfirm; await close() }
 })
+
+test('OP07 reuses an uncertain key, then rotates it for a distinct authorized retry cycle', async () => {
+  const failed = { id: recordId, jobKind: 'SCHEDULE_CHECK', status: 'FAILED', attemptCount: 1,
+    nextAttemptAt: at, lastErrorCode: '40001', policyVersionId: recordId, correlationId: recordId,
+    sourceType: 'ClassSession', sourceId: recordId, retryEligible: true, attempts: [] }
+  const other = { ...failed, id: '00000000-0000-4000-8000-000000000003' }
+  let detail = failed
+  const keys = []
+  handler = async (url, options) => {
+    if (options.method === 'POST') {
+      keys.push(options.headers['Idempotency-Key'])
+      if (keys.length === 1) throw new TypeError('Connection lost after send')
+      detail = keys.length === 2 ? { ...failed, attemptCount: 2 } : { ...failed, status: 'READY', retryEligible: false }
+      return json({ id: recordId, status: 'READY' })
+    }
+    if (String(url).endsWith(`/jobs/${recordId}`)) return json(detail)
+    if (String(url).endsWith(`/jobs/${other.id}`)) return json(other)
+    if (String(url).includes('/audit/operations/')) return json({ code: 'FORBIDDEN' }, 403)
+    return json({ items: [detail, other], page: 1, pageSize: 20, total: 2, timezone: 'Asia/Ho_Chi_Minh' })
+  }
+  const previousConfirm = window.confirm
+  window.confirm = () => true
+  const close = await mount(OperationsProduction, { id: 'OP07', tenantId, token: 'TEST_TOKEN' })
+  try {
+    const views = () => [...document.querySelectorAll('button')].filter((item) => item.textContent === 'Xem')
+    const retry = () => [...document.querySelectorAll('button')].find((item) => item.textContent === 'Xác nhận retry')
+    const enterReason = async () => act(async () => {
+      const field = document.querySelector('textarea')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(field, 'Reviewed source')
+      field.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await act(async () => { views()[0].click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    await enterReason()
+    await act(async () => { retry().click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    assert.equal(keys.length, 1)
+    await act(async () => { views()[0].click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    assert.equal(document.querySelector('textarea')?.value, 'Reviewed source')
+    await act(async () => { views()[1].click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    await act(async () => { views()[0].click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    await enterReason()
+    await act(async () => { retry().click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    assert.equal(keys.length, 2)
+    assert.equal(keys[0], keys[1])
+    assert.ok(retry())
+    await act(async () => { retry().click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    assert.equal(keys.length, 3)
+    assert.notEqual(keys[2], keys[1])
+  } finally { window.confirm = previousConfirm; await close() }
+})
