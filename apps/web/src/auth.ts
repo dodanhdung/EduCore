@@ -34,7 +34,8 @@ export function navigationRoutes(session: Session, evidence = session.navigation
 export function landingPath(session: Session) {
   const tenant = session.principal.tenantId
   if (!tenant) return '/select-tenant'
-  const first = navigationRoutes(session).find((route) => !route.selfService)
+  const available = navigationRoutes(session)
+  const first = available.find((route) => route.id === 'OP01') ?? available.find((route) => !route.selfService)
   return first ? first.path.replace(':tenantId', encodeURIComponent(tenant)) : tenantPath(tenant, '/me')
 }
 

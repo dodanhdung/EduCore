@@ -11,7 +11,7 @@ import { RecoveryRequestScreen } from './screens/Authentication & Shared/AU03/Re
 import { ResetPasswordScreen } from './screens/Authentication & Shared/AU04/ResetPasswordScreen.tsx'
 import { ProfileScreen } from './screens/Authentication & Shared/AU05/ProfileScreen.tsx'
 import { ActivationScreen } from './screens/Authentication & Shared/AU06/ActivationScreen.tsx'
-import { NotificationScreen } from './screens/Authentication & Shared/GL01/NotificationScreen.tsx'
+import { NotificationProduction } from './screens/Authentication & Shared/GL01/NotificationProduction.tsx'
 import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.tsx'
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
 import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
@@ -28,6 +28,7 @@ import { portalPath } from './screens/Role Portals/PortalNavigation.ts'
 import './App.css'
 import { ManagementScreen } from './screens/Management & Operations/ManagementScreens.tsx'
 import { ProductionManagement } from './screens/Management & Operations/ProductionManagement.tsx'
+import { OperationsProduction } from './screens/Management & Operations/OperationsProduction.tsx'
 import { managementIds } from './screens/Management & Operations/ManagementTypes.ts'
 import type { ManagementId } from './screens/Management & Operations/ManagementTypes.ts'
 
@@ -152,7 +153,7 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
   if (!tenant) return <ErrorScreen code="403" navigate={navigate} />
   const screen = result.route.id === 'AU05'
     ? <ProfileScreen session={session!} tenant={tenant} onLogout={onLogout} />
-    : result.route.id === 'GL01' ? <NotificationScreen /> : (['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
+    : result.route.id === 'GL01' ? <NotificationProduction key={tenant.id} tenantId={tenant.id} token={session!.accessToken} /> : (['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
       ? <AcademicProduction key={`${tenant.id}:${result.route.id}:${result.params.studentId ?? result.params.teacherId ?? result.params.classId ?? ''}`}
           id={result.route.id as AcademicId} tenantId={tenant.id} token={session!.accessToken} navigate={navigate}
           selectedId={result.params.studentId ?? result.params.teacherId ?? result.params.classId} />
@@ -179,6 +180,8 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} viewerId={session?.principal.id} tenantId={tenant.id} />
       : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
       : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
+      : (['OP06', 'OP07'] as string[]).includes(result.route.id)
+        ? <OperationsProduction key={`${tenant.id}:${result.route.id}`} id={result.route.id as 'OP06' | 'OP07'} tenantId={tenant.id} token={session!.accessToken} />
       : (managementIds as readonly string[]).includes(result.route.id) ? ['OP01', 'OP02', 'OP03'].includes(result.route.id)
         ? <ProductionManagement key={`${tenant.id}:${result.route.id}:${result.params.membershipId ?? ''}`} id={result.route.id as ManagementId} tenantId={tenant.id} selectedId={result.params.membershipId} session={session!}
           open={(screen, recordId) => navigate(screen === 'OP01' ? tenantPath(tenant.id, '/settings/members')

@@ -495,6 +495,198 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  native('R8 N01 authenticated inbox, scoped audit and job projections', async () => {
+    const f = await fresh(), other = await fresh(), s = await sessionFor(f);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path).auth(s.accessToken, { type: 'bearer' });
+    await request(app.getHttpServer()).get(base + '/notifications').expect(401);
+    const inbox = await get('/notifications?unreadOnly=true').expect(200);
+    expect(inbox.body).toMatchObject({ items: [], total: 0, timezone: expect.any(String) });
+    expect((await get('/notifications/unread-count').expect(200)).body).toEqual({ count: 0 });
+    const job = await request(app.getHttpServer()).post(base + '/jobs').auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'SCHEDULE_CHECK', payload: { sessionId: f.session } }).expect(201);
+    const jobs = await get('/jobs').expect(200);
+    expect(jobs.body.items.some((row: { id: string }) => row.id === job.body.id)).toBe(true);
+    expect(jobs.body.items.find((row: { id: string }) => row.id === job.body.id)).toMatchObject({
+      sourceId: f.session, attemptCount: 0, attempts: [], retryEligible: false,
+    });
+    const detail = await get(`/jobs/${job.body.id}`).expect(200);
+    expect(detail.body.id).toBe(job.body.id);
+    expect(detail.body.payload_json).toBeUndefined();
+    const audit = await get('/audit?eventType=JOB_ENQUEUED').expect(200);
+    expect(audit.body.items.some((row: { entityId: string }) => row.entityId === job.body.id)).toBe(true);
+    expect(audit.body.items[0].before_json).toBeUndefined();
+    expect(audit.body.items[0].after_json).toBeUndefined();
+    await get(`/audit/operations/${audit.body.items[0].correlationId}`).expect(200);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/jobs`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/notifications`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+    await get(`/jobs/${randomUUID()}`).expect(404);
+    await admin`DELETE FROM automation_jobs WHERE id=${job.body.id}`;
+    await admin`DELETE FROM role_permissions rp USING roles r,permissions p
+      WHERE rp.tenant_id=${f.tenant} AND rp.role_id=r.id AND rp.permission_id=p.id
+       AND r.tenant_id=${f.tenant} AND r.code='MANAGER' AND p.code='notification.read'`;
+    await get('/notifications').expect(403);
+    await get('/notifications/unread-count').expect(403);
+  });
+
+  native('R8 N02 retry is confirmed, scoped, idempotent and bounded', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}`;
+    const created = await request(app.getHttpServer()).post(base + '/jobs').auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'SCHEDULE_CHECK', payload: { sessionId: f.session } }).expect(201);
+    const id = created.body.id as string;
+    const path = `${base}/jobs/${id}/retry`, key = randomUUID();
+    const post = (body: object, replayKey = key) => request(app.getHttpServer()).post(path)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', replayKey).send(body);
+    await post({ reason: 'Reviewed source', confirmed: true }).expect(403);
+    await admin`UPDATE automation_jobs SET status='FAILED',attempt_count=1,last_error_code='40001',updated_at=clock_timestamp() WHERE id=${id}`;
+    await post({ reason: 'Reviewed source' }).expect(400);
+    const first = await post({ reason: 'Reviewed source', confirmed: true }).expect(200);
+    expect(first.body).toMatchObject({ id, status: 'READY' });
+    expect((await post({ reason: 'Reviewed source', confirmed: true }).expect(200)).body).toEqual(first.body);
+    await post({ reason: 'Different reason', confirmed: true }).expect(409);
+    const [row] = await admin`SELECT status,attempt_count FROM automation_jobs WHERE id=${id}`;
+    expect(row).toMatchObject({ status: 'READY', attempt_count: 1 });
+    await admin`UPDATE automation_jobs SET status='FAILED',attempt_count=4,updated_at=clock_timestamp() WHERE id=${id}`;
+    await post({ reason: 'No reset', confirmed: true }, randomUUID()).expect(403);
+    const [bounded] = await admin`SELECT attempt_count FROM automation_jobs WHERE id=${id}`;
+    expect(bounded.attempt_count).toBe(4);
+    await admin`UPDATE automation_jobs SET attempt_count=1,updated_at=clock_timestamp() WHERE id=${id}`;
+    await admin`DELETE FROM role_permissions rp USING roles r,permissions p
+      WHERE rp.tenant_id=${f.tenant} AND rp.role_id=r.id AND rp.permission_id=p.id
+       AND r.tenant_id=${f.tenant} AND r.code='MANAGER' AND p.code='job.retry'`;
+    await post({ reason: 'Revoked', confirmed: true }, randomUUID()).expect(403);
+    await admin`DELETE FROM automation_jobs WHERE id=${id}`;
+  });
+
+  native('R8 N03 class scope filters audit and jobs before counts and correlation', async () => {
+    const f = await fresh(), manager = await sessionFor(f), scoped = await actor(f, 'ACADEMIC_STAFF', 'CLASS', f.classId);
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      SELECT gen_random_uuid(),${f.tenant},r.id,p.id FROM roles r CROSS JOIN permissions p
+      WHERE r.tenant_id=${f.tenant} AND r.code='ACADEMIC_STAFF'
+       AND p.code IN ('audit.read','audit.explain','job.read') ON CONFLICT DO NOTHING`;
+    await admin`INSERT INTO audit_logs(id,tenant_id,actor_user_id,actor_membership_id,actor_kind,
+      event_type,entity_type,entity_id,action,correlation_id)
+      VALUES(gen_random_uuid(),${f.tenant},${f.user},${f.member},'USER','R8_VISIBLE','ClassSession',
+      ${f.session},'R8_VISIBLE',gen_random_uuid()),
+      (gen_random_uuid(),${f.tenant},${f.user},${f.member},'USER','R8_VISIBLE','StudentProfile',
+      ${f.student},'R8_VISIBLE',gen_random_uuid()),
+      (gen_random_uuid(),${f.tenant},${f.user},${f.member},'USER','R8_VISIBLE','R4',
+      ${f.session},'R8_VISIBLE',gen_random_uuid())`;
+    const [hidden] = await admin`SELECT correlation_id FROM audit_logs WHERE tenant_id=${f.tenant}
+      AND event_type='R8_VISIBLE' AND entity_id=${f.student}`;
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const read = (path: string) => request(app.getHttpServer()).get(base + path).auth(scoped.accessToken, { type: 'bearer' });
+    const audit = await read('/audit?eventType=R8_VISIBLE&pageSize=1').expect(200);
+    expect(audit.body.total).toBe(1);
+    expect(audit.body.items).toHaveLength(1);
+    expect(audit.body.items[0].entityId).toBe(f.session);
+    await read(`/audit/operations/${hidden.correlation_id}`).expect(404);
+    const schedule = await request(app.getHttpServer()).post(base + '/jobs').auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'SCHEDULE_CHECK', payload: { sessionId: f.session } }).expect(201);
+    const billing = await request(app.getHttpServer()).post(base + '/jobs').auth(manager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'BILLING_GENERATE', payload: { studentId: f.student, periodId: randomUUID() } }).expect(201);
+    const jobs = await read('/jobs?pageSize=1').expect(200);
+    expect(jobs.body.total).toBe(1);
+    expect(jobs.body.items[0].id).toBe(schedule.body.id);
+    await read(`/jobs/${billing.body.id}`).expect(404);
+    const old = await runtime.read<{ total: number }>(scoped.accessToken, f.tenant, 'AUDIT', { page: 1 });
+    expect(old.total).toBeGreaterThanOrEqual(1);
+    expect(await runtime.read<{ total: number }>(scoped.accessToken, f.tenant, 'JOBS', { page: 1 })).toMatchObject({ total: 1 });
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp()
+      WHERE tenant_id=${f.tenant} AND membership_id=${scoped.member} AND revoked_at IS NULL`;
+    await read('/audit').expect(403);
+    await read('/jobs').expect(403);
+    await admin`DELETE FROM automation_jobs WHERE id IN (${schedule.body.id},${billing.body.id})`;
+  });
+
+  native('R8 N04 retry rejects unresolved, approved and leased work; concurrent requests serialize', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}`;
+    const created = await request(app.getHttpServer()).post(base + '/jobs').auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'SCHEDULE_CHECK', payload: { sessionId: f.session } }).expect(201);
+    const id = created.body.id as string, path = `${base}/jobs/${id}/retry`;
+    const post = (key = randomUUID()) => request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', key).send({ reason: 'Reviewed source', confirmed: true });
+    await admin`UPDATE automation_jobs SET status='NEEDS_INFORMATION',attempt_count=1,updated_at=clock_timestamp() WHERE id=${id}`;
+    await post().expect(403);
+    await admin`UPDATE automation_jobs SET status='PENDING_APPROVAL',updated_at=clock_timestamp() WHERE id=${id}`;
+    await post().expect(403);
+    await admin`UPDATE automation_jobs SET status='RUNNING',lease_owner='educore_r4_worker',lease_started_at=clock_timestamp(),
+      lease_until=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp() WHERE id=${id}`;
+    await post().expect(403);
+    await admin`UPDATE automation_jobs SET status='FAILED',lease_owner=NULL,lease_started_at=NULL,lease_until=NULL,
+      updated_at=clock_timestamp() WHERE id=${id}`;
+    const results = await Promise.all([post(), post()]);
+    expect(results.map((result) => result.status).sort((a, b) => a - b)).toEqual([200, 403]);
+    expect((await admin`SELECT status FROM automation_jobs WHERE id=${id}`)[0].status).toBe('READY');
+    await admin`DELETE FROM automation_jobs WHERE id=${id}`;
+  });
+
+  native('R8 N05 audit projection hides secret payload and does not mutate history', async () => {
+    const f = await fresh(), s = await sessionFor(f), correlation = randomUUID();
+    await admin`INSERT INTO audit_logs(id,tenant_id,actor_user_id,actor_membership_id,actor_kind,
+      event_type,entity_type,entity_id,action,reason,before_json,after_json,correlation_id)
+      VALUES(gen_random_uuid(),${f.tenant},${f.user},${f.member},'USER','R8_REDACTION','ClassSession',
+      ${f.session},'R8_REDACTION','Reviewed','{"password":"SECRET_CANARY"}'::jsonb,
+      '{"otp":"SECRET_CANARY"}'::jsonb,${correlation})`;
+    const [before] = await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant} AND correlation_id=${correlation}`;
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const list = await request(app.getHttpServer()).get(base + '/audit?eventType=R8_REDACTION')
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    const timeline = await request(app.getHttpServer()).get(base + `/audit/operations/${correlation}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    for (const response of [list, timeline]) {
+      expect(response.body.total).toBe(1);
+      expect(JSON.stringify(response.body)).not.toContain('SECRET_CANARY');
+      expect(response.body.items[0].before_json).toBeUndefined();
+      expect(response.body.items[0].after_json).toBeUndefined();
+      expect(response.body.items[0]).toMatchObject({ actorKind: 'USER', actorDisplay: expect.any(String), outcome: null });
+    }
+    const actor = encodeURIComponent(list.body.items[0].actorDisplay as string);
+    expect((await request(app.getHttpServer()).get(base + `/audit?eventType=R8_REDACTION&actor=${actor}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.total).toBe(1);
+    const [after] = await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant} AND correlation_id=${correlation}`;
+    expect(after.n).toBe(before.n);
+  });
+  native('R8 N06 committed root receipt blocks retry despite a stale failed status', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}`;
+    const created = await request(app.getHttpServer()).post(base + '/jobs').auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send({ kind: 'SCHEDULE_CHECK', payload: { sessionId: f.session } }).expect(201);
+    const claim = await worker.claim();
+    expect(claim?.id).toBe(created.body.id);
+    expect(((await worker.perform(claim!)) as { status: string }).status).toBe('COMPLETED');
+    const [receipt] = await admin`SELECT count(*)::int n FROM idempotency_records r JOIN automation_jobs j
+      ON r.tenant_id=j.tenant_id AND r.idempotency_key=j.operation_key
+      WHERE j.id=${created.body.id} AND r.operation_type='R4:JOB'`;
+    expect(receipt.n).toBe(1);
+    await admin`UPDATE automation_jobs SET status='FAILED',attempt_count=1,updated_at=clock_timestamp()
+      WHERE id=${created.body.id}`;
+    await request(app.getHttpServer()).post(base + `/jobs/${created.body.id}/retry`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Do not repeat an effect', confirmed: true }).expect(403);
+  });
+  native('R8 N07 failed job emits one authorized ADMIN_ALERT', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}`;
+    const created = await request(app.getHttpServer()).post(base + '/jobs').auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID())
+      .send({ kind: 'BILLING_GENERATE', payload: { studentId: f.student, periodId: randomUUID() } }).expect(201);
+    const claim = await worker.claim();
+    expect(claim?.id).toBe(created.body.id);
+    expect(((await worker.perform(claim!)) as { status: string }).status).toBe('FAILED');
+    const [event] = await admin`SELECT id FROM outbox_events WHERE tenant_id=${f.tenant}
+      AND aggregate_id=${created.body.id} AND event_type='ADMIN_ALERT'`;
+    expect(event.id).toBeTruthy();
+    for (let n = 0; n < 20 && (await admin`SELECT status FROM outbox_events WHERE id=${event.id}`)[0].status !== 'DONE'; n++)
+      await worker.dispatch();
+    const inbox = await request(app.getHttpServer()).get(base + '/notifications')
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(inbox.body.items.filter((row: { kind: string }) => row.kind === 'ADMIN_ALERT')).toHaveLength(1);
+    await admin`UPDATE outbox_events SET status='NEW' WHERE id=${event.id}`;
+    await worker.dispatch();
+    const [count] = await admin`SELECT count(*)::int n FROM notifications WHERE outbox_event_id=${event.id}`;
+    expect(count.n).toBe(1);
+  });
   const academicRead = <T = Record<string, unknown>>(token: string, tenant: string, kind: string,
     target?: string, search?: string, page = 1, size = 20) =>
     runtime.run<T>(token,
@@ -1804,7 +1996,7 @@ describe('R4 native PostgreSQL', () => {
     const authorization = `Bearer ${accountant.accessToken}`;
     const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .set('Authorization', authorization).expect(200);
-    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'OP04', 'OP05']);
+    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'GL01', 'OP04', 'OP05']);
     const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
       .set('Authorization', authorization).expect(403);
     expect(resource.body.code).toBe('FORBIDDEN');
@@ -3414,6 +3606,10 @@ describe('R4 native PostgreSQL', () => {
         .expect(200);
       await request(app.getHttpServer())
         .post(base + `/notifications/${id}/read`)
+        .auth(p.accessToken, { type: 'bearer' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(base + `/notifications/${id}/read`)
         .auth(teacher.accessToken, { type: 'bearer' })
         .expect(403);
       const teach = await request(app.getHttpServer())
@@ -3434,6 +3630,10 @@ describe('R4 native PostgreSQL', () => {
             .expect(200)
         ).body.total,
       ).toBe(0);
+      await request(app.getHttpServer())
+        .post(base + `/notifications/${id}/read`)
+        .auth(p.accessToken, { type: 'bearer' })
+        .expect(403);
       await runtime.iam(s.accessToken, f.tenant, {
         operation: 'ROLE_REVOKE',
         id: teacher.member,
@@ -4091,7 +4291,7 @@ describe('R4 native PostgreSQL', () => {
             .post(base + `/jobs/${j.body.id}/retry`)
             .auth(s.accessToken, { type: 'bearer' })
             .set('Idempotency-Key', key)
-            .send({ reason: 'Explicit operator retry' });
+            .send({ reason: 'Explicit operator retry', confirmed: true });
       expect((await retry().expect(200)).body.status).toBe('READY');
       expect((await retry().expect(200)).body.status).toBe('READY');
       const claim = await worker.claim();

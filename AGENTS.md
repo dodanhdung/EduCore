@@ -31,7 +31,7 @@ If missing, outdated, conflicting, or not merged: **report it**. Do not claim th
 3. Inspect repository state. State allowed file paths, expected outputs, acceptance tests, and unresolved questions. If an unresolved decision changes business behavior or security, **stop that part and ask for approval**; proceed only with independent safe work.
 4. Implement minimally, add meaningful tests, run available relevant checks, summarize what **actually ran** and what was skipped.
 5. Do not commit, push, create branch/PR, deploy, mutate Library or Figma unless user **explicitly authorizes the action**. **Any new file needs review before Git; user has explicitly required review-first for all new files.**
-6. After finishing a task, create one ZIP under `artifacts/` containing that task's modified and new files with repository-relative paths. Exclude generated/ignored files, secrets, `.git` and prior archives; list the ZIP and every new file for owner review. Do not commit the archive automatically.
+6. After finishing a task, create one ZIP under `artifacts/` containing that task's modified and new files with repository-relative paths. Exclude generated/ignored files, secrets, `.git` and prior archives; list the ZIP and every new file for owner review. If a review report is required, include its `.md` only inside the ZIP; do not create or leave a separate report `.md` under `artifacts/`. Do not commit the archive automatically.
 
 ## Completion format
 
