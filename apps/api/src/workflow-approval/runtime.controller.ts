@@ -40,6 +40,18 @@ function page(query: unknown) {
     }
   return out;
 }
+function filteredPage(input: unknown, fields: string[]) {
+  const b = object(input, ['page', 'pageSize', ...fields]);
+  const p: Record<string, string | number> = page({ page: b.page, pageSize: b.pageSize });
+  for (const key of fields) {
+    if (b[key] !== undefined) {
+      if (typeof b[key] !== 'string' || (b[key] as string).length > 100)
+        throw new BadRequestException('INVALID_FILTER');
+      p[key] = b[key] as string;
+    }
+  }
+  return p;
+}
 @Controller('api/v1/tenants/:tenantId')
 @UseGuards(SessionGuard)
 export class RuntimeController {
@@ -423,7 +435,9 @@ export class RuntimeController {
     @Param('tenantId') t: string,
     @Query() q: unknown,
   ) {
-    return this.read(a, t, 'AUDIT', page(q));
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.ops_audit($1::uuid,$2::jsonb) result',
+      uuid(t), JSON.stringify(filteredPage(q, ['eventType', 'entityType', 'entityId', 'actor', 'actorKind', 'from', 'to', 'outcome'])));
   }
   @Get('audit/operations/:correlationId') explain(
     @Headers('authorization') a: string | undefined,
@@ -431,21 +445,27 @@ export class RuntimeController {
     @Param('correlationId') id: string,
     @Query() q: unknown,
   ) {
-    return this.read(a, t, 'AUDIT', { ...page(q), correlationId: uuid(id) });
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.ops_audit($1::uuid,$2::jsonb) result',
+      uuid(t), JSON.stringify({ ...page(q), correlationId: uuid(id) }));
   }
   @Get('jobs') jobs(
     @Headers('authorization') a: string | undefined,
     @Param('tenantId') t: string,
     @Query() q: unknown,
   ) {
-    return this.read(a, t, 'JOBS', page(q));
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.ops_jobs($1::uuid,$2::jsonb) result',
+      uuid(t), JSON.stringify(filteredPage(q, ['status'])));
   }
   @Get('jobs/:id') job(
     @Headers('authorization') a: string | undefined,
     @Param('tenantId') t: string,
     @Param('id') id: string,
   ) {
-    return this.read(a, t, 'JOBS', { id: uuid(id) });
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.ops_jobs($1::uuid,$2::jsonb) result',
+      uuid(t), JSON.stringify({ id: uuid(id) }));
   }
   @Post('jobs/:id/retry') @HttpCode(200) retry(
     @Headers('authorization') a: string | undefined,
@@ -454,14 +474,16 @@ export class RuntimeController {
     @Param('id') id: string,
     @Body() input: unknown,
   ) {
-    const b = meta(input, [], key);
+    const b = object(input, ['reason', 'confirmed']);
+    if (b.confirmed !== true) throw new BadRequestException('CONFIRMATION_REQUIRED');
     return this.service.run(
       bearer(a),
-      'SELECT educore_r4.retry_job_request($1::uuid,$2::uuid,$3::text,$4::text) result',
+      'SELECT educore_r4.ops_retry($1::uuid,$2::uuid,$3::text,$4::text,$5::boolean) result',
       uuid(t),
       uuid(id),
-      b.reason,
-      b.key,
+      field(b, 'reason', 2000),
+      field({ key }, 'key', 200),
+      true,
     );
   }
   @Post('jobs') enqueue(
@@ -496,12 +518,14 @@ export class RuntimeController {
     @Param('tenantId') t: string,
     @Query() input: unknown,
   ) {
-    const q = page(input);
+    const q = filteredPage(input, ['unreadOnly']);
+    if (q.unreadOnly !== undefined && !['true', 'false'].includes(String(q.unreadOnly)))
+      throw new BadRequestException('INVALID_FILTER');
     return this.service.run(
       bearer(a),
-      'SELECT educore_r4.inbox($1::uuid,$2::text,NULL,$3::int,$4::int) result',
+      'SELECT educore_r4.ops_inbox($1::uuid,$2::boolean,$3::int,$4::int) result',
       uuid(t),
-      'LIST',
+      q.unreadOnly === 'true',
       q.page ?? 1,
       q.pageSize ?? 20,
     );

@@ -152,10 +152,10 @@ export async function browserAuthJourney(options: {
       const mobile = Array.from(document.querySelectorAll('.mobile-nav a')).map(a => a.getAttribute('href'));
       const expected = ${JSON.stringify(['settings/members', 'approvals', 'audit', 'operations/jobs'].map((suffix) => `/app/${options.tenantId}/${suffix}`))};
       return expected.every(path => desktop.includes(path) && mobile.includes(path))
-        && !desktop.some(path => path?.includes('/students') || path?.includes('/approvals/'))
-        && !mobile.some(path => path?.includes('/students') || path?.includes('/approvals/'));
+        && !desktop.some(path => path?.endsWith('/teacher') || path?.includes('/approvals/'))
+        && !mobile.some(path => path?.endsWith('/teacher') || path?.includes('/approvals/'));
     })()`);
-    await evaluate(`history.pushState(null, '', ${JSON.stringify(`/app/${options.tenantId}/students`)}); dispatchEvent(new PopStateEvent('popstate'))`);
+    await evaluate(`history.pushState(null, '', ${JSON.stringify(`/app/${options.tenantId}/teacher`)}); dispatchEvent(new PopStateEvent('popstate'))`);
     await until(() => evaluate<boolean>('!document.querySelector(".app-shell") && document.body.textContent.includes("Không đủ quyền")'), 'FORBIDDEN');
     await send('Page.navigate', { url: `${origin}/app/${options.tenantId}/me` }, sessionId);
     await until(() => evaluate<boolean>('!document.querySelector(".app-shell") && document.body.textContent.includes("Cần đăng nhập")'), 'RELOAD_FAIL_CLOSED');
