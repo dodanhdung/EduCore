@@ -126,8 +126,10 @@ SELECT json_build_object(
       # command-shell parsing on Windows.
       $nodeCommand = Get-Command node -ErrorAction Stop
       Push-Location -LiteralPath $apiRoot
-      try { & $nodeCommand.Source (Join-Path $apiRoot 'node_modules/vitest/vitest.mjs') run --config ./vitest.config.r4.ts -t $TestFilter }
-      finally { Pop-Location }
+      try {
+        $ErrorActionPreference = 'Continue'
+        & $nodeCommand.Source (Join-Path $apiRoot 'node_modules/vitest/vitest.mjs') run --config ./vitest.config.r4.ts -t $TestFilter
+      } finally { $ErrorActionPreference = 'Stop'; Pop-Location }
     }
     $environment.nativeTestExitCode = $LASTEXITCODE
     $environment.status = if ($LASTEXITCODE -eq 0) { 'SUITE_FINISHED_REVIEW_REQUIRED' } else { 'SUITE_FAILED_REVIEW_REQUIRED' }

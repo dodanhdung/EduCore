@@ -25,6 +25,11 @@ export type BrowserDriver = {
   select: (selector: string, value: string) => Promise<void>;
   login: (email: string, password: string, tenantId: string) => Promise<void>;
   viewport: (width: number, height: number, mobile: boolean) => Promise<void>;
+  deferResponse: (path: string) => Promise<{
+    waitPaused: () => Promise<number>;
+    release: () => Promise<boolean>;
+    waitSettled: () => Promise<'finished' | 'failed'>;
+  }>;
 };
 
 // Every response is a real browser network response. Only method/path/status are retained.
@@ -42,6 +47,7 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
   let browser: ChildProcess | undefined;
   let protocol: Protocol | undefined;
   let profile: string | undefined;
+  let releaseInterception: (() => Promise<void>) | undefined;
   try {
     if (!app.getHttpServer().address()) await app.listen(0, '127.0.0.1');
     const apiOrigin = `http://localhost:${(app.getHttpServer().address() as { port: number }).port}`;
@@ -85,10 +91,69 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
       if (result.exceptionDetails) throw Error('BROWSER_EVALUATION_FAILED');
       return result.result.value;
     };
+    const deferResponse: BrowserDriver['deferResponse'] = async (path) => {
+      if (releaseInterception || !path.startsWith('/api/v1/tenants/') || path.includes('?'))
+        throw Error('INVALID_RESPONSE_GATE');
+      const url = `${apiOrigin}${path}`;
+      let paused: { requestId: string; status: number } | undefined;
+      let networkId: string | undefined;
+      let settled: 'finished' | 'failed' | undefined;
+      let enabled = true;
+      const finish = async () => {
+        if (!enabled) return;
+        enabled = false;
+        if (paused) {
+          // A route change can abort the fetch while its response is paused.
+          await send('Fetch.continueResponse', { requestId: paused.requestId }, sessionId).catch(() => undefined);
+          paused = undefined;
+        }
+        await send('Fetch.disable', {}, sessionId).catch(() => undefined);
+        releaseInterception = undefined;
+      };
+      releaseInterception = finish;
+      protocol!.onEvent((event) => {
+        if (networkId && (event.method === 'Network.loadingFinished' || event.method === 'Network.loadingFailed')) {
+          const x = event.params as { requestId: string };
+          if (x.requestId === networkId) settled = event.method === 'Network.loadingFinished' ? 'finished' : 'failed';
+        }
+        if (!enabled || event.method !== 'Fetch.requestPaused') return;
+        const x = event.params as { requestId: string; networkId?: string;
+          request: { url: string; method: string }; responseStatusCode?: number };
+        if (x.request.url === url && x.request.method === 'GET' && x.responseStatusCode !== undefined) {
+          paused = { requestId: x.requestId, status: x.responseStatusCode };
+          networkId = x.networkId;
+        } else {
+          // Authorization preflights may match the same URL; they must proceed.
+          void send('Fetch.continueResponse', { requestId: x.requestId }, sessionId).catch(() => undefined);
+        }
+      });
+      await send('Fetch.enable', { patterns: [{ urlPattern: url, requestStage: 'Response' }] }, sessionId);
+      return {
+        waitPaused: async () => {
+          await until(async () => paused?.status ?? false, 'REAL_RESPONSE_PAUSED');
+          return paused!.status;
+        },
+        release: async () => {
+          if (!paused) throw Error('RESPONSE_NOT_PAUSED');
+          const requestId = paused.requestId;
+          paused = undefined;
+          // A canceled fetch may reject this command; the gate is still released.
+          const resumed = await send('Fetch.continueResponse', { requestId }, sessionId)
+            .then(() => true, () => false);
+          await finish();
+          return resumed;
+        },
+        waitSettled: async () => {
+          await until(async () => settled ?? false, 'DEFERRED_RESPONSE_SETTLED');
+          return settled!;
+        },
+      };
+    };
     await send('Page.enable', {}, sessionId);
     await send('Network.enable', {}, sessionId);
     const driver: BrowserDriver = {
       origin, apiOrigin, browserVersion: version.product, network, evaluate,
+      deferResponse,
       navigate: async (path) => { await send('Page.navigate', { url: `${origin}${path}` }, sessionId); },
       route: async (path) => { await evaluate(`history.pushState(null, '', ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent('popstate'))`); },
       wait: async (expression, label) => { await until(() => evaluate<boolean>(expression), label); },
@@ -126,6 +191,7 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
     };
     return await run(driver);
   } finally {
+    await releaseInterception?.();
     if (protocol) { await protocol.send('Browser.close').catch(() => undefined); protocol.close(); }
     if (browser && browser.exitCode === null) browser.kill();
     await vite?.close();
