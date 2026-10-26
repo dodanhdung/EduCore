@@ -4,8 +4,15 @@ import type { BillingInvoice, StudentWallet } from '../Billing & Receivables/Bil
 export type PortalSession = { id: string; studentIds: string[]; teacherId: string; classId: string; className: string; startsAt: string; endsAt: string; room: string; status: 'CONFIRMED' | 'CANCELLED'; attendance: 'CONFIRMED' | 'PENDING' | 'LOCKED' | 'NOT_DUE' }
 export type ChildLink = { studentId: string; name: string; status: 'VERIFIED' | 'REVOKED' | 'INACTIVE' | 'UNVERIFIED' }
 export type PortalNotice = { id: string; recipientId: string; text: string; occurredAt: string }
+export type PortalSectionState = 'ready' | 'forbidden' | 'error'
+export type PortalSection = 'attendance' | 'teaching' | 'grading' | 'schedule' | 'assignments' | 'notifications'
+export function sectionMessage(state: PortalSectionState | undefined, label: string) {
+  return state === 'forbidden' ? `Chưa có quyền xem ${label}.`
+    : state === 'error' ? `Không thể tải ${label}. Vui lòng thử lại.` : null
+}
 export type PortalData = {
   availability?: { schedule: boolean; assignments: boolean; grades: boolean; leave: boolean };
+  sectionStates?: Partial<Record<PortalSection, PortalSectionState>>;
   scope?: { viewerId: string; tenantId: string };
   sampleNow: string; timeZone: string; teacherId: string; teacherName: string; studentId: string; studentName: string;
   sessions: PortalSession[]; assignments: AssignmentData; links: ChildLink[];

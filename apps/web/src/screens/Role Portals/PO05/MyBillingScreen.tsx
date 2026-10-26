@@ -18,8 +18,11 @@ export function MyBillingScreen({ data, mode, studentId, initialChildId, viewerI
     const selected = live.selectedId
     const rows = billing?.invoices ?? null
     const invoices = rows ?? []
-    const sum = (key: 'netObligationVnd' | 'allocatedVnd' | 'outstandingVnd') =>
-      billing?.totals?.[key] ?? invoices.reduce((value, row) => value + BigInt(row[key]), 0n).toString()
+    const invoiceCount = billing?.invoiceCount ?? invoices.length
+    const total = (key: 'netObligationVnd' | 'allocatedVnd' | 'outstandingVnd') => {
+      const value = billing?.totals?.[key]
+      return value === undefined ? 'Chưa có dữ liệu tổng hợp' : <PortalMoney value={value} />
+    }
     return <PortalPage title="Học phí của tôi / của con" detail="Chỉ xem · hóa đơn đã phát hành">
       {context.children.length > 0 && <PortalCard title="Chọn học sinh"><label className="portal-label" htmlFor="live-billing-child">Học sinh</label>
         <select className="portal-select" id="live-billing-child" value={selected ?? ''} onChange={e => live.onSelectChild(e.target.value)}>
@@ -27,18 +30,18 @@ export function MyBillingScreen({ data, mode, studentId, initialChildId, viewerI
         </select></PortalCard>}
       {!selected ? <PortalState title="Không có học sinh được phép xem">Chưa có hồ sơ học sinh hiện hành.</PortalState>
         : billing?.status !== 'PARTIAL' || rows === null ? <PortalState title="Dữ liệu tài chính chưa khả dụng">Quyền xem hóa đơn và công nợ hiện hành chưa đủ cho học sinh này.</PortalState>
-          : <><div className="portal-grid"><div className="portal-card portal-kpi"><span>Hóa đơn đã phát hành</span><strong>{billing.invoiceCount ?? invoices.length}</strong></div>
-              <div className="portal-card portal-kpi"><span>Còn phải thu</span><strong><PortalMoney value={sum('outstandingVnd')} /></strong></div>
+          : <><div className="portal-grid"><div className="portal-card portal-kpi"><span>Hóa đơn đã phát hành</span><strong>{invoiceCount}</strong></div>
+              <div className="portal-card portal-kpi"><span>Còn phải thu</span><strong>{total('outstandingVnd')}</strong></div>
               <div className="portal-card portal-kpi"><span>Số dư ví</span><strong>Chưa có quyền xem</strong></div></div>
-            <PortalCard title="Nghĩa vụ và phân bổ"><p>Nghĩa vụ ròng: <PortalMoney value={sum('netObligationVnd')} /></p>
-              <p>Đã phân bổ ròng: <PortalMoney value={sum('allocatedVnd')} /></p>
+            <PortalCard title="Nghĩa vụ và phân bổ"><p>Nghĩa vụ ròng: {total('netObligationVnd')}</p>
+              <p>Đã phân bổ ròng: {total('allocatedVnd')}</p>
               <p className="portal-muted">Số dư ví chưa sử dụng không làm giảm khoản còn phải thu.</p></PortalCard>
-            <PortalCard title="Hóa đơn đã phát hành">{invoices.length ? <div className="portal-table-scroll"><table className="portal-table">
+            <PortalCard title="Hóa đơn đã phát hành">{invoiceCount > invoices.length && <p className="portal-notice" role="status">Đang hiển thị {invoices.length}/{invoiceCount} hóa đơn đã phát hành.</p>}{invoices.length ? <div className="portal-table-scroll"><table className="portal-table">
               <thead><tr><th>Số hóa đơn</th><th>Hạn</th><th>Nghĩa vụ ròng</th><th>Đã phân bổ</th><th>Còn phải thu</th></tr></thead>
               <tbody>{invoices.map(row => <tr key={row.id}><td>{row.number ?? row.id}</td><td>{row.dueAt ?? 'Chưa có'}</td>
                 <td><PortalMoney value={row.netObligationVnd} /></td><td><PortalMoney value={row.allocatedVnd} /></td>
                 <td><PortalMoney value={row.outstandingVnd} /></td></tr>)}</tbody></table></div>
-              : <p>Chưa có hóa đơn đã phát hành.</p>}</PortalCard>
+              : <p>{invoiceCount === 0 ? 'Chưa có hóa đơn đã phát hành.' : 'Danh sách hóa đơn chưa khả dụng.'}</p>}</PortalCard>
             <PortalCard title="Ví và lịch sử giao dịch"><p>Chưa có hợp đồng đọc ví và lịch sử giao dịch cho Student/Parent.</p></PortalCard>
           </>}
     </PortalPage>

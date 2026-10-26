@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { tenantPath } from '../../routes.ts'
-import type { PortalData, PortalSession } from './PortalTypes.ts'
+import type { PortalData, PortalSectionState, PortalSession } from './PortalTypes.ts'
 import { PortalState } from './PortalPrimitives.tsx'
 import { TeacherHomeScreen } from './PO01/TeacherHomeScreen.tsx'
 import { StudentHomeScreen } from './PO02/StudentHomeScreen.tsx'
@@ -32,8 +32,18 @@ type Child = { id: string; name: string; timeZone: string; asOf: string;
   assignments: { id: string; title: string; deadlineAt: string; className: string | null; score: string | null }[];
   leaves: { id: string; status: string; submittedAt: string; sessionId: string }[] | null }
 type Notice = { id: string; title: string; body: string; createdAt: string }
-type Payload = { key: string; context: Context; data: PortalData; billing?: LiveBilling | null; truncated?: boolean }
+type Payload = { key: string; context: Context; data: PortalData; billing?: LiveBilling | null;
+  billingState?: PortalSectionState; truncated?: boolean }
 const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
+
+type Optional<T> = { state: 'ready'; value: T } | { state: 'forbidden' | 'error' }
+async function optionalRead<T>(work: Promise<T>, fatalStatuses: readonly number[] = []): Promise<Optional<T>> {
+  try { return { state: 'ready', value: await work } }
+  catch (cause) {
+    if (cause instanceof ApiError && (cause.status === 401 || fatalStatuses.includes(cause.status))) throw cause
+    return { state: cause instanceof ApiError && cause.status === 403 ? 'forbidden' : 'error' }
+  }
+}
 
 function emptyData(context: Context, viewerId: string): PortalData {
   return { scope: { viewerId, tenantId: context.tenantId }, sampleNow: context.asOf, timeZone: context.timeZone,
@@ -99,6 +109,7 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
         if (context.tenantId !== tenantId) throw new ApiError(502, 'INVALID_CONTEXT')
         const data = emptyData(context, viewerId)
         let billing: LiveBilling | null | undefined
+        let billingState: PortalSectionState | undefined
         let truncated = false
         if (id === 'PO01') {
           if (!context.teacher) throw new ApiError(403, 'TEACHER_NOT_ACTIVE')
@@ -106,46 +117,58 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
           const from = new Date(Date.now() - 86400_000).toISOString()
           const to = new Date(Date.now() + 29 * 86400_000).toISOString()
           const range = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&pageSize=100`
-          const [calendar, attendance, assignments, classes, grading] = await Promise.all([
-            read<Page<Session>>('/portal/teacher-sessions', abort.signal),
-            read<Page<Due>>(`/attendance/due${range}`, abort.signal),
-            read<Teaching[]>('/teaching/assignments', abort.signal),
-            read<{ classes: { id: string; name: string }[] }>('/teaching/assignment-classes', abort.signal),
-            read<Page<Queue>>('/grading/queue', abort.signal),
+          const calendar = await read<Page<Session>>('/portal/teacher-sessions', abort.signal)
+          const [attendance, assignments, classes, grading] = await Promise.all([
+            optionalRead(read<Page<Due>>(`/attendance/due${range}`, abort.signal)),
+            optionalRead(read<Teaching[]>('/teaching/assignments', abort.signal)),
+            optionalRead(read<{ classes: { id: string; name: string }[] }>('/teaching/assignment-classes', abort.signal)),
+            optionalRead(read<Page<Queue>>('/grading/queue', abort.signal)),
           ])
-          truncated = calendar.total > 100 || attendance.total > 100 || grading.total > grading.items.length
-          const names = new Map(classes.classes.map(row => [row.id, row.name]))
-          data.sessions = sessionRows(calendar.items.filter(row => row.teacherId === context.teacher!.id), '', attendance.items)
-          data.assignments.assignments = assignments.filter(row => row.created_by_teacher_id === context.teacher!.id)
-            .map(row => ({ id: row.id, title: row.title, description: row.description, classId: row.class_id ?? '',
-              className: names.get(row.class_id ?? '') ?? '', teacherId: context.teacher!.id, teacherName: context.teacher!.name,
-              recipientIds: [], deadline: row.deadline_at, priority: row.priority,
-              status: row.status === 'ARCHIVED' ? 'CLOSED' as const : row.status as 'DRAFT' | 'PUBLISHED' }))
-          data.assignments.submissions = grading.items.filter(row => row.studentId && row.gradeStatus !== 'PUBLISHED').map(row => ({
-            id: row.submissionId, assignmentId: row.assignmentId, studentId: row.studentId,
-            studentName: '', versions: [{ number: row.versionNo, submittedAt: row.submittedAt, late: false, files: [] }],
-          }))
+          const teachingState = assignments.state === 'ready' && classes.state === 'ready' ? 'ready'
+            : assignments.state === 'forbidden' || classes.state === 'forbidden' ? 'forbidden' : 'error'
+          data.sectionStates = { attendance: attendance.state, teaching: teachingState, grading: grading.state }
+          truncated = calendar.total > 100
+            || attendance.state === 'ready' && attendance.value.total > attendance.value.items.length
+            || grading.state === 'ready' && grading.value.total > grading.value.items.length
+          data.sessions = sessionRows(calendar.items.filter(row => row.teacherId === context.teacher!.id), '',
+            attendance.state === 'ready' ? attendance.value.items : [])
+          if (assignments.state === 'ready' && classes.state === 'ready') {
+            const names = new Map(classes.value.classes.map(row => [row.id, row.name]))
+            data.assignments.assignments = assignments.value.filter(row => row.created_by_teacher_id === context.teacher!.id)
+              .map(row => ({ id: row.id, title: row.title, description: row.description, classId: row.class_id ?? '',
+                className: names.get(row.class_id ?? '') ?? '', teacherId: context.teacher!.id, teacherName: context.teacher!.name,
+                recipientIds: [], deadline: row.deadline_at, priority: row.priority,
+                status: row.status === 'ARCHIVED' ? 'CLOSED' as const : row.status as 'DRAFT' | 'PUBLISHED' }))
+          }
+          if (grading.state === 'ready') data.assignments.submissions = grading.value.items
+            .filter(row => row.studentId && row.gradeStatus !== 'PUBLISHED').map(row => ({
+              id: row.submissionId, assignmentId: row.assignmentId, studentId: row.studentId,
+              studentName: '', versions: [{ number: row.versionNo, submittedAt: row.submittedAt, late: false, files: [] }],
+            }))
         } else if (id === 'PO02') {
           if (!context.student) throw new ApiError(403, 'STUDENT_NOT_ACTIVE')
           data.studentId = context.student.id; data.studentName = context.student.name
           const [calendar, mine, inbox] = await Promise.all([
-            read<Page<Session>>('/portal/student-sessions', abort.signal),
-            read<{ items: Mine[] }>('/my/assignments', abort.signal),
-            read<Page<Notice>>('/notifications?pageSize=20', abort.signal),
+            optionalRead(read<Page<Session>>('/portal/student-sessions', abort.signal)),
+            optionalRead(read<{ items: Mine[] }>('/my/assignments', abort.signal)),
+            optionalRead(read<Page<Notice>>('/notifications?pageSize=20', abort.signal)),
           ])
-          truncated = calendar.total > 100
-          data.sessions = sessionRows(calendar.items, context.student.id)
-          data.assignments.assignments = mine.items.map(row => ({ id: row.id, title: row.title,
+          data.sectionStates = { schedule: calendar.state, assignments: mine.state, notifications: inbox.state }
+          truncated = calendar.state === 'ready' && calendar.value.total > calendar.value.items.length
+          if (calendar.state === 'ready') data.sessions = sessionRows(calendar.value.items, context.student.id)
+          if (mine.state === 'ready') {
+            data.assignments.assignments = mine.value.items.map(row => ({ id: row.id, title: row.title,
             description: row.description, classId: '', className: row.className ?? '', teacherId: '', teacherName: '',
             recipientIds: [context.student!.id], deadline: row.deadlineAt, priority: row.priority,
             status: row.status === 'ARCHIVED' ? 'CLOSED' as const : 'PUBLISHED' as const }))
-          data.assignments.submissions = mine.items.filter(row => row.submissionId).map(row => ({
+            data.assignments.submissions = mine.value.items.filter(row => row.submissionId).map(row => ({
             id: row.submissionId!, assignmentId: row.id, studentId: context.student!.id,
             studentName: context.student!.name, versions: row.versionNo ? [{ number: row.versionNo,
               submittedAt: row.submittedAt ?? '', late: false, files: [] }] : [],
             grade: row.score === null ? undefined : { status: 'PUBLISHED', score: Number(row.score), feedback: row.feedback ?? '' },
-          }))
-          data.notices = inbox.items.map(row => ({ id: row.id, recipientId: context.student!.id,
+            }))
+          }
+          if (inbox.state === 'ready') data.notices = inbox.value.items.map(row => ({ id: row.id, recipientId: context.student!.id,
             text: `${row.title}: ${row.body}`, occurredAt: row.createdAt }))
         } else {
           const current = chosen ?? context.children[0]?.id ?? (id === 'PO05' ? context.student?.id : undefined)
@@ -154,10 +177,17 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
             Object.assign(data, childData(context, child, viewerId))
           }
           if (current && (id === 'PO03' || id === 'PO05')) {
-            billing = await read<LiveBilling>(`/portal/billing/${encodeURIComponent(current)}`, abort.signal)
+            if (id === 'PO03') {
+              const result = await optionalRead(read<LiveBilling>(`/portal/billing/${encodeURIComponent(current)}`, abort.signal), [403, 404])
+              billingState = result.state
+              if (result.state === 'ready') {
+                billing = result.value
+                if (billing.status === 'UNAVAILABLE') billingState = 'forbidden'
+              }
+            } else billing = await read<LiveBilling>(`/portal/billing/${encodeURIComponent(current)}`, abort.signal)
           }
         }
-        if (!abort.signal.aborted) { setPayload({ key, context, data, billing, truncated }); setLoading(false) }
+        if (!abort.signal.aborted) { setPayload({ key, context, data, billing, billingState, truncated }); setLoading(false) }
       } catch (cause) { if (!abort.signal.aborted) { setError(cause); setLoading(false) } }
     })()
     return () => abort.abort()
@@ -175,7 +205,8 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
   if (id === 'PO01') return <>{notice}<TeacherHomeScreen data={data} teacherId={context.teacher?.id} navigate={navigate} path={path} production /></>
   if (id === 'PO02') return <>{notice}<StudentHomeScreen data={data} studentId={context.student?.id} navigate={navigate} path={path} /></>
   if (id === 'PO03') return context.children.length ? <ParentHomeScreen data={data} viewerId={viewerId} tenantId={tenantId}
-    initialChildId={chosenId} onSelectChild={changeChild} billingAvailable={billing?.status === 'PARTIAL'} debtVnd={debt}
+    initialChildId={chosenId} onSelectChild={changeChild} billingAvailable={billing?.status === 'PARTIAL'}
+    billingState={current.billingState} debtVnd={debt}
     production navigate={navigate} path={path} onOpenBilling={allowed.includes('PO05') && billing?.status === 'PARTIAL'
       ? studentId => { onChooseChild?.(studentId); navigate(tenantPath(tenantId, '/my/billing')) } : undefined} />
     : <PortalState title="Chưa có liên kết đã xác minh">Không có học sinh được phép xem trong trung tâm này.</PortalState>

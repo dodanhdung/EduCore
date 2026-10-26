@@ -560,6 +560,85 @@ describe('R4 native PostgreSQL', () => {
     expect((await get('/context').expect(200)).body.children).toEqual([]);
   });
 
+  native('R8 H01 selector requires verified Parent scope despite another active role', async () => {
+    const f = await fresh(), other = await fresh();
+    const parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    const linkA = await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+      parent_membership_id: parent.member, student_id: f.student, relationship: 'PARENT',
+      verified_at: new Date(), verified_by_membership_id: f.member });
+    const linkB = await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+      parent_membership_id: parent.member, student_id: f.student2, relationship: 'PARENT' });
+    const scopeB = await put(admin as unknown as Query, 'access_scopes', {
+      tenant_id: f.tenant, membership_role_id: parent.assignment,
+      scope_kind: 'STUDENT', student_id: f.student2,
+    });
+    const base = `/api/v1/tenants/${f.tenant}/portal`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(parent.accessToken, { type: 'bearer' });
+    const children = async () => (await get('/context').expect(200)).body.children.map((row: { id: string }) => row.id);
+    expect(await children()).toEqual([f.student]);
+    await get(`/children/${f.student2}`).expect(404);
+    await admin`UPDATE parent_student_links SET verified_at=clock_timestamp(),
+      verified_by_membership_id=${f.member} WHERE id=${linkB}`;
+    expect(await children()).toEqual([f.student, f.student2]);
+    await admin`DELETE FROM access_scopes WHERE id=${scopeB}`;
+    expect(await children()).toEqual([f.student]);
+    const [staffRole] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACADEMIC_STAFF'`;
+    const staffGrant = await put(admin as unknown as Query, 'membership_roles', {
+      tenant_id: f.tenant, membership_id: parent.member, role_id: staffRole.id,
+      assigned_by_membership_id: f.member,
+    });
+    await put(admin as unknown as Query, 'access_scopes', {
+      tenant_id: f.tenant, membership_role_id: staffGrant, scope_kind: 'TENANT',
+    });
+    expect(await children()).toEqual([f.student]);
+    await get(`/children/${f.student2}`).expect(404);
+    await get(`/billing/${f.student2}`).expect(404);
+    await get(`/children/${other.student}`).expect(404);
+    await get(`/billing/${other.student}`).expect(404);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${parent.assignment}`;
+    expect(await children()).toEqual([]);
+    await get(`/children/${f.student}`).expect(404);
+    await get(`/billing/${f.student}`).expect(404);
+    await admin`UPDATE parent_student_links SET revoked_at=clock_timestamp() WHERE id=${linkA}`;
+    expect(await children()).toEqual([]);
+  });
+
+  native('R8 H02 selector hides metadata when every effective child read is revoked', async () => {
+    const f = await fresh();
+    const parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+      parent_membership_id: parent.member, student_id: f.student, relationship: 'PARENT',
+      verified_at: new Date(), verified_by_membership_id: f.member });
+    const base = `/api/v1/tenants/${f.tenant}/portal`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(parent.accessToken, { type: 'bearer' });
+    expect((await get('/context').expect(200)).body.children.map((row: { id: string }) => row.id)).toEqual([f.student]);
+    await admin`DELETE FROM role_permissions rp USING roles r, permissions p
+      WHERE rp.tenant_id=${f.tenant} AND rp.role_id=r.id AND rp.permission_id=p.id
+        AND r.tenant_id=${f.tenant} AND r.code='PARENT'
+        AND p.code IN ('schedule.read','attendance.read','absence.read','assignment.read',
+          'grade.read_published','invoice.read','receivable.read')`;
+    const hidden = await get('/context').expect(200);
+    const [childName] = await admin`SELECT full_name FROM student_profiles WHERE id=${f.student}`;
+    expect(hidden.body.children).toEqual([]);
+    expect(JSON.stringify(hidden.body)).not.toContain(f.student);
+    expect(JSON.stringify(hidden.body)).not.toContain(childName.full_name);
+    await get(`/children/${f.student}`).expect(404);
+    await get(`/billing/${f.student}`).expect(404);
+    const [parentRole, invoicePermission, receivablePermission] = await Promise.all([
+      admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='PARENT'`,
+      admin`SELECT id FROM permissions WHERE code='invoice.read'`,
+      admin`SELECT id FROM permissions WHERE code='receivable.read'`,
+    ]);
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${parentRole[0].id},${invoicePermission[0].id})`;
+    expect((await get('/context').expect(200)).body.children).toEqual([]);
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${parentRole[0].id},${receivablePermission[0].id})`;
+    expect((await get('/context').expect(200)).body.children.map((row: { id: string }) => row.id)).toEqual([f.student]);
+  });
+
   native('R8 P03 class scope is partial and Student finance stays unavailable', async () => {
     const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
     const scoped = await actor(f, 'MANAGER', 'CLASS', f.classId);
