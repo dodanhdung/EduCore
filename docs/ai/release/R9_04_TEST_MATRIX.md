@@ -48,3 +48,22 @@ Baseline is the owner's committed checkpoint `6b24f86`; the follow-up source/tes
 | `pnpm.cmd --dir apps/api exec tsc --noEmit --allowImportingTsExtensions`, `pnpm.cmd --dir apps/api build`, `pnpm.cmd --dir apps/api lint`, `git diff --check` | PASS | N/A | Current follow-up checkout. |
 
 Web tests/build, hosted GitHub CI, guided six-actor demo, mobile financial browser and deployment rehearsal were **NOT RUN** in this follow-up. R1b/R2/R3/R5/R6 native suites were also **NOT RERUN**: the current changes are R4 test verification, standalone R8 runner/configuration and documentation only; no production SQL, auth, finance, shared frontend or API behavior changed. Prior PASS evidence above remains tied to its earlier tested checkout. The full R4 FAIL keeps the automated regression gate **PARTIAL**.
+
+## Final MVP pilot preparation — 27 October 2026
+
+This section is a **new** checkpoint at tracked HEAD `6d274fda8a5606519b0ad84e7fa864bec4cb4f24`; earlier tables remain historical. Four OTP owner-decision files were already untracked before this task and were preserved. Current task changed only a new disposable pilot-smoke runner and release documents/evidence. The approved R9.3 TS2322 finance-browser callbacks already use `async () => b.network.some(...)`; no duplicate fix was made.
+
+| Check actually run this task | Result | Limit |
+| --- | --- | --- |
+| `pnpm.cmd install --frozen-lockfile --offline` | PASS | Existing cache; initial sandbox store-lock denial resolved by authorized local rerun. Clean empty-cache network install NOT RUN. |
+| Prisma validate/generate; migration manifest | PASS; manifest 1/1 | Local schema and generated client. |
+| API `tsc --noEmit --allowImportingTsExtensions`, unit, E2E, R1b WASM, build, lint | PASS; 102/102, 1/1, 15/15 | Local CI equivalents only. |
+| Web tests/build/lint | PASS; 290/290; lint exit 0 with 11 existing warnings | Production build generated; a subsequent isolated Edge render of the built login form PASS. No authenticated built-Web E2E. |
+| Fresh `apps/api/test/pilot/start-pilot-smoke.ps1` | PASS backend startup and HTTP smoke on new `educore-pilot-smoke-4004c2408fc84a458884310cd2e5a539` | Built API entry, built Web preview, 50 migrations, four restricted roles, synthetic Manager, local fake SMTP/OTP worker; see `R9_04_PILOT_SMOKE_EVIDENCE.json`. Development-mode worker only. |
+| First pilot-smoke runner attempt | FAIL runner stderr handling after fresh DB admission | Separate retained `educore-pilot-smoke-505de87e8dee4925a7213ceab39b5e29`; PowerShell treated normal Prisma config stderr as exception. Corrected runner, used a **new** cluster; no production defect inferred. |
+| Built-Web Edge login DOM | PASS in focused follow-up | Initial headless dump captured HTML before React mounted and a sandboxed CDP attempt did not complete. A later isolated elevated Edge check rendered `#login-email` from the built preview (7521 DOM bytes). No browser login/API integration in that check. |
+| `git diff --check` and packet/JSON checks | PASS | New untracked files separately validated. |
+
+Fresh smoke HTTP: login/select-tenant/navigation/dashboard `200`; wrong-tenant overview `403`; known and unknown OTP request `202`; synthetic local recovery delivery `ACCEPTED_BY_SMTP`; logout `204`, old-token overview `401`. Neither real email nor a production-mode OTP worker was run. The current worker explicitly refuses `NODE_ENV=production`; any real-user pilot recovery requires separate owner-approved resolution. The previous full R4 result stays **155/156, one OTP timing FAIL** and `R9_04_REGRESSION_GATE_PARTIAL`. R1b/R2/R3/R5/R6 native, R8 standalone and F-B01/02/03 Edge are **PREVIOUSLY_VERIFIED** at the stated checkpoints and were not rerun because production/SQL contracts did not change. Hosted GitHub Actions, guided six-actor session, target deployment/restore and mobile finance Edge remain **NOT RUN**.
+
+Pilot decision packet: `R9_04_MVP_PILOT_ACCEPTANCE.md`, `R9_04_PILOT_SMOKE_EVIDENCE.json`, `R9_04_MVP_RISK_REGISTER.md`, `R9_04_PILOT_OPERATIONS_RUNBOOK.md`, `R9_04_R9_CLOSURE_PROPOSAL.md`. Verdict `R9_04_MVP_PILOT_PARTIAL`; closure recommendation `R9_CLOSURE_CONDITIONAL`, subject to explicit owner gates. No `R9_COMPLETE_MVP_PILOT_READY` claim.
