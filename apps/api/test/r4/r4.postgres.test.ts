@@ -2200,7 +2200,7 @@ describe('R4 native PostgreSQL', () => {
     const authorization = `Bearer ${accountant.accessToken}`;
     const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .set('Authorization', authorization).expect(200);
-    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'G01', 'GL01', 'OP04', 'OP05']);
+    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL09', 'G01', 'GL01', 'OP04', 'OP05']);
     const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
       .set('Authorization', authorization).expect(403);
     expect(resource.body.code).toBe('FORBIDDEN');
@@ -3205,7 +3205,11 @@ describe('R4 native PostgreSQL', () => {
     expect(wallet.body.walletDebitsVnd).toBe('300000');
     expect(wallet.body.internalCreditsVnd).toBe('0');
     expect(wallet.body.transactions.map((tx: { kind: string }) => tx.kind)).toEqual(['INVOICE_PAYMENT', 'TOP_UP']);
-    expect(wallet.body.invoices[0].netAllocatedVnd).toBe('300000');
+    expect(wallet.body).not.toHaveProperty('invoices');
+    const receivables = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/receivables`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(receivables.body.invoices[0].netAllocatedVnd).toBe('300000');
+    expect(receivables.body.invoices[0]).not.toHaveProperty('payments');
     const due = await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
       .auth(s.accessToken, { type: 'bearer' }).expect(200);
     expect(due.body.outstandingVnd).toBe('500000');
@@ -3221,6 +3225,126 @@ describe('R4 native PostgreSQL', () => {
     await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/outcomes/PAY/${payKey}`)
       .auth(learner.accessToken, { type: 'bearer' }).expect(403);
     expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(1);
+  });
+  native('R9 N01 finance navigation and split projections enforce TENANT/STUDENT, not CLASS', async () => {
+    const { f, invoice } = await issuedFixture();
+    const payment = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id NOT IN (SELECT id FROM permissions WHERE code='payment.read')`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(payment.accessToken, { type: 'bearer' });
+    const nav = await get('/access/navigation').expect(200);
+    expect(nav.body.screenIds).toContain('BL09');
+    expect(nav.body.screenIds).not.toContain('BL10');
+    expect((await get('/finance/students?page=1&pageSize=20').expect(200)).body)
+      .toMatchObject({ total: 1, items: [{ id: f.student }] });
+    const wallet = await get(`/finance/students/${f.student}`).expect(200);
+    expect(wallet.body).toHaveProperty('balanceVnd');
+    expect(wallet.body).not.toHaveProperty('invoices');
+    expect(wallet.body).not.toHaveProperty('canAdjust');
+    await get(`/finance/students/${f.student}/receivables`).expect(403);
+    await get(`/finance/students/${f.student2}`).expect(403);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(payment.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic', reason: 'Denied', confirmed: true }).expect(403);
+    const other = await fresh();
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/finance/students/${f.student}`)
+      .auth(payment.accessToken, { type: 'bearer' }).expect(403);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}`;
+    const [receivablePermission] = await admin`SELECT id FROM permissions WHERE code='receivable.read'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${receivablePermission.id})`;
+    const summary = (await get(`/finance/students/${f.student}/receivables`).expect(200)).body.invoices[0];
+    expect(summary.id).toBe(invoice);
+    expect(summary.canOpenDetail).toBe(false);
+    expect(summary).not.toHaveProperty('payments');
+    await get(`/finance/students/${f.student}`).expect(403);
+    await put(admin as unknown as Query, 'enrollments', { tenant_id: f.tenant,
+      student_id: f.student, class_id: f.class2, status: 'ACTIVE',
+      effective_from: '2020-01-01T00:00:00Z', created_by_membership_id: f.member });
+    const classActor = await actor(f, 'MANAGER', 'CLASS', f.class2);
+    const classGet = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(classActor.accessToken, { type: 'bearer' });
+    const classNav = await classGet('/access/navigation').expect(200);
+    expect(classNav.body.screenIds).not.toContain('BL09');
+    expect(classNav.body.screenIds).not.toContain('BL10');
+    await classGet('/finance/students').expect(403);
+    await classGet(`/finance/students/${f.student}`).expect(403);
+    await classGet(`/finance/students/${f.student}/receivables`).expect(403);
+    await classGet(`/finance/invoices/${invoice}/request-preview`).expect(403);
+    await classGet(`/billing/invoices/${invoice}`).expect(403);
+    // Known R2 contract exposure: the invoice was generated from classId, yet
+    // a class2-only grant can read its aggregate financial state. This is a
+    // release blocker, not an assertion that the behavior is acceptable.
+    const crossClass = await classGet(`/invoices/${invoice}/receivable`).expect(200);
+    expect(crossClass.body.invoiceId).toBe(invoice);
+    const crossClassWallet = await classGet(`/students/${f.student}/wallet`).expect(200);
+    expect(crossClassWallet.body).toHaveProperty('balanceVnd');
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic class-scope probe', reason: 'Cross-class probe', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-1000', reason: 'Cross-class probe' }).expect(201);
+  });
+  native('R9 N02 invoice preview binds all rights to one student and excludes wallet data', async () => {
+    const { f, invoice } = await issuedFixture();
+    const scoped = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(scoped.accessToken, { type: 'bearer' });
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id NOT IN (SELECT id FROM permissions WHERE code IN ('billing.read','invoice.read'))`;
+    const path = `/finance/invoices/${invoice}/request-preview`;
+    const readOnly = await get(path).expect(200);
+    expect(readOnly.body).toMatchObject({ invoiceId: invoice, studentId: f.student,
+      originalTotalVnd: '800000', canRequestAdjustment: false, canRequestCancellation: false });
+    expect(readOnly.body).not.toHaveProperty('balanceVnd');
+    expect(readOnly.body).not.toHaveProperty('transactions');
+    await get(`/finance/invoices/${randomUUID()}/request-preview`).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    const [adjustPermission] = await admin`SELECT id FROM permissions WHERE code='invoice.adjust_request'`;
+    const unrelatedRole = await put(admin as unknown as Query, 'roles', {
+      tenant_id: f.tenant, code: 'FIN_UNRELATED_TEST', name: 'Unrelated action scope' });
+    await put(admin as unknown as Query, 'role_permissions', { tenant_id: f.tenant,
+      role_id: unrelatedRole, permission_id: adjustPermission.id });
+    const unrelatedAssignment = await put(admin as unknown as Query, 'membership_roles', {
+      tenant_id: f.tenant, membership_id: scoped.member, role_id: unrelatedRole,
+      assigned_by_membership_id: f.member });
+    await put(admin as unknown as Query, 'access_scopes', { tenant_id: f.tenant,
+      membership_role_id: unrelatedAssignment, scope_kind: 'STUDENT', student_id: f.student2 });
+    expect((await get(path).expect(200)).body.canRequestAdjustment).toBe(false);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${adjustPermission.id})`;
+    expect((await get(path).expect(200)).body).toMatchObject({ canRequestAdjustment: true,
+      canRequestCancellation: false, policyAvailability: 'AVAILABLE' });
+    expect((await get('/access/navigation').expect(200)).body.screenIds).toContain('BL10');
+    await get(`/finance/students/${f.student}`).expect(403);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id=${adjustPermission.id}`;
+    const [cancelPermission] = await admin`SELECT id FROM permissions WHERE code='invoice.cancel_request'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${cancelPermission.id})`;
+    expect((await get(path).expect(200)).body).toMatchObject({ canRequestAdjustment: false,
+      canRequestCancellation: true });
+    await put(admin as unknown as Query, 'payments', { tenant_id: f.tenant,
+      invoice_id: invoice, amount_vnd: '1', method: 'CASH', paid_at: '2025-11-01',
+      recorded_by_membership_id: f.member, idempotency_key: randomUUID() });
+    expect((await get(path).expect(200)).body).toMatchObject({ policyAvailability: 'BLOCKED_LEGACY_MIXED',
+      canRequestAdjustment: false, canRequestCancellation: false });
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id IN (SELECT id FROM permissions WHERE code IN ('billing.read','invoice.read'))`;
+    await get(path).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${scoped.assignment}`;
+    await get(path).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
   });
   native('R8 H02 receipt lookup authorizes before unknown or existing key reads', async () => {
     const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
@@ -3480,9 +3604,8 @@ describe('R4 native PostgreSQL', () => {
       snapshot_json::text snapshot, invoice_number number FROM invoices WHERE tenant_id=${f.tenant} AND id=${invoice}`;
     expect(immutable).toEqual(original);
   });
-  it.skipIf(!browserAvailable)('R9 F-B01 Edge financial lifecycle records blocked BL09 and BL10 routes', async () => {
+  it.skipIf(!browserAvailable)('R9 F-B01 Edge financial lifecycle uses BL09 TOP_UP and BL10 adjustment UI', async () => {
     const { f, s, period } = await issuedFixture(false);
-    const base = `/api/v1/tenants/${f.tenant}`;
     const browser = await withAcademicBrowser(app, async (b) => {
       const screen = async (id: string, route: string) => {
         await b.route(`/app/${f.tenant}${route}`);
@@ -3511,12 +3634,17 @@ describe('R4 native PostgreSQL', () => {
       await action(2);
       await b.wait(`document.querySelector('.billing-page[data-screen-id="BL07"]')?.textContent.includes('ISSUED')`, 'ISSUED');
       expect((await admin`SELECT status FROM invoices WHERE id=${draft.id}`)[0].status).toBe('ISSUED');
-      await b.route(`/app/${f.tenant}/finance/receivables`);
-      await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'`, 'BL09_NOT_NAVIGABLE');
-      await request(app.getHttpServer()).post(`${base}/students/${f.student}/wallet/top-ups`)
-        .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
-        .send({ amountVnd: '800000', method: 'CASH', receiptReference: randomUUID(),
-          evidence: 'Synthetic test receipt', reason: 'Manual fixture after UI gate', confirmed: true }).expect(200);
+      await b.click(`.sidebar a[href="/app/${f.tenant}/finance/receivables"]`);
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="BL09"] .billing-card:nth-of-type(3) input[inputmode="numeric"]')`, 'BL09_WALLET_FORM');
+      await b.value('.billing-card:nth-of-type(3) input[inputmode="numeric"]', '800000');
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(3) input', randomUUID());
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(4) input', 'Synthetic test receipt');
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(5) input', 'Browser manual top up');
+      await b.click('.billing-card:nth-of-type(3) input[type="checkbox"]');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(3) button.billing-button')?.disabled === false`, 'TOP_UP_ENABLED');
+      await action(2);
+      await until(() => b.network.some((r) => r.path.endsWith('/top-ups')
+        && r.method === 'POST' && r.status === 200), 'TOP_UP_HTTP_200');
       expect((await admin`SELECT balance_vnd::text balance FROM wallet_accounts
         WHERE tenant_id=${f.tenant} AND student_id=${f.student}`)[0].balance).toBe('800000');
       expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant}
@@ -3533,13 +3661,18 @@ describe('R4 native PostgreSQL', () => {
         && document.querySelector('.billing-card:nth-of-type(3)')?.textContent.includes('0 ₫')`, 'RECEIVABLE_PAID');
       expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant}
         AND invoice_id=${draft.id}`)[0].n).toBe(1);
-      await b.route(`/app/${f.tenant}/finance/invoices/${draft.id}/adjust`);
-      await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'`, 'BL10_NOT_NAVIGABLE');
-      const askedResponse = await request(app.getHttpServer()).post(`${base}/invoices/${draft.id}/adjustment-requests`)
-        .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
-        .send({ amountDeltaVnd: '-100000', reason: 'Synthetic approved correction' }).expect(201);
-      const asked = { id: askedResponse.body.id as string };
-      await screen('OP05', `/approvals/${asked.id}`);
+      await b.click('.billing-card:nth-of-type(4) button.billing-button-secondary:last-of-type');
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="BL10"] .billing-card:nth-of-type(2) input[inputmode="numeric"]')`, 'BL10_REQUEST_FORM');
+      await b.value('.billing-card:nth-of-type(2) input[inputmode="numeric"]', '700000');
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Browser approved correction');
+      await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(2) button.billing-button')?.disabled === false`, 'ADJUST_REQUEST_ENABLED');
+      await action(1);
+      await until(() => b.network.some((r) => r.path.endsWith('/adjustment-requests')
+        && r.method === 'POST' && r.status === 201), 'ADJUST_REQUEST_HTTP_201');
+      const [asked] = await admin`SELECT id FROM approval_requests WHERE tenant_id=${f.tenant}
+        AND target_id=${draft.id} AND operation_type='ADJUST_REQUEST' ORDER BY created_at DESC LIMIT 1`;
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="OP05"]')`, 'OP05_FROM_BL10');
       await b.wait(`document.querySelector('.billing-page[data-screen-id="OP05"]')?.textContent.includes('PENDING_APPROVAL')`, 'APPROVAL_PENDING');
       await b.value('.billing-card:nth-of-type(2) textarea', 'Eligible single Manager approval');
       await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
@@ -3572,10 +3705,13 @@ describe('R4 native PostgreSQL', () => {
         .toMatchObject({ status: 'ISSUED', total: '800000' });
       expect((await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant}
         AND entity_id=${asked.id} AND event_type='EXECUTE_APPROVAL'`)[0].n).toBe(1);
-      const required = ['/generations', '/issue', '/wallet-payments', '/decisions', '/execute'];
+      const required = ['/generations', '/issue', '/top-ups', '/wallet-payments', '/adjustment-requests', '/decisions', '/execute'];
       for (const suffix of required) expect(b.network.some((r) => r.path.endsWith(suffix)
         && r.method === 'POST' && [200, 201].includes(r.status))).toBe(true);
-      return { version: b.browserVersion, uiPosts: required, uiBlocked: ['BL09', 'BL10'], effect };
+      await b.route(`/app/${randomUUID()}/finance/receivables`);
+      await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'`, 'CROSS_TENANT_FINANCE_FORBIDDEN');
+      return { version: b.browserVersion, uiPosts: required, uiScreens: ['BL09', 'BL10'],
+        crossTenantUiDenied: true, effect };
     });
     (evidence.cases as Record<string, unknown>).r9FinancialBrowser = browser;
   }, 240_000);

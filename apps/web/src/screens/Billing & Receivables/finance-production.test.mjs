@@ -33,8 +33,9 @@ test('BL09 TOP_UP waits for HTTP acknowledgement and keeps the receipt operation
     calls.push({ url: String(url), options })
     if (options.method === 'POST') return response
     if (String(url).includes('/finance/students?')) return Response.json({ items: [{ id: student, name: 'Lan', code: 'S1' }], total: 1 })
+    if (String(url).endsWith('/receivables')) return Response.json({ studentId: student, invoices: [], asOf: new Date().toISOString() })
     return Response.json({ studentId: student, studentName: 'Lan', balanceVnd: '0', verifiedCashVnd: '0', walletDebitsVnd: '0', internalCreditsVnd: '0', reversedTopUpsVnd: '0', canTopUp: true, canReverse: true,
-      canAdjust: true, canCancel: true, transactions: [], invoices: [], asOf: new Date().toISOString() })
+      transactions: [], asOf: new Date().toISOString() })
   })
   try {
     await act(async () => { root.render(React.createElement(FinanceProduction, { id: 'BL09', tenantId: 'tenant-a', token: 'token-a', api, navigate() {} })); await wait() })
@@ -172,8 +173,10 @@ test('BL10 submits a signed adjustment request and opens the persisted approval 
   const api = new ApiClient('', async (url, options) => {
     calls.push({ url: String(url), options })
     if (options.method === 'POST') return Response.json({ id: 'approval-a', status: 'PENDING_APPROVAL' })
-    if (String(url).includes('/receivable')) return Response.json({ netObligationVnd: '800000', netAllocatedVnd: '300000', outstandingVnd: '500000' })
-    if (String(url).includes('/finance/students/')) return Response.json({ canAdjust: true, canCancel: true })
+    if (String(url).endsWith('/request-preview')) return Response.json({ invoiceId: 'invoice-a', studentId: 'student-a',
+      status: 'ISSUED', originalTotalVnd: '800000', netObligationVnd: '800000', netAllocatedVnd: '300000',
+      outstandingVnd: '500000', canRequestAdjustment: true, canRequestCancellation: false,
+      policyAvailability: 'AVAILABLE', asOf: new Date().toISOString() })
     return Response.json({ id: 'invoice-a', studentId: 'student-a', studentName: 'Lan', number: 'INV-1', status: 'ISSUED',
       totalVnd: '800000', payments: [], adjustments: [] })
   })
@@ -185,6 +188,7 @@ test('BL10 submits a signed adjustment request and opens the persisted approval 
     await act(async () => { button('Gửi yêu cầu').click(); await wait() })
     const post = calls.find((call) => call.options.method === 'POST')
     assert.match(post.url, /\/invoices\/invoice-a\/adjustment-requests$/)
+    assert.equal(calls.some((call) => call.url.includes('/finance/students/')), false)
     assert.deepEqual(JSON.parse(post.options.body), { reason: 'Reduce obligation', amountDeltaVnd: '-100000' })
     assert.deepEqual(opened, ['/app/tenant-a/approvals/approval-a'])
   } finally { await act(async () => root.unmount()) }

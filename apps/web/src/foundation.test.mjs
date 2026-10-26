@@ -47,7 +47,7 @@ test('all dynamic route parameters are available without changing tenant guard i
 
   const invoice = resolveRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`, authenticated,
     evidence(['BL10']))
-  assert.equal(invoice.kind, 'forbidden')
+  assert.equal(invoice.kind, 'screen')
   assert.deepEqual(matchRoute(`/app/${tenantId}/finance/invoices/invoice-42/adjust`)?.params,
     { tenantId, invoiceId: 'invoice-42' })
 
