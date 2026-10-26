@@ -1,0 +1,42 @@
+name: Verify offline baseline
+
+on:
+  pull_request:
+  push:
+    branches: [main, test/r9-01-regression-ci]
+
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate and generate Prisma client
+        run: |
+          pnpm --dir apps/api prisma:validate
+          pnpm --dir apps/api prisma:generate
+      - name: Check reviewed migration manifest
+        run: pnpm --dir apps/api test:migration-manifest
+      - name: Check web
+        run: |
+          pnpm --dir apps/web test
+          pnpm --dir apps/web build
+          pnpm --dir apps/web lint
+      - name: Check API offline
+        run: |
+          pnpm --dir apps/api test
+          pnpm --dir apps/api test:e2e
+          pnpm --dir apps/api test:r1b:wasm
+          pnpm --dir apps/api exec tsc --noEmit --allowImportingTsExtensions
+          pnpm --dir apps/api build
+          pnpm --dir apps/api lint

@@ -96,6 +96,7 @@ export async function browserAuthJourney(options: {
       try { return (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n'); }
       catch { return false; }
     }, 'DEBUGGER');
+    if (!debuggerPort) throw Error('BROWSER_TIMEOUT_DEBUGGER');
     protocol = await cdp(`ws://127.0.0.1:${debuggerPort[0]}${debuggerPort[1]}`);
     const { targetId } = await protocol.send<{ targetId: string }>('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await protocol.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
@@ -174,6 +175,7 @@ export async function browserAuthJourney(options: {
       const code = await options.recoveryOtp?.(options.email);
       return code ? { otp: code } : delivery.messages.find((message) => message.email === options.email && message.purpose === 'PASSWORD_RESET') ?? false;
     }, 'TEST_OTP_CAPTURE');
+    if (!capture) throw Error('BROWSER_TIMEOUT_TEST_OTP_CAPTURE');
     await evaluate(`document.querySelector('a[href="/reset-password"]').click()`);
     await until(() => evaluate<boolean>('location.pathname === "/reset-password" && !!document.querySelector("#reset-email")'), 'RESET_FORM');
     await send('Page.navigate', { url: `${origin}/reset-password` }, sessionId);

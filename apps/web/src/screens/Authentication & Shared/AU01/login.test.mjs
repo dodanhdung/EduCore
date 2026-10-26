@@ -13,7 +13,7 @@ globalThis.HTMLElement = initialDom.window.HTMLElement
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const { createRoot } = await import('react-dom/client')
 
-const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
 after(async () => { await vite.close(); initialDom.window.close() })
 const { LoginScreen } = await vite.ssrLoadModule('/src/screens/Authentication & Shared/AU01/LoginScreen.tsx')
 const { AppView } = await vite.ssrLoadModule('/src/App.tsx')
