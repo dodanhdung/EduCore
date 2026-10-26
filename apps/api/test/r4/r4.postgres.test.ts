@@ -2200,7 +2200,7 @@ describe('R4 native PostgreSQL', () => {
     const authorization = `Bearer ${accountant.accessToken}`;
     const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .set('Authorization', authorization).expect(200);
-    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'G01', 'GL01', 'OP04', 'OP05']);
+    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL09', 'G01', 'GL01', 'OP04', 'OP05']);
     const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
       .set('Authorization', authorization).expect(403);
     expect(resource.body.code).toBe('FORBIDDEN');
@@ -3093,13 +3093,38 @@ describe('R4 native PostgreSQL', () => {
         .send({ amountDeltaVnd: '-100000', reason: 'Approved adjustment test' })
         .expect(201);
       const approval = req.body.id as string;
+      const decisionKey = randomUUID();
       const decision = await request(app.getHttpServer())
         .post(base + `/approvals/${approval}/decisions`)
         .auth(s.accessToken, { type: 'bearer' })
-        .set('Idempotency-Key', randomUUID())
+        .set('Idempotency-Key', decisionKey)
         .send({ decision: 'APPROVE', reason: 'Manual single Manager approval' })
         .expect(200);
       expect(decision.body.status).toBe('APPROVED');
+      const decisionReplay = await request(app.getHttpServer())
+        .post(base + `/approvals/${approval}/decisions`)
+        .auth(s.accessToken, { type: 'bearer' })
+        .set('Idempotency-Key', decisionKey)
+        .send({ decision: 'APPROVE', reason: 'Manual single Manager approval' })
+        .expect(200);
+      expect(decisionReplay.body).toEqual(decision.body);
+      await request(app.getHttpServer()).post(base + `/approvals/${approval}/decisions`)
+        .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', decisionKey)
+        .send({ decision: 'APPROVE', reason: 'Changed decision payload' }).expect(409);
+      const approvedView = await request(app.getHttpServer()).get(base + `/approvals/${approval}`)
+        .auth(s.accessToken, { type: 'bearer' }).expect(200);
+      expect(approvedView.body).toMatchObject({ status: 'APPROVED', executionReceipt: null,
+        decisions: [expect.objectContaining({ decision: 'APPROVE', selfApproved: true })] });
+      const [selfDecision] = await admin`SELECT decided_by_membership_id actor, self_approved marker,
+        reason FROM approval_decisions WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}`;
+      expect(selfDecision).toMatchObject({ actor: f.member, marker: true,
+        reason: 'Manual single Manager approval' });
+      const [decisionAudit] = await admin`SELECT actor_membership_id actor, correlation_id::text correlation,
+        reason FROM audit_logs WHERE tenant_id=${f.tenant} AND event_type='APPROVE' AND entity_id=${approval}`;
+      expect(decisionAudit).toMatchObject({ actor: f.member,
+        correlation: decision.headers['x-request-id'], reason: 'Manual single Manager approval' });
+      expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE tenant_id=${f.tenant}
+        AND approval_request_id=${approval}`)[0].n).toBe(1);
       expect(
         (
           await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE approval_request_id=${approval}`
@@ -3180,7 +3205,11 @@ describe('R4 native PostgreSQL', () => {
     expect(wallet.body.walletDebitsVnd).toBe('300000');
     expect(wallet.body.internalCreditsVnd).toBe('0');
     expect(wallet.body.transactions.map((tx: { kind: string }) => tx.kind)).toEqual(['INVOICE_PAYMENT', 'TOP_UP']);
-    expect(wallet.body.invoices[0].netAllocatedVnd).toBe('300000');
+    expect(wallet.body).not.toHaveProperty('invoices');
+    const receivables = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/receivables`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(receivables.body.invoices[0].netAllocatedVnd).toBe('300000');
+    expect(receivables.body.invoices[0]).not.toHaveProperty('payments');
     const due = await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
       .auth(s.accessToken, { type: 'bearer' }).expect(200);
     expect(due.body.outstandingVnd).toBe('500000');
@@ -3196,6 +3225,188 @@ describe('R4 native PostgreSQL', () => {
     await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/outcomes/PAY/${payKey}`)
       .auth(learner.accessToken, { type: 'bearer' }).expect(403);
     expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(1);
+  });
+  native('R9 N01 finance navigation and split projections enforce TENANT/STUDENT, not CLASS', async () => {
+    const { f, s, invoice, period } = await issuedFixture();
+    const payment = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id NOT IN (SELECT id FROM permissions WHERE code='payment.read')`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(payment.accessToken, { type: 'bearer' });
+    const nav = await get('/access/navigation').expect(200);
+    expect(nav.body.screenIds).toContain('BL09');
+    expect(nav.body.screenIds).not.toContain('BL10');
+    expect((await get('/finance/students?page=1&pageSize=20').expect(200)).body)
+      .toMatchObject({ total: 1, items: [{ id: f.student }] });
+    const wallet = await get(`/finance/students/${f.student}`).expect(200);
+    expect(wallet.body).toHaveProperty('balanceVnd');
+    expect(wallet.body).not.toHaveProperty('invoices');
+    expect(wallet.body).not.toHaveProperty('canAdjust');
+    await get(`/finance/students/${f.student}/receivables`).expect(403);
+    await get(`/finance/students/${f.student2}`).expect(403);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(payment.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic', reason: 'Denied', confirmed: true }).expect(403);
+    const other = await fresh();
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/finance/students/${f.student}`)
+      .auth(payment.accessToken, { type: 'bearer' }).expect(403);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}`;
+    const [receivablePermission] = await admin`SELECT id FROM permissions WHERE code='receivable.read'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${receivablePermission.id})`;
+    const summary = (await get(`/finance/students/${f.student}/receivables`).expect(200)).body.invoices[0];
+    expect(summary.id).toBe(invoice);
+    expect(summary.canOpenDetail).toBe(false);
+    expect(summary).not.toHaveProperty('payments');
+    await get(`/finance/students/${f.student}`).expect(403);
+    await put(admin as unknown as Query, 'enrollments', { tenant_id: f.tenant,
+      student_id: f.student, class_id: f.class2, status: 'ACTIVE',
+      effective_from: '2020-01-01T00:00:00Z', created_by_membership_id: f.member });
+    const classActor = await actor(f, 'MANAGER', 'CLASS', f.class2);
+    const topUp = await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic receipt', reason: 'Scope regression setup', confirmed: true }).expect(200);
+    const requested = await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-1000', reason: 'Scope regression setup' }).expect(201);
+    const classGet = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(classActor.accessToken, { type: 'bearer' });
+    const classNav = await classGet('/access/navigation').expect(200);
+    expect(classNav.body.screenIds).not.toContain('BL09');
+    expect(classNav.body.screenIds).not.toContain('BL10');
+    await classGet('/finance/students').expect(403);
+    await classGet(`/finance/students/${f.student}`).expect(403);
+    await classGet(`/finance/students/${f.student}/receivables`).expect(403);
+    await classGet(`/finance/invoices/${invoice}/request-preview`).expect(403);
+    await classGet(`/billing/invoices/${invoice}`).expect(403);
+    const before = (await admin`SELECT
+      (SELECT balance_vnd FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='TOP_UP') top_ups,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant}) payments,
+      (SELECT count(*)::int FROM approval_requests WHERE tenant_id=${f.tenant}) approvals,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}) receipts,
+      (SELECT count(*)::int FROM audit_logs WHERE tenant_id=${f.tenant}) audits`)[0];
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
+    await classGet(`/students/${f.student}/wallet`).expect(403);
+    await classGet(`/finance/students/${f.student}/outcomes/TOP_UP/${randomUUID()}`).expect(403);
+    await classGet('/approvals').expect(403);
+    await classGet(`/approvals/${requested.body.id}`).expect(403);
+    await request(app.getHttpServer()).post(base + `/approvals/${requested.body.id}/decision-outcomes`)
+      .auth(classActor.accessToken, { type: 'bearer' })
+      .send({ key: randomUUID(), decision: 'APPROVE', reason: 'Denied' }).expect(403);
+    const classPost = (path: string, body: object) => request(app.getHttpServer()).post(base + path)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID()).send(body);
+    await classPost(`/invoices/${invoice}/wallet-payments`,
+      { amountVnd: '1000', reason: 'Denied', confirmed: true }).expect(403);
+    await classPost(`/invoices/${invoice}/cancellation-requests`,{ reason: 'Denied' }).expect(403);
+    await classPost(`/wallet/top-ups/${topUp.body.id}/reversal-requests`,
+      { reason: 'Denied', confirmed: true }).expect(403);
+    await classPost(`/approvals/${requested.body.id}/decisions`,
+      { decision: 'APPROVE', reason: 'Denied' }).expect(403);
+    await classPost(`/approvals/${requested.body.id}/execute`,{ reason: 'Denied' }).expect(403);
+    await classPost(`/billing/periods/${period}/students/${f.student}/generations`,
+      { reason: 'Denied' }).expect(403);
+    const [issuedGeneration] = await admin`SELECT br.current_generation_id id FROM invoices i
+      JOIN billing_runs br ON br.tenant_id=i.tenant_id AND br.id=i.billing_run_id
+      WHERE i.tenant_id=${f.tenant} AND i.id=${invoice}`;
+    await classPost(`/billing/drafts/${invoice}/issue`,
+      { reason: 'Denied', confirmed: true, expectedGenerationId: issuedGeneration.id }).expect(403);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic class-scope probe', reason: 'Cross-class probe', confirmed: true }).expect(403);
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-1000', reason: 'Cross-class probe' }).expect(403);
+    const after = (await admin`SELECT
+      (SELECT balance_vnd FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='TOP_UP') top_ups,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant}) payments,
+      (SELECT count(*)::int FROM approval_requests WHERE tenant_id=${f.tenant}) approvals,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}) receipts,
+      (SELECT count(*)::int FROM audit_logs WHERE tenant_id=${f.tenant}) audits`)[0];
+    expect(after).toEqual(before);
+    const studentActor = await actor(f, 'MANAGER', 'STUDENT', f.student);
+    const tenantActor = await actor(f, 'MANAGER', 'TENANT');
+    await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(200);
+    await request(app.getHttpServer()).get(base + `/students/${f.student2}/wallet`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
+      .auth(tenantActor.accessToken, { type: 'bearer' }).expect(200);
+    const mixedAssignment = await put(admin as unknown as Query,'membership_roles',{
+      tenant_id:f.tenant,membership_id:classActor.member,role_id:role.id,
+      assigned_by_membership_id:f.member,
+    });
+    await put(admin as unknown as Query,'access_scopes',{
+      tenant_id:f.tenant,membership_role_id:mixedAssignment,scope_kind:'STUDENT',student_id:f.student,
+    });
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
+    const [invoicePermission] = await admin`SELECT id FROM permissions WHERE code='invoice.read'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${invoicePermission.id})`;
+    await classGet(`/invoices/${invoice}/receivable`).expect(200);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${mixedAssignment}`;
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
+  });
+  native('R9 N02 invoice preview binds all rights to one student and excludes wallet data', async () => {
+    const { f, invoice } = await issuedFixture();
+    const scoped = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(scoped.accessToken, { type: 'bearer' });
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id NOT IN (SELECT id FROM permissions WHERE code IN ('billing.read','invoice.read'))`;
+    const path = `/finance/invoices/${invoice}/request-preview`;
+    const readOnly = await get(path).expect(200);
+    expect(readOnly.body).toMatchObject({ invoiceId: invoice, studentId: f.student,
+      originalTotalVnd: '800000', canRequestAdjustment: false, canRequestCancellation: false });
+    expect(readOnly.body).not.toHaveProperty('balanceVnd');
+    expect(readOnly.body).not.toHaveProperty('transactions');
+    await get(`/finance/invoices/${randomUUID()}/request-preview`).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    const [adjustPermission] = await admin`SELECT id FROM permissions WHERE code='invoice.adjust_request'`;
+    const unrelatedRole = await put(admin as unknown as Query, 'roles', {
+      tenant_id: f.tenant, code: 'FIN_UNRELATED_TEST', name: 'Unrelated action scope' });
+    await put(admin as unknown as Query, 'role_permissions', { tenant_id: f.tenant,
+      role_id: unrelatedRole, permission_id: adjustPermission.id });
+    const unrelatedAssignment = await put(admin as unknown as Query, 'membership_roles', {
+      tenant_id: f.tenant, membership_id: scoped.member, role_id: unrelatedRole,
+      assigned_by_membership_id: f.member });
+    await put(admin as unknown as Query, 'access_scopes', { tenant_id: f.tenant,
+      membership_role_id: unrelatedAssignment, scope_kind: 'STUDENT', student_id: f.student2 });
+    expect((await get(path).expect(200)).body.canRequestAdjustment).toBe(false);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${adjustPermission.id})`;
+    expect((await get(path).expect(200)).body).toMatchObject({ canRequestAdjustment: true,
+      canRequestCancellation: false, policyAvailability: 'AVAILABLE' });
+    expect((await get('/access/navigation').expect(200)).body.screenIds).toContain('BL10');
+    await get(`/finance/students/${f.student}`).expect(403);
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id=${adjustPermission.id}`;
+    const [cancelPermission] = await admin`SELECT id FROM permissions WHERE code='invoice.cancel_request'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${cancelPermission.id})`;
+    expect((await get(path).expect(200)).body).toMatchObject({ canRequestAdjustment: false,
+      canRequestCancellation: true });
+    await put(admin as unknown as Query, 'payments', { tenant_id: f.tenant,
+      invoice_id: invoice, amount_vnd: '1', method: 'CASH', paid_at: '2025-11-01',
+      recorded_by_membership_id: f.member, idempotency_key: randomUUID() });
+    expect((await get(path).expect(200)).body).toMatchObject({ policyAvailability: 'BLOCKED_LEGACY_MIXED',
+      canRequestAdjustment: false, canRequestCancellation: false });
+    await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant} AND role_id=${role.id}
+      AND permission_id IN (SELECT id FROM permissions WHERE code IN ('billing.read','invoice.read'))`;
+    await get(path).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${scoped.assignment}`;
+    await get(path).expect(403);
+    expect((await get('/access/navigation').expect(200)).body.screenIds).not.toContain('BL10');
   });
   native('R8 H02 receipt lookup authorizes before unknown or existing key reads', async () => {
     const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
@@ -3367,6 +3578,378 @@ describe('R4 native PostgreSQL', () => {
     expect(done.body.executionReceipt.refundVnd).toBe('100000');
     expect((await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
       .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.balanceVnd).toBe('100000');
+  });
+  native('R9 F01 authenticated source-to-invoice-to-wallet-to-approval chain persists once', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const billing = `${base}/billing`;
+    const get = (path: string) => request(app.getHttpServer()).get(path)
+      .auth(s.accessToken, { type: 'bearer' });
+    const post = (path: string, body: object, key = randomUUID()) =>
+      request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+        .set('Idempotency-Key', key).send(body);
+
+    expect((await get(`${billing}/price-rules`).expect(200)).body.items)
+      .toEqual([expect.objectContaining({ scope: 'COURSE', amountVnd: '800000' })]);
+    expect((await get(`${billing}/periods`).expect(200)).body.items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: period })]));
+    const generated = await post(`${billing}/periods/${period}/students/${f.student}/generations`,
+      { reason: 'R9 monthly source review' }).expect(200);
+    const invoice = generated.body.invoiceId as string;
+    expect(generated.body).toMatchObject({ status: 'DRAFT', totalVnd: '800000' });
+    const draft = await get(`${billing}/drafts/${invoice}`).expect(200);
+    expect(draft.body).toMatchObject({ id: invoice, currentGenerationId: generated.body.id, canIssue: true });
+    expect(draft.body.lines).toEqual([expect.objectContaining({
+      source: expect.objectContaining({ sessionId: f.session, participantId: f.participant,
+        sourceBusinessDate: '2025-09-20', unitPriceVnd: '800000' }),
+    })]);
+    const issued = await post(`${billing}/drafts/${invoice}/issue`,
+      { reason: 'Reviewed source', confirmed: true, expectedGenerationId: generated.body.id }).expect(200);
+    expect(issued.body.status).toBe('ISSUED');
+    const [original] = await admin`SELECT status, total_vnd::text total,
+      snapshot_json::text snapshot, invoice_number number FROM invoices WHERE tenant_id=${f.tenant} AND id=${invoice}`;
+    expect(original).toMatchObject({ status: 'ISSUED', total: '800000' });
+    expect(original.number).toMatch(/^INV-/);
+    expect((await admin`SELECT count(*)::int n FROM invoiced_participation_claims
+      WHERE tenant_id=${f.tenant} AND participant_id=${f.participant}`)[0].n).toBe(1);
+
+    const topKey = randomUUID(), payKey = randomUUID();
+    const topBody = { amountVnd: '800000', method: 'CASH', receiptReference: randomUUID(),
+      evidence: 'Verified synthetic receipt', reason: 'Manual verification', confirmed: true };
+    await post(`${base}/students/${f.student}/wallet/top-ups`, topBody, topKey).expect(200);
+    expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(0);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body.outstandingVnd).toBe('800000');
+    const payBody = { amountVnd: '800000', reason: 'Explicit wallet allocation', confirmed: true };
+    await post(`${base}/invoices/${invoice}/wallet-payments`, payBody, payKey).expect(200);
+    await post(`${base}/invoices/${invoice}/wallet-payments`, payBody, payKey).expect(200);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body.outstandingVnd).toBe('0');
+    const asked = await post(`${base}/invoices/${invoice}/adjustment-requests`,
+      { amountDeltaVnd: '-100000', reason: 'Reviewed source correction' }).expect(201);
+    const approval = asked.body.id as string;
+    expect((await get(`${base}/approvals/${approval}`).expect(200)).body.status).toBe('PENDING_APPROVAL');
+    await post(`${base}/approvals/${approval}/decisions`,
+      { decision: 'APPROVE', reason: 'Manual approval' }).expect(200);
+    const approved = await get(`${base}/approvals/${approval}`).expect(200);
+    expect(approved.body).toMatchObject({ status: 'APPROVED', executionReceipt: null });
+    const [before] = await admin`SELECT
+      (SELECT count(*)::int FROM approval_decisions WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) decisions,
+      (SELECT count(*)::int FROM invoice_adjustments WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) adjustments,
+      (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance`;
+    expect(before).toMatchObject({ decisions: 1, adjustments: 0, balance: '0' });
+
+    const executeKey = randomUUID();
+    const execution = await post(`${base}/approvals/${approval}/execute`,
+      { reason: 'Explicit execution' }, executeKey).expect(200);
+    expect(execution.body).toMatchObject({ status: 'COMPLETED', refundVnd: '100000' });
+    await post(`${base}/approvals/${approval}/execute`,
+      { reason: 'Explicit execution' }, executeKey).expect(200);
+    const done = await get(`${base}/approvals/${approval}`).expect(200);
+    expect(done.body).toMatchObject({ status: 'COMPLETED',
+      executionReceipt: expect.objectContaining({ refundVnd: '100000' }) });
+    const [after] = await admin`SELECT
+      (SELECT count(*)::int FROM invoice_adjustments WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) adjustments,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}) payments,
+      (SELECT coalesce(sum(amount_vnd),0)::text FROM receivable_allocations WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}) allocated,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='INVOICE_REFUND'
+        AND payment_id IN (SELECT id FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice})) refunds,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}
+        AND operation_type='ROOT_EFFECT' AND idempotency_key=${`APPROVAL:${approval}`}) root_receipts,
+      (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance`;
+    expect(after).toMatchObject({ adjustments: 1, payments: 1, allocated: '700000', refunds: 1,
+      root_receipts: 1, balance: '100000' });
+    const [audit] = await admin`SELECT correlation_id::text correlation FROM audit_logs
+      WHERE tenant_id=${f.tenant} AND event_type='EXECUTE_APPROVAL' AND entity_id=${approval}`;
+    expect(audit.correlation).toBe(execution.headers['x-request-id']);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body)
+      .toMatchObject({ netObligationVnd: '700000', netAllocatedVnd: '700000', outstandingVnd: '0' });
+    const [immutable] = await admin`SELECT status, total_vnd::text total,
+      snapshot_json::text snapshot, invoice_number number FROM invoices WHERE tenant_id=${f.tenant} AND id=${invoice}`;
+    expect(immutable).toEqual(original);
+  });
+  it.skipIf(!browserAvailable)('R9 F-B01 Edge financial lifecycle uses BL09 TOP_UP and BL10 adjustment UI', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    const browser = await withAcademicBrowser(app, async (b) => {
+      const screen = async (id: string, route: string) => {
+        await b.route(`/app/${f.tenant}${route}`);
+        await b.wait(`document.querySelector('.billing-page[data-screen-id="${id}"]')
+          && !document.querySelector('.billing-page > .billing-state')`, id);
+      };
+      const action = async (card: number, button = 0) => {
+        // Buttons need not be direct siblings of the card; choose by DOM order.
+        await b.evaluate(`document.querySelectorAll('.billing-card')[${card}]?.querySelectorAll('button.billing-button')[${button}]?.click()`);
+      };
+      await b.login(s.email, password, f.tenant);
+      await screen('BL01', '/finance/pricing');
+      expect(await b.evaluate<boolean>(`document.querySelector('.billing-card')?.textContent.includes('800.000')`)).toBe(true);
+      await screen('BL03', '/finance/billing-periods');
+      expect(await b.evaluate<boolean>(`document.querySelector('.billing-card')?.textContent.includes('2025-09-01')`)).toBe(true);
+      await b.select('.billing-card:nth-of-type(2) select', period);
+      await b.select('.billing-card:nth-of-type(2) .billing-form-grid label:nth-child(2) select', f.student);
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Browser source review');
+      await action(1);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="BL05"]')?.textContent.includes('DRAFT')`, 'DRAFT');
+      const [draft] = await admin`SELECT id,status,total_vnd::text amount FROM invoices
+        WHERE tenant_id=${f.tenant} AND student_id=${f.student} AND period_id=${period}`;
+      expect(draft).toMatchObject({ status: 'DRAFT', amount: '800000' });
+      await b.value('.billing-card:nth-of-type(3) textarea', 'Reviewed browser draft');
+      await b.click('.billing-card:nth-of-type(3) input[type="checkbox"]');
+      await action(2);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="BL07"]')?.textContent.includes('ISSUED')`, 'ISSUED');
+      expect((await admin`SELECT status FROM invoices WHERE id=${draft.id}`)[0].status).toBe('ISSUED');
+      await b.click(`.sidebar a[href="/app/${f.tenant}/finance/receivables"]`);
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="BL09"] .billing-card:nth-of-type(3) input[inputmode="numeric"]')`, 'BL09_WALLET_FORM');
+      await b.value('.billing-card:nth-of-type(3) input[inputmode="numeric"]', '800000');
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(3) input', randomUUID());
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(4) input', 'Synthetic test receipt');
+      await b.value('.billing-card:nth-of-type(3) .billing-form-grid label:nth-child(5) input', 'Browser manual top up');
+      await b.click('.billing-card:nth-of-type(3) input[type="checkbox"]');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(3) button.billing-button')?.disabled === false`, 'TOP_UP_ENABLED');
+      await action(2);
+      await until(() => b.network.some((r) => r.path.endsWith('/top-ups')
+        && r.method === 'POST' && r.status === 200), 'TOP_UP_HTTP_200');
+      expect((await admin`SELECT balance_vnd::text balance FROM wallet_accounts
+        WHERE tenant_id=${f.tenant} AND student_id=${f.student}`)[0].balance).toBe('800000');
+      expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant}
+        AND invoice_id=${draft.id}`)[0].n).toBe(0);
+      await screen('BL07', `/finance/invoices/${draft.id}`);
+      await b.value('.billing-card:nth-of-type(4) input[inputmode="numeric"]', '800000');
+      await b.value('.billing-card:nth-of-type(4) input:not([inputmode])', 'Browser wallet allocation');
+      await b.click('.billing-card:nth-of-type(4) input[type="checkbox"]');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(4) button.billing-button')?.disabled === false`, 'PAY_ENABLED');
+      await action(3);
+      await until(() => b.network.some((r) => r.path.endsWith('/wallet-payments')
+        && r.method === 'POST' && r.status === 200), 'PAY_HTTP_200');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(3)')?.textContent.includes('Còn phải thu:')
+        && document.querySelector('.billing-card:nth-of-type(3)')?.textContent.includes('0 ₫')`, 'RECEIVABLE_PAID');
+      expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant}
+        AND invoice_id=${draft.id}`)[0].n).toBe(1);
+      await b.click('.billing-card:nth-of-type(4) button.billing-button-secondary:last-of-type');
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="BL10"] .billing-card:nth-of-type(2) input[inputmode="numeric"]')`, 'BL10_REQUEST_FORM');
+      await b.value('.billing-card:nth-of-type(2) input[inputmode="numeric"]', '700000');
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Browser approved correction');
+      await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
+      await b.wait(`document.querySelector('.billing-card:nth-of-type(2) button.billing-button')?.disabled === false`, 'ADJUST_REQUEST_ENABLED');
+      await action(1);
+      await until(() => b.network.some((r) => r.path.endsWith('/adjustment-requests')
+        && r.method === 'POST' && r.status === 201), 'ADJUST_REQUEST_HTTP_201');
+      const [asked] = await admin`SELECT id FROM approval_requests WHERE tenant_id=${f.tenant}
+        AND target_id=${draft.id} AND operation_type='ADJUST_REQUEST' ORDER BY created_at DESC LIMIT 1`;
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="OP05"]')`, 'OP05_FROM_BL10');
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="OP05"]')?.textContent.includes('PENDING_APPROVAL')`, 'APPROVAL_PENDING');
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Eligible single Manager approval');
+      await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
+      await action(1);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="OP05"]')?.textContent.includes('APPROVED')`, 'APPROVED');
+      expect(await b.evaluate<boolean>(`document.querySelector('.billing-page')?.textContent.includes('COMPLETED')`)).toBe(false);
+      const [beforeExecution] = await admin`SELECT
+        (SELECT status FROM approval_requests WHERE id=${asked.id}) status,
+        (SELECT count(*)::int FROM invoice_adjustments WHERE approval_request_id=${asked.id}) adjustments,
+        (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+        (SELECT coalesce(sum(amount_vnd),0)::text FROM receivable_allocations
+          WHERE tenant_id=${f.tenant} AND invoice_id=${draft.id}) allocated`;
+      expect(beforeExecution).toMatchObject({ status: 'APPROVED', adjustments: 0,
+        balance: '0', allocated: '800000' });
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="OP05"] .billing-card:nth-of-type(2) textarea')`, 'EXECUTE_FORM_RELOADED');
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Separate browser execution');
+      await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
+      await action(1);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="OP05"]')?.textContent.includes('COMPLETED')
+        && !!document.querySelector('.billing-page [role="status"]')`, 'COMPLETED_WITH_RECEIPT');
+      const [effect] = await admin`SELECT
+        (SELECT count(*)::int FROM invoice_adjustments WHERE approval_request_id=${asked.id}) adjustments,
+        (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}
+          AND operation_type='ROOT_EFFECT' AND idempotency_key=${`APPROVAL:${asked.id}`}) receipts,
+        (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+        (SELECT coalesce(sum(amount_vnd),0)::text FROM receivable_allocations
+          WHERE tenant_id=${f.tenant} AND invoice_id=${draft.id}) allocated`;
+      expect(effect).toMatchObject({ adjustments: 1, receipts: 1, balance: '100000', allocated: '700000' });
+      expect((await admin`SELECT status,total_vnd::text total FROM invoices WHERE id=${draft.id}`)[0])
+        .toMatchObject({ status: 'ISSUED', total: '800000' });
+      expect((await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant}
+        AND entity_id=${asked.id} AND event_type='EXECUTE_APPROVAL'`)[0].n).toBe(1);
+      const required = ['/generations', '/issue', '/top-ups', '/wallet-payments', '/adjustment-requests', '/decisions', '/execute'];
+      for (const suffix of required) expect(b.network.some((r) => r.path.endsWith(suffix)
+        && r.method === 'POST' && [200, 201].includes(r.status))).toBe(true);
+      await b.route(`/app/${randomUUID()}/finance/receivables`);
+      await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'`, 'CROSS_TENANT_FINANCE_FORBIDDEN');
+      return { version: b.browserVersion, uiPosts: required, uiScreens: ['BL09', 'BL10'],
+        crossTenantUiDenied: true, effect };
+    });
+    (evidence.cases as Record<string, unknown>).r9FinancialBrowser = browser;
+  }, 240_000);
+  it.skipIf(!browserAvailable)('R9 F-B02 revoked execution is rejected in Edge without a root effect', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const post = (path: string, body: object) => request(app.getHttpServer()).post(`${base}${path}`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID()).send(body);
+    await post(`/students/${f.student}/wallet/top-ups`, { amountVnd: '800000', method: 'CASH',
+      receiptReference: randomUUID(), evidence: 'Synthetic receipt', reason: 'Negative browser setup',
+      confirmed: true }).expect(200);
+    await post(`/invoices/${invoice}/wallet-payments`, { amountVnd: '800000',
+      reason: 'Negative browser setup', confirmed: true }).expect(200);
+    const asked = await post(`/invoices/${invoice}/adjustment-requests`, { amountDeltaVnd: '-100000',
+      reason: 'Revocation scenario' }).expect(201);
+    await post(`/approvals/${asked.body.id}/decisions`, { decision: 'APPROVE',
+      reason: 'Eligible Manager before execution revoke' }).expect(200);
+    const browser = await withAcademicBrowser(app, async (b) => {
+      await b.login(s.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/approvals/${asked.body.id}`);
+      await b.wait(`!!document.querySelector('.billing-page[data-screen-id="OP05"] .billing-card:nth-of-type(2) button.billing-button')`, 'EXECUTE_FORM');
+      await b.value('.billing-card:nth-of-type(2) textarea', 'Execution after revoke');
+      await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
+      await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
+        AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='MANAGER')
+        AND permission_id=(SELECT id FROM permissions WHERE code='approval.execute')`;
+      await b.click('.billing-card:nth-of-type(2) button.billing-button');
+      await until(() => b.network.some((r) => r.path.endsWith(`/approvals/${asked.body.id}/execute`)
+        && r.method === 'POST' && r.status === 403), 'REVOKED_EXECUTION_HTTP_403');
+      await b.wait(`!!document.querySelector('.billing-page [role="alert"]')
+        && !document.querySelector('.billing-page')?.textContent.includes('COMPLETED')`, 'EXECUTION_DENIED_UI');
+      return { version: b.browserVersion, denied: true, completedShown: false };
+    });
+    const [result] = await admin`SELECT
+      (SELECT status FROM approval_requests WHERE id=${asked.body.id}) status,
+      (SELECT count(*)::int FROM invoice_adjustments WHERE approval_request_id=${asked.body.id}) adjustments,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}
+        AND operation_type='ROOT_EFFECT' AND idempotency_key=${`APPROVAL:${asked.body.id}`}) receipts,
+      (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance`;
+    expect(result).toMatchObject({ status: 'APPROVED', adjustments: 0, receipts: 0, balance: '0' });
+    (evidence.cases as Record<string, unknown>).r9FinancialDenied = browser;
+  }, 120_000);
+  it.skipIf(!browserAvailable)('R9 F-B03 tenant switch and revocation hide financial data in Edge', async () => {
+    const a = await issuedFixture(), second = await issuedFixture();
+    await admin`UPDATE tenants SET name='R9 Finance Tenant A' WHERE id=${a.f.tenant}`;
+    await admin`UPDATE tenants SET name='R9 Finance Tenant B' WHERE id=${second.f.tenant}`;
+    await admin`UPDATE student_profiles SET full_name='R9 Finance Student A' WHERE id=${a.f.student}`;
+    await admin`UPDATE student_profiles SET full_name='R9 Finance Student B' WHERE id=${second.f.student}`;
+    const secondMembership = await put(admin as unknown as Query, 'tenant_memberships', {
+      tenant_id: second.f.tenant, user_id: a.f.user, status: 'ACTIVE',
+    });
+    const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${second.f.tenant} AND code='MANAGER'`;
+    const grant = await put(admin as unknown as Query, 'membership_roles', {
+      tenant_id: second.f.tenant, membership_id: secondMembership, role_id: role.id,
+      assigned_by_membership_id: second.f.member,
+    });
+    await put(admin as unknown as Query, 'access_scopes', {
+      tenant_id: second.f.tenant, membership_role_id: grant, scope_kind: 'TENANT',
+    });
+    const student = await actor(a.f, 'STUDENT', 'STUDENT', a.f.student);
+    const parent = await actor(a.f, 'PARENT');
+    for (const denied of [student, parent]) {
+      await request(app.getHttpServer()).post(`/api/v1/tenants/${a.f.tenant}/students/${a.f.student}/wallet/top-ups`)
+        .auth(denied.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+        .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+          evidence: 'Synthetic', reason: 'Unauthorized role', confirmed: true }).expect(403);
+    }
+    const browser = await withAcademicBrowser(app, async (b) => {
+      await b.login(a.s.email, password, a.f.tenant);
+      await b.route(`/app/${a.f.tenant}/finance/invoices/${a.invoice}`);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="BL07"]')?.textContent.includes('R9 Finance Student A')`, 'A_FINANCE_VISIBLE');
+      await b.route('/select-tenant');
+      await b.wait(`document.querySelectorAll('.ec-tenant-choice').length === 2
+        && !document.body.textContent.includes('R9 Finance Student A')`, 'A_FINANCE_CLEARED');
+      await b.evaluate(`Array.from(document.querySelectorAll('.ec-tenant-choice'))
+        .find(x => x.textContent.includes('R9 Finance Tenant B'))?.click()`);
+      await b.wait(`location.pathname.startsWith(${JSON.stringify(`/app/${second.f.tenant}/`)})`, 'B_SELECTED');
+      await b.route(`/app/${second.f.tenant}/finance/invoices/${second.invoice}`);
+      await b.wait(`document.querySelector('.billing-page[data-screen-id="BL07"]')?.textContent.includes('R9 Finance Student B')
+        && !document.body.textContent.includes('R9 Finance Student A')`, 'B_FINANCE_ONLY');
+      await b.route(`/app/${a.f.tenant}/finance/invoices/${a.invoice}`);
+      await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'
+        && !document.body.textContent.includes('R9 Finance Student A')`, 'OLD_TENANT_FORBIDDEN');
+      await b.route(`/app/${second.f.tenant}/finance/invoices/${a.invoice}`);
+      await b.wait(`!!document.querySelector('.billing-page [role="alert"]')
+        && !document.body.textContent.includes('R9 Finance Student A')`, 'CROSS_TENANT_INVOICE_DENIED');
+      await admin`UPDATE auth_sessions SET revoked_at=clock_timestamp() WHERE user_id=${a.f.user}
+        AND active_tenant_id=${second.f.tenant} AND revoked_at IS NULL`;
+      await b.route(`/app/${second.f.tenant}/finance/invoices/${second.invoice}`);
+      await b.wait(`!!document.querySelector('.billing-page [role="alert"]')
+        && !document.body.textContent.includes('R9 Finance Student B')`, 'REVOKED_FINANCE_READ');
+      expect(b.network.some((r) => r.path.endsWith(`/billing/invoices/${second.invoice}`)
+        && r.status === 401)).toBe(true);
+      return { version: b.browserVersion, tenantSwitch: true, oldTenantDenied: true,
+        crossTenantDenied: true, revokedReadDenied: true };
+    });
+    (evidence.cases as Record<string, unknown>).r9FinancialIsolation = browser;
+  }, 150_000);
+  native('R9 V01 HTTP generation replay and reviewed-source revision fail closed', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    const base = `/api/v1/tenants/${f.tenant}/billing`;
+    const path = `${base}/periods/${period}/students/${f.student}/generations`;
+    const key = randomUUID(), body = { reason: 'Reviewed source version' };
+    const generate = (payload: object) => request(app.getHttpServer()).post(path)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key).send(payload);
+    const first = await generate(body).expect(200);
+    expect((await generate(body).expect(200)).body).toEqual(first.body);
+    await generate({ reason: 'Changed payload' }).expect(409);
+    expect((await admin`SELECT count(*)::int n FROM billing_run_generations WHERE tenant_id=${f.tenant}
+      AND student_id=${f.student} AND period_id=${period}`)[0].n).toBe(1);
+    // The historical-source guard rejects edits after generation. Review freshness
+    // is additionally pinned to the latest generation when a new G2 is created.
+    await expect(admin`UPDATE class_sessions SET starts_at=starts_at+interval '1 minute',
+      revision=revision+1 WHERE tenant_id=${f.tenant} AND id=${f.session}`)
+      .rejects.toThrow(/historical|reviewed correction/i);
+    const [state] = await admin`SELECT status FROM invoices WHERE tenant_id=${f.tenant} AND id=${first.body.invoiceId}`;
+    expect(state.status).toBe('DRAFT');
+    expect((await admin`SELECT count(*)::int n FROM invoiced_participation_claims
+      WHERE tenant_id=${f.tenant} AND participant_id=${f.participant}`)[0].n).toBe(0);
+    const recomputed = await request(app.getHttpServer()).post(
+      `${base}/periods/${period}/students/${f.student}/recomputations`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Re-review changed source', expectedBase: first.body.id,
+        expectedApplied: first.body.id }).expect(200);
+    expect(recomputed.body).toMatchObject({ status: 'DRAFT', invoiceId: first.body.invoiceId });
+    await request(app.getHttpServer()).post(`${base}/drafts/${first.body.invoiceId}/issue`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Stale G1 review', confirmed: true, expectedGenerationId: first.body.id }).expect(409);
+    await request(app.getHttpServer()).post(`${base}/periods/${period}/students/${f.student}/recomputations`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Stale CAS', expectedBase: first.body.id,
+        expectedApplied: first.body.id }).expect(409);
+    await request(app.getHttpServer()).post(`${base}/drafts/${first.body.invoiceId}/issue`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Invalid reviewed generation', confirmed: true,
+        expectedGenerationId: randomUUID() }).expect(409);
+    expect((await admin`SELECT status FROM invoices WHERE id=${first.body.invoiceId}`)[0].status).toBe('DRAFT');
+    expect((await admin`SELECT count(*)::int n FROM invoiced_participation_claims
+      WHERE tenant_id=${f.tenant} AND participant_id=${f.participant}`)[0].n).toBe(0);
+    await request(app.getHttpServer()).post(`${base}/drafts/${first.body.invoiceId}/issue`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Reviewed current source', confirmed: true,
+        expectedGenerationId: recomputed.body.id }).expect(200);
+  });
+  native('R9 S05 wrong approver and ineligible self-approval leave decision absent', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const otherManager = await actor(f, 'MANAGER');
+    const unrelated = await actor(f, 'ACADEMIC_STAFF');
+    const parent = await actor(f, 'PARENT');
+    const asked = await request(app.getHttpServer()).post(`${base}/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-10000', reason: 'Separate approval required' }).expect(201);
+    const path = `${base}/approvals/${asked.body.id}/decisions`;
+    const decision = { decision: 'APPROVE', reason: 'Reviewed by another Manager' };
+    await request(app.getHttpServer()).post(path).auth(unrelated.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(403);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(403);
+    expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].n).toBe(0);
+    await request(app.getHttpServer()).post(`${base}/students/${f.student}/wallet/top-ups`)
+      .auth(parent.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic', reason: 'Forbidden parent mutation', confirmed: true }).expect(403);
+    await request(app.getHttpServer()).get(`${base}/students/${f.student}/wallet`)
+      .auth(parent.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).post(path).auth(otherManager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(200);
+    const [persisted] = await admin`SELECT status FROM approval_requests WHERE tenant_id=${f.tenant}
+      AND id=${asked.body.id}`;
+    expect(persisted.status).toBe('APPROVED');
+    expect((await admin`SELECT self_approved FROM approval_decisions WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].self_approved).toBe(false);
+    expect((await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].n).toBe(0);
   });
   native('R8 F03 invalid TOP_UP reversal is full, approved and balance bounded', async () => {
     const { f, s, invoice } = await issuedFixture();
@@ -3988,6 +4571,30 @@ describe('R4 native PostgreSQL', () => {
       ).toBe(1);
     },
   );
+  native('R9 X12 decision and explicit execution serialize across connections', async () => {
+    for (const commit of [true, false]) {
+      const { f, s, invoice } = await issuedFixture();
+      const ap = await runtime.billing(s.accessToken, f.tenant, {
+        ...intent(), operation: 'ADJUST_REQUEST', invoiceId: invoice, deltaVnd: '10000',
+      }) as { id: string };
+      const result = await race('decision-vs-execution', {
+        token: s.accessToken,
+        sql: 'SELECT educore_r2.r4_decide($1::uuid,$2::jsonb) result',
+        args: [f.tenant, JSON.stringify({ ...intent(), approvalId: ap.id, decision: 'APPROVE' })],
+      }, {
+        token: s.accessToken,
+        sql: 'SELECT educore_r2.execute($1::uuid,$2::jsonb) result',
+        args: [f.tenant, JSON.stringify({ ...intent(), approvalId: ap.id, operation: 'EXECUTE_APPROVAL' })],
+      }, commit);
+      expect(result.two.code).toBe(commit ? null : '23514');
+      const [persisted] = await admin`SELECT status FROM approval_requests WHERE tenant_id=${f.tenant} AND id=${ap.id}`;
+      expect(persisted.status).toBe(commit ? 'COMPLETED' : 'PENDING_APPROVAL');
+      expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE tenant_id=${f.tenant}
+        AND approval_request_id=${ap.id}`)[0].n).toBe(commit ? 1 : 0);
+      expect((await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE tenant_id=${f.tenant}
+        AND approval_request_id=${ap.id}`)[0].n).toBe(commit ? 1 : 0);
+    }
+  });
   native(
     'X09 target obligation changes invalidate another approved payload',
     async () => {
@@ -4644,7 +5251,7 @@ describe('R4 native PostgreSQL', () => {
     await expect(runtime.managementRead(parent.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
   });
   native(
-    'A15 unrelated TENANT role cannot widen a CLASS financial grant',
+    'A15 unrelated TENANT role cannot rescue a CLASS-only financial grant',
     async () => {
       const f = await fresh(),
         s = await sessionFor(f),
@@ -4665,7 +5272,7 @@ describe('R4 native PostgreSQL', () => {
       await request(app.getHttpServer())
         .get(`/api/v1/tenants/${f.tenant}/students/${f.student}/wallet`)
         .auth(a.accessToken, { type: 'bearer' })
-        .expect(200);
+        .expect(403);
     },
   );
   native(

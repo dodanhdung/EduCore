@@ -944,6 +944,47 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
       ),
     ).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
   });
+  native('R9 SCOPE R2 financial guard denies CLASS and accepts live STUDENT scope', async () => {
+    const c = await fixture();
+    const g = await issued(c);
+    const backupUser = await put(admin as unknown as Query,'users',{
+      email_normalized:randomUUID()+'@r2.invalid',display_name:'Backup Manager',status:'ACTIVE',
+    });
+    const backupMember = await put(admin as unknown as Query,'tenant_memberships',{
+      tenant_id:c.f.tenant,user_id:backupUser,status:'ACTIVE',
+    });
+    const backupRole = await put(admin as unknown as Query,'membership_roles',{
+      tenant_id:c.f.tenant,membership_id:backupMember,role_id:c.f.role,
+      assigned_by_membership_id:c.f.member,
+    });
+    await put(admin as unknown as Query,'access_scopes',{
+      tenant_id:c.f.tenant,membership_role_id:backupRole,scope_kind:'TENANT',
+    });
+    const changed = await admin.unsafe(
+      "UPDATE access_scopes SET scope_kind='CLASS',class_id=$1,student_id=NULL WHERE tenant_id=$2 AND id=$3 RETURNING scope_kind",
+      [c.f.classId,c.f.tenant,c.f.scope],
+    );
+    expect(changed).toHaveLength(1);
+    expect(changed[0].scope_kind).toBe('CLASS');
+    expect((await admin.unsafe('SELECT scope_kind FROM access_scopes WHERE id=$1',[c.f.scope]))[0].scope_kind).toBe('CLASS');
+    await expect(c.wallet.summary(c.f.tenant,c.f.student)).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await expect(c.invoice.receivable(c.f.tenant,g.invoiceId as string)).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    const key = intent();
+    await expect(c.wallet.topUp(c.f.tenant,c.f.student,'100','CASH',randomUUID(),'Proof',key))
+      .rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    expect((await admin.unsafe('SELECT count(*)::int n FROM idempotency_records WHERE tenant_id=$1 AND idempotency_key=$2',
+      [c.f.tenant,key.key]))[0].n).toBe(0);
+    await put(admin as unknown as Query,'access_scopes',{
+      tenant_id:c.f.tenant,membership_role_id:c.f.membershipRole,
+      scope_kind:'STUDENT',student_id:c.f.student,
+    });
+    expect((await c.wallet.summary(c.f.tenant,c.f.student)).balanceVnd).toBe('0');
+    await expect(c.wallet.summary(c.f.tenant,c.f.student2)).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+    await c.wallet.topUp(c.f.tenant,c.f.student,'100','CASH',randomUUID(),'Proof',key);
+    expect((await c.wallet.summary(c.f.tenant,c.f.student)).balanceVnd).toBe('100');
+    await admin.unsafe('UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=$1',[c.f.membershipRole]);
+    await expect(c.wallet.summary(c.f.tenant,c.f.student)).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
+  });
   native(
     'C01 two independent payments wait on tenant then cannot overpay',
     async () => {
@@ -1643,6 +1684,21 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
       );
       expect(r.two.code).toBe(commit ? '23505' : null);
       expect(await balance(c)).toBe('100000');
+    }
+  });
+  native('R9 C13 duplicate monthly generation waits and keeps one invoice', async () => {
+    for (const commit of [true, false]) {
+      const c = await fixture();
+      const body = { operation: 'GENERATE', studentId: c.f.student, periodId: c.period };
+      const r = await race(c, 'duplicate-monthly-generation',
+        { ...body, ...intent() }, { ...body, ...intent() }, commit);
+      expect(r.two.code).toBe(commit ? '23505' : null);
+      const [state] = await admin.unsafe(`SELECT
+        (SELECT count(*)::int FROM billing_runs WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) runs,
+        (SELECT count(*)::int FROM billing_run_generations WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) generations,
+        (SELECT count(*)::int FROM invoices WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) invoices`,
+        [c.f.tenant, c.f.student, c.period]);
+      expect(state).toMatchObject({ runs: 1, generations: 1, invoices: 1 });
     }
   });
   native('C04 two recomputes CAS, commit/rollback and old replay', async () => {

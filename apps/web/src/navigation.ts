@@ -4,7 +4,7 @@ import type { NavigationReader, NavigationResponse } from './auth.ts'
 export const NAVIGATION_SCREENS = ['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08',
   'AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07',
   'AT01', 'AT02', 'AT03', 'AT04',
-  'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07',
+  'BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL09', 'BL10',
   'G01', 'GL01', 'OP01', 'OP02', 'OP03', 'OP04', 'OP05', 'OP06', 'OP07',
   'PO01', 'PO02', 'PO03', 'PO04', 'PO05',
   'SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const

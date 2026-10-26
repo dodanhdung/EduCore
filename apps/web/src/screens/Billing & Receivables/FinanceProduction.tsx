@@ -8,10 +8,12 @@ type Id = 'BL09' | 'BL10' | 'OP04' | 'OP05'
 type Page<T> = { items: T[]; total: number; page: number; pageSize: number }
 type Student = { id: string; name: string; code: string }
 type Transaction = { id: string; kind: string; amountVnd: string; createdAt: string; receiptReference: string | null; fundingMethod: string | null; evidence: string | null; reversedTopUpId: string | null; paymentId: string | null }
-type Invoice = { id: string; number: string | null; status: string; originalTotalVnd: string; netObligationVnd: string; netAllocatedVnd: string; outstandingVnd: string; legacyMixed: boolean; payments: { id: string; method: string; amountVnd: string; paidAt: string; allocations: { id: string; kind: string; amountVnd: string }[] }[] }
-type Wallet = { studentId: string; studentName: string; balanceVnd: string; verifiedCashVnd: string; walletDebitsVnd: string; internalCreditsVnd: string; reversedTopUpsVnd: string; canTopUp: boolean; canReverse: boolean; canAdjust: boolean; canCancel: boolean; transactions: Transaction[]; invoices: Invoice[]; asOf: string }
+type Invoice = { id: string; number: string | null; status: string; originalTotalVnd: string; netObligationVnd: string; netAllocatedVnd: string; outstandingVnd: string; canOpenDetail: boolean; legacyMixed: boolean }
+type Wallet = { studentId: string; studentName: string; balanceVnd: string; verifiedCashVnd: string; walletDebitsVnd: string; internalCreditsVnd: string; reversedTopUpsVnd: string; canTopUp: boolean; canReverse: boolean; transactions: Transaction[]; asOf: string }
+type Receivables = { studentId: string; invoices: Invoice[]; asOf: string }
 type Detail = { id: string; studentId: string; studentName: string; number: string | null; status: string; totalVnd: string; payments: unknown[]; adjustments: { id: string; kind: string; deltaVnd: string; status: string; approvalRequestId: string }[] }
 type Receivable = { netObligationVnd: string; netAllocatedVnd: string; outstandingVnd: string }
+type RequestPreview = Receivable & { invoiceId: string; studentId: string; status: string; originalTotalVnd: string; canRequestAdjustment: boolean; canRequestCancellation: boolean; policyAvailability: 'AVAILABLE' | 'BLOCKED_LEGACY_MIXED'; asOf: string }
 type Approval = { id: string; operationType: string; targetType: string; targetId: string; studentId: string; status: string; reason: string; requesterMembershipId: string; createdAt: string; decidedAt: string | null; deltaVnd: string | null; canDecide: boolean; canExecute: boolean; decisions: { decision: string; reason: string; decidedAt: string; selfApproved: boolean }[]; executionReceipt: { id: string; status: string; refundVnd: string } | null }
 type Pending = { path: string; body: object; key: string; studentId?: string; uncertain?: boolean }
 const positive = (value: string) => /^[1-9]\d*$/.test(value) && BigInt(value) <= 9223372036854775807n
@@ -38,6 +40,7 @@ export function FinanceProduction({ id, tenantId, token, selectedId, api, naviga
   const [studentTotal, setStudentTotal] = useState(0)
   const [studentId, setStudentId] = useState('')
   const [wallet, setWallet] = useState<Wallet | null>(null)
+  const [receivables, setReceivables] = useState<Receivables | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [receivable, setReceivable] = useState<Receivable | null>(null)
   const [legacyBlocked, setLegacyBlocked] = useState(false)
@@ -85,14 +88,20 @@ export function FinanceProduction({ id, tenantId, token, selectedId, api, naviga
           const current = page.items.some((student) => student.id === studentId) ? studentId : (page.items[0]?.id ?? '')
           setStudentId(current)
           setWallet(current ? await read<Wallet>(`/finance/students/${encodeURIComponent(current)}`, signal) : null)
+          setReceivables(null)
+          if (current) {
+            try { setReceivables(await read<Receivables>(`/finance/students/${encodeURIComponent(current)}/receivables`, signal)) }
+            catch (cause) { if (!(cause instanceof ApiError && cause.status === 403)) throw cause }
+          }
         } else if (id === 'BL10') {
           if (!selectedId) throw new ApiError(404, 'NOT_FOUND')
           const invoice = await read<Detail>(`/billing/invoices/${encodeURIComponent(selectedId)}`, signal)
           setDetail(invoice); setLegacyBlocked(false); setReceivable(null); setAdjustRights(null)
-          try { setReceivable(await read<Receivable>(`/invoices/${encodeURIComponent(selectedId)}/receivable`, signal)) }
-          catch (cause) { if (cause instanceof ApiError && cause.status === 422) setLegacyBlocked(true); else throw cause }
-          try { setAdjustRights(await read<Wallet>(`/finance/students/${encodeURIComponent(invoice.studentId)}`, signal)) }
-          catch { setAdjustRights(null) }
+          const preview = await read<RequestPreview>(`/finance/invoices/${encodeURIComponent(selectedId)}/request-preview`, signal)
+          if (preview.invoiceId !== invoice.id || preview.studentId !== invoice.studentId) throw new ApiError(502, 'INVALID_PREVIEW')
+          setReceivable(preview)
+          setLegacyBlocked(preview.policyAvailability !== 'AVAILABLE')
+          setAdjustRights({ canAdjust: preview.canRequestAdjustment, canCancel: preview.canRequestCancellation })
         } else if (id === 'OP04') {
           const page = await read<Page<Approval>>(`/approvals?page=${approvalPage}&pageSize=100`, signal)
           setApprovals(page.items); setApprovalTotal(page.total)
@@ -224,14 +233,14 @@ export function FinanceProduction({ id, tenantId, token, selectedId, api, naviga
           <button className="billing-button" disabled={busy || !confirmed || !reason.trim() || BigInt(wallet.balanceVnd) < BigInt(selectedTopUp.amountVnd)}
             onClick={() => void submit(`/wallet/top-ups/${selectedTopUp.id}/reversal-requests`, { reason, confirmed: true }, 'Đã tạo yêu cầu đảo, chờ duyệt và thực thi riêng.')}>Gửi yêu cầu đảo</button>
         </BillingCard>}
-        <BillingCard title="Hóa đơn và công nợ">
-          {wallet.invoices.length ? <ul>{wallet.invoices.map((invoice) => <li key={invoice.id}>
-            <button onClick={() => go(`/finance/invoices/${invoice.id}`)}>{invoice.number ?? invoice.id}</button> · {invoice.status}
+        {receivables && <BillingCard title="Hóa đơn và công nợ">
+          {receivables.invoices.length ? <ul>{receivables.invoices.map((invoice) => <li key={invoice.id}>
+            {invoice.canOpenDetail ? <button onClick={() => go(`/finance/invoices/${invoice.id}`)}>{invoice.number ?? invoice.id}</button>
+              : <span>{invoice.number ?? invoice.id}</span>} · {invoice.status}
             <p>Nghĩa vụ gốc {money(invoice.originalTotalVnd)} · Nghĩa vụ hiện hành {money(invoice.netObligationVnd)} · Phân bổ ròng {money(invoice.netAllocatedVnd)} · Còn thu {money(invoice.outstandingVnd)}</p>
             {invoice.legacyMixed && <p role="alert">NEEDS_DECISION: lịch sử legacy hoặc mixed; không tự chuyển nguồn.</p>}
-            {invoice.payments.map((payment) => <small key={payment.id}>{payment.method} {money(payment.amountVnd)} · {payment.allocations.map((a) => `${a.kind} ${money(a.amountVnd)}`).join(', ')}<br /></small>)}
           </li>)}</ul> : <BillingState title="Chưa có hóa đơn">Chưa có nghĩa vụ đã phát hành.</BillingState>}
-        </BillingCard>
+        </BillingCard>}
       </>}
     </>}
     {!loading && id === 'BL10' && detail && <>
@@ -241,6 +250,8 @@ export function FinanceProduction({ id, tenantId, token, selectedId, api, naviga
       </BillingCard>
       {legacyBlocked && <BillingState title="NEEDS_DECISION · legacy hoặc mixed" alert>Chính sách đối soát nguồn cũ chưa được duyệt. Không gửi yêu cầu có thể thực thi để ghi có ví.</BillingState>}
       {!adjustRights && !legacyBlocked && <BillingState title="Chỉ xem" alert>Quyền yêu cầu thay đổi tài chính chưa được xác nhận.</BillingState>}
+      {adjustRights && !adjustRights.canAdjust && !adjustRights.canCancel && !legacyBlocked &&
+        <BillingState title="Chỉ xem">Tài khoản hiện tại không có quyền gửi yêu cầu điều chỉnh hoặc hủy hóa đơn này.</BillingState>}
       <BillingCard title="BL10 · Đề nghị thay đổi" hint="Yêu cầu không sửa hóa đơn hay ví trước khi duyệt và thực thi">
         <label>Loại<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}><option value="ADJUSTMENT">Điều chỉnh</option><option value="CANCELLATION">Hủy</option></select></label>
         {kind === 'ADJUSTMENT' && <label>Nghĩa vụ mới VND<input inputMode="numeric" value={targetVnd} onChange={(e) => setTargetVnd(e.target.value)} /></label>}

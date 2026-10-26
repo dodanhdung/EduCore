@@ -240,6 +240,22 @@ export class RuntimeController {
       'SELECT educore_r4.finance_wallet($1::uuid,$2::uuid) result',
       uuid(t), uuid(id));
   }
+  @Get('finance/students/:id/receivables') financeReceivables(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string, @Param('id') id: string,
+  ) {
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_receivables($1::uuid,$2::uuid) result',
+      uuid(t), uuid(id));
+  }
+  @Get('finance/invoices/:id/request-preview') financeRequestPreview(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string, @Param('id') id: string,
+  ) {
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_request_preview($1::uuid,$2::uuid) result',
+      uuid(t), uuid(id));
+  }
   @Get('finance/students/:id/outcomes/:operation/:key') financeOutcome(
     @Headers('authorization') a: string | undefined,
     @Param('tenantId') t: string,

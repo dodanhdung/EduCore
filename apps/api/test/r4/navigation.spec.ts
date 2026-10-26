@@ -41,6 +41,8 @@ describe('Phase B navigation DTO and service boundary', () => {
       .toEqual(['AC01', 'AC02', 'OP01']);
     expect(navigationAccess({ ...good(), screenIds: ['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] }).screenIds)
       .toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07']);
+    expect(navigationAccess({ ...good(), screenIds: ['BL09', 'BL10'] }).screenIds)
+      .toEqual(['BL09', 'BL10']);
     for (const bad of [
       { ...good(), screenIds: ['AC02'] },
       { ...good(), screenIds: ['OP05'] },
@@ -76,7 +78,7 @@ describe('Phase B navigation DTO and service boundary', () => {
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 500 });
     raw = { ...good(), validUntil: Date.now() - 1 };
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 401 });
-    raw = { ...good(), screenIds: ['BL09'] };
+    raw = { ...good(), screenIds: ['BL08'] };
     await expect(service.read('test-token', tenantId)).rejects.toMatchObject({ status: 500 });
   });
 });

@@ -1,10 +1,10 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ApiClient } from './api.ts'
 import { createNavigationReader } from './navigation.ts'
 import { landingPath, navigationRoutes, resolveRoute, SessionController } from './auth.ts'
 import type { AuthState, Tenant } from './auth.ts'
 import type { ScreenRoute } from './routes.ts'
-import { tenantPath } from './routes.ts'
+import { matchRoute, tenantPath } from './routes.ts'
 import { LoginScreen } from './screens/Authentication & Shared/AU01/LoginScreen.tsx'
 import { TenantSelectionScreen } from './screens/Authentication & Shared/AU02/TenantSelectionScreen.tsx'
 import { RecoveryRequestScreen } from './screens/Authentication & Shared/AU03/RecoveryRequestScreen.tsx'
@@ -196,7 +196,18 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
 export default function App({ controller = sessions }: { controller?: SessionController } = {}) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const { path, navigate } = usePath()
+  const financeRefreshPath = useRef<string | null>(null)
   useEffect(() => { controller.finishInitialCheck() }, [controller])
+  useEffect(() => {
+    if (matchRoute(path)?.route.id !== 'BL10') { financeRefreshPath.current = null; return }
+    if (state.status !== 'authenticated' || state.session.navigation?.screenIds.includes('BL10')
+      || financeRefreshPath.current === path) return
+    // An invoice issued after login can make BL10 newly eligible. Refresh
+    // server evidence once for this route; the screen stays forbidden until
+    // the new navigation response authorizes it.
+    financeRefreshPath.current = path
+    void controller.revalidate(false).catch(() => {})
+  }, [path, state, controller])
   useEffect(() => {
     if (state.status !== 'authenticated' || !state.session.navigation) return
     const evidence = state.session.navigation
