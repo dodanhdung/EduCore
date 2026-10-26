@@ -1804,10 +1804,10 @@ describe('R4 native PostgreSQL', () => {
     const authorization = `Bearer ${accountant.accessToken}`;
     const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .set('Authorization', authorization).expect(200);
-    expect(menu.body.screenIds).toEqual(['OP04', 'OP05']);
+    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'OP04', 'OP05']);
     const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
-      .set('Authorization', authorization).expect(404);
-    expect(resource.body.code).toBe('NOT_FOUND');
+      .set('Authorization', authorization).expect(403);
+    expect(resource.body.code).toBe('FORBIDDEN');
   });
   native('A18 no-membership account authenticates but cannot select a tenant', async () => {
     const isolatedEmail = randomUUID() + '@r4.invalid';
@@ -2267,6 +2267,307 @@ describe('R4 native PostgreSQL', () => {
         .expect(200);
     },
   );
+  native('R8 F01 HTTP TOP_UP, PAY and scoped finance projections preserve one effect', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const receiptReference = randomUUID(), topKey = randomUUID(), payKey = randomUUID();
+    const top = { amountVnd: '1000000', method: 'BANK_TRANSFER', receiptReference,
+      evidence: 'Verified test transfer', reason: 'Manual receipt verified', confirmed: true };
+    const intake = await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', topKey).send(top).expect(200);
+    expect(intake.body.balanceVnd).toBe('1000000');
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', topKey).send(top).expect(200);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', topKey)
+      .send({ ...top, amountVnd: '2' }).expect(409);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ ...top, amountVnd: '0' }).expect(400);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ ...top, method: 'CASH', receiptReference: ` ${receiptReference} ` }).expect(409);
+    expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(0);
+    const payment = { amountVnd: '300000', reason: 'Explicit invoice settlement', confirmed: true };
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/wallet-payments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', payKey).send(payment).expect(200);
+    const receipt = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/outcomes/PAY/${payKey}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(receipt.body.status).toBe('COMMITTED');
+    expect(Object.keys(receipt.body.receipt).sort()).toEqual(['id', 'status']);
+    expect(receipt.body.receipt.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect((await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/outcomes/PAY/${randomUUID()}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.status).toBe('PENDING_RECONCILIATION');
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/wallet-payments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', payKey).send(payment).expect(200);
+    const wallet = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(wallet.body.balanceVnd).toBe('700000');
+    expect(wallet.body.verifiedCashVnd).toBe('1000000');
+    expect(wallet.body.walletDebitsVnd).toBe('300000');
+    expect(wallet.body.internalCreditsVnd).toBe('0');
+    expect(wallet.body.transactions.map((tx: { kind: string }) => tx.kind)).toEqual(['INVOICE_PAYMENT', 'TOP_UP']);
+    expect(wallet.body.invoices[0].netAllocatedVnd).toBe('300000');
+    const due = await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(due.body.outstandingVnd).toBe('500000');
+    const other = await fresh();
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+    const learner = await actor(f, 'STUDENT');
+    await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(learner.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(learner.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ ...top, receiptReference: randomUUID() }).expect(403);
+    await request(app.getHttpServer()).get(base + `/finance/students/${f.student}/outcomes/PAY/${payKey}`)
+      .auth(learner.accessToken, { type: 'bearer' }).expect(403);
+    expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(1);
+  });
+  native('R8 H02 receipt lookup authorizes before unknown or existing key reads', async () => {
+    const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
+    const topKey = randomUUID(), payKey = randomUUID(), unknownKey = randomUUID();
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', topKey)
+      .send({ amountVnd: '500000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Verified receipt', reason: 'Manual intake', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/wallet-payments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', payKey)
+      .send({ amountVnd: '100000', reason: 'Explicit payment', confirmed: true }).expect(200);
+    const outcome = (student: string, op: string, key: string) =>
+      base + `/finance/students/${student}/outcomes/${op}/${key}`;
+    expect((await request(app.getHttpServer()).get(outcome(f.student, 'TOP_UP', topKey))
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.status).toBe('COMMITTED');
+    expect((await request(app.getHttpServer()).get(outcome(f.student, 'PAY', payKey))
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.status).toBe('COMMITTED');
+    expect((await request(app.getHttpServer()).get(outcome(f.student, 'TOP_UP', unknownKey))
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.status).toBe('PENDING_RECONCILIATION');
+    const learner = await actor(f, 'STUDENT');
+    for (const key of [unknownKey, topKey]) await request(app.getHttpServer())
+      .get(outcome(f.student, 'TOP_UP', key)).auth(learner.accessToken, { type: 'bearer' }).expect(403);
+    const other = await fresh();
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/finance/students/${f.student}/outcomes/TOP_UP/${topKey}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+    const accountant = await actor(f, 'ACCOUNTANT');
+    await request(app.getHttpServer()).get(outcome(f.student, 'TOP_UP', topKey))
+      .auth(accountant.accessToken, { type: 'bearer' }).expect(200);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${accountant.assignment}`;
+    for (const key of [unknownKey, topKey]) await request(app.getHttpServer())
+      .get(outcome(f.student, 'TOP_UP', key)).auth(accountant.accessToken, { type: 'bearer' }).expect(403);
+  });
+  native('R8 H03 decision outcome proves the original approval key and payload', async () => {
+    const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
+    const asked = await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-100000', reason: 'Correction request' }).expect(201);
+    const approvalId = asked.body.id as string, decisionKey = randomUUID();
+    const decisionPath = base + `/approvals/${approvalId}/decisions`;
+    const outcomePath = base + `/approvals/${approvalId}/decision-outcomes`;
+    await request(app.getHttpServer()).post(decisionPath)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', decisionKey)
+      .send({ decision: 'APPROVE', reason: 'Manual approval evidence' }).expect(200);
+    const committed = await request(app.getHttpServer()).post(outcomePath)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ key: decisionKey, decision: 'APPROVE', reason: 'Manual approval evidence' }).expect(200);
+    expect(committed.body).toMatchObject({ status: 'COMMITTED', approvalId, decision: 'APPROVE', decisionStatus: 'APPROVED' });
+    expect((await request(app.getHttpServer()).post(outcomePath)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ key: randomUUID(), decision: 'APPROVE', reason: 'Manual approval evidence' }).expect(200)).body.status)
+      .toBe('PENDING_RECONCILIATION');
+    await request(app.getHttpServer()).post(outcomePath)
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ key: decisionKey, decision: 'APPROVE', reason: 'Different payload' }).expect(409);
+    const detail = await request(app.getHttpServer()).get(base + `/approvals/${approvalId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(detail.body.status).toBe('APPROVED');
+    expect(detail.body.executionReceipt).toBeNull();
+    expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE approval_request_id=${approvalId}`)[0].n).toBe(1);
+    expect((await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE approval_request_id=${approvalId}`)[0].n).toBe(0);
+  });
+  native('R8 decision receipt isolation checks approval identity before payload conflict', async () => {
+    const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
+    const create = (reason: string) => request(app.getHttpServer())
+      .post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-100000', reason }).expect(201);
+    const first = await create('First correction'), second = await create('Second correction');
+    const approvalId = first.body.id as string, otherApprovalId = second.body.id as string;
+    expect(otherApprovalId).not.toBe(approvalId);
+    const key = randomUUID(), reason = 'Reviewed first correction';
+    await request(app.getHttpServer()).post(base + `/approvals/${approvalId}/decisions`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key)
+      .send({ decision: 'APPROVE', reason }).expect(200);
+    const outcome = (tenant: string, id: string) =>
+      `/api/v1/tenants/${tenant}/approvals/${id}/decision-outcomes`;
+    const lookup = (id: string, operationKey: string, payloadReason = reason) =>
+      request(app.getHttpServer()).post(outcome(f.tenant, id))
+        .auth(s.accessToken, { type: 'bearer' })
+        .send({ key: operationKey, decision: 'APPROVE', reason: payloadReason });
+    expect((await lookup(approvalId, key).expect(200)).body).toMatchObject({
+      status: 'COMMITTED', approvalId, decisionStatus: 'APPROVED',
+    });
+    const pending = { status: 'PENDING_RECONCILIATION' };
+    expect((await lookup(approvalId, randomUUID()).expect(200)).body).toEqual(pending);
+    expect((await lookup(otherApprovalId, key).expect(200)).body).toEqual(pending);
+    await lookup(approvalId, key, 'Wrong original reason').expect(409);
+    const learner = await actor(f, 'STUDENT');
+    await request(app.getHttpServer()).post(outcome(f.tenant, approvalId))
+      .auth(learner.accessToken, { type: 'bearer' })
+      .send({ key, decision: 'APPROVE', reason }).expect(403);
+    const wrongStudent = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student2);
+    await request(app.getHttpServer()).post(outcome(f.tenant, approvalId))
+      .auth(wrongStudent.accessToken, { type: 'bearer' })
+      .send({ key, decision: 'APPROVE', reason }).expect(403);
+    const scoped = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
+    await request(app.getHttpServer()).post(outcome(f.tenant, approvalId))
+      .auth(scoped.accessToken, { type: 'bearer' })
+      .send({ key, decision: 'APPROVE', reason }).expect(200);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${scoped.assignment}`;
+    await request(app.getHttpServer()).post(outcome(f.tenant, approvalId))
+      .auth(scoped.accessToken, { type: 'bearer' })
+      .send({ key, decision: 'APPROVE', reason }).expect(403);
+    const otherTenant = await fresh();
+    await request(app.getHttpServer()).post(outcome(otherTenant.tenant, approvalId))
+      .auth(s.accessToken, { type: 'bearer' })
+      .send({ key, decision: 'APPROVE', reason }).expect(403);
+  });
+  native('R8 decision outcome supports rejected and information-request receipts', async () => {
+    for (const [decision, decisionStatus] of [
+      ['REJECT', 'REJECTED'], ['REQUEST_INFO', 'NEEDS_INFORMATION'],
+    ] as const) {
+      const { f, s, invoice } = await issuedFixture(), base = `/api/v1/tenants/${f.tenant}`;
+      const asked = await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+        .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+        .send({ amountDeltaVnd: '-100000', reason: 'Review required' }).expect(201);
+      const approvalId = asked.body.id as string, key = randomUUID(), reason = `Manual ${decision}`;
+      await request(app.getHttpServer()).post(base + `/approvals/${approvalId}/decisions`)
+        .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', key)
+        .send({ decision, reason }).expect(200);
+      const path = base + `/approvals/${approvalId}/decision-outcomes`;
+      expect((await request(app.getHttpServer()).post(path)
+        .auth(s.accessToken, { type: 'bearer' })
+        .send({ key, decision, reason }).expect(200)).body).toMatchObject({
+        status: 'COMMITTED', approvalId, decision, decisionStatus,
+      });
+      await request(app.getHttpServer()).post(path)
+        .auth(s.accessToken, { type: 'bearer' })
+        .send({ key, decision, reason: 'Different reason' }).expect(409);
+    }
+  });
+  native('R8 F02 HTTP request, decision, execution and receipt stay separate', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '800000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Verified receipt', reason: 'Manual intake', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/wallet-payments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '800000', reason: 'Explicit payment', confirmed: true }).expect(200);
+    const requested = await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-100000', reason: 'Approved reduction' }).expect(201);
+    const approvalId = requested.body.id as string;
+    const before = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(before.body.balanceVnd).toBe('0');
+    const list = await request(app.getHttpServer()).get(base + '/approvals')
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(list.body.items.find((a: { id: string }) => a.id === approvalId)?.status).toBe('PENDING_APPROVAL');
+    await request(app.getHttpServer()).post(base + `/approvals/${approvalId}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Premature execution' }).expect(422);
+    await request(app.getHttpServer()).post(base + `/approvals/${approvalId}/decisions`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ decision: 'APPROVE', reason: 'Manual decision' }).expect(200);
+    const approved = await request(app.getHttpServer()).get(base + `/approvals/${approvalId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(approved.body.status).toBe('APPROVED');
+    expect(approved.body.executionReceipt).toBeNull();
+    const execution = await request(app.getHttpServer()).post(base + `/approvals/${approvalId}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Explicit execution' }).expect(200);
+    expect(execution.body.refundVnd).toBe('100000');
+    const done = await request(app.getHttpServer()).get(base + `/approvals/${approvalId}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(done.body.status).toBe('COMPLETED');
+    expect(done.body.executionReceipt.refundVnd).toBe('100000');
+    expect((await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.balanceVnd).toBe('100000');
+  });
+  native('R8 F03 invalid TOP_UP reversal is full, approved and balance bounded', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const top = await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '800000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Verified receipt', reason: 'Original intake', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/invoices/${invoice}/wallet-payments`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '100000', reason: 'Valid payment', confirmed: true }).expect(200);
+    const asked = await request(app.getHttpServer()).post(base + `/wallet/top-ups/${top.body.id}/reversal-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Invalid receipt discovered', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/decisions`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ decision: 'APPROVE', reason: 'Manual review' }).expect(200);
+    const executionKey = randomUUID();
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', executionKey)
+      .send({ reason: 'Try full reversal' }).expect(422);
+    expect((await request(app.getHttpServer()).get(base + `/approvals/${asked.body.id}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.status).toBe('APPROVED');
+    const wallet = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(wallet.body.balanceVnd).toBe('700000');
+    expect(wallet.body.transactions.filter((tx: { kind: string }) => tx.kind === 'TOP_UP_REVERSAL')).toHaveLength(0);
+    expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(1);
+    await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '100000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Verified separate receipt', reason: 'New legitimate intake', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', executionKey)
+      .send({ reason: 'Try full reversal' }).expect(200);
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Replay completed reversal' }).expect(200);
+    const final = await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(final.body.balanceVnd).toBe('0');
+    expect(final.body.transactions.filter((tx: { kind: string }) => tx.kind === 'TOP_UP_REVERSAL')).toHaveLength(1);
+    expect(final.body.transactions.filter((tx: { id: string }) => tx.id === top.body.id)).toHaveLength(1);
+  });
+  native('R8 H01 net verified cash follows signed TOP_UP and reversal history', async () => {
+    const f = await fresh(), s = await sessionFor(f), base = `/api/v1/tenants/${f.tenant}`;
+    const top = await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '500000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Verified receipt', reason: 'Manual intake', confirmed: true }).expect(200);
+    const walletPath = base + `/finance/students/${f.student}`;
+    const before = await request(app.getHttpServer()).get(walletPath).auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(before.body.verifiedCashVnd).toBe('500000');
+    expect(before.body.balanceVnd).toBe('500000');
+    const asked = await request(app.getHttpServer()).post(base + `/wallet/top-ups/${top.body.id}/reversal-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Invalid source receipt', confirmed: true }).expect(200);
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/decisions`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ decision: 'APPROVE', reason: 'Manual correction decision' }).expect(200);
+    await request(app.getHttpServer()).post(base + `/approvals/${asked.body.id}/execute`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Explicit full reversal' }).expect(200);
+    const after = await request(app.getHttpServer()).get(walletPath).auth(s.accessToken, { type: 'bearer' }).expect(200);
+    expect(after.body.verifiedCashVnd).toBe('0');
+    expect(after.body.balanceVnd).toBe('0');
+    expect(after.body.reversedTopUpsVnd).toBe('500000');
+    const original = after.body.transactions.find((tx: { id: string }) => tx.id === top.body.id);
+    const reversal = after.body.transactions.find((tx: { reversedTopUpId: string }) => tx.reversedTopUpId === top.body.id);
+    expect(original).toMatchObject({ kind: 'TOP_UP', amountVnd: '500000' });
+    expect(reversal).toMatchObject({ kind: 'TOP_UP_REVERSAL', amountVnd: '-500000' });
+    expect(reversal.id).not.toBe(original.id);
+    await expect(admin`UPDATE wallet_transactions SET amount_vnd=1 WHERE id=${top.body.id}`).rejects.toThrow(/IMMUTABLE/);
+  });
   native(
     'B02 reject/request-info are durable and cannot be executed',
     async () => {

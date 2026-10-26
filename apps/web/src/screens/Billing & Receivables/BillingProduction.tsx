@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiClient, safeErrorMessage } from '../../api.ts'
+import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { tenantPath } from '../../routes.ts'
 import { BillingBadge, BillingCard, BillingHeading, BillingState } from './BillingPrimitives.tsx'
 import './BillingScreens.css'
@@ -22,6 +22,12 @@ const names: Record<Id, string> = { BL01: 'Bảng đơn giá học phí', BL02: 
 const money = (value: string) => `${new Intl.NumberFormat('vi-VN').format(BigInt(value))} ₫`
 const moneyOr = (value: string | undefined) => value && /^-?(0|[1-9]\d*)$/.test(value) ? money(value) : '—'
 const date = (value: string | null) => value ? new Date(value).toLocaleString('vi-VN') : '—'
+function rememberedPayment(key: string): { key: string; body: { amountVnd: string; reason: string; confirmed: true } } | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(key) ?? 'null')
+    return typeof value?.key === 'string' && typeof value?.body?.amountVnd === 'string' ? value : null
+  } catch { return null }
+}
 
 export function BillingProduction({ id, tenantId, token, selectedId, api, navigate }: {
   id: Id; tenantId: string; token: string; selectedId?: string; api: ApiClient; navigate: (path: string) => void
@@ -44,10 +50,16 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
   const [confirmed, setConfirmed] = useState(false)
   const [result, setResult] = useState<GenerationResult | null>(null)
   const [receivable, setReceivable] = useState<Receivable | null>(null)
+  const [wallet, setWallet] = useState<{ balanceVnd: string; canTopUp: boolean } | null>(null)
+  const [paymentAmount, setPaymentAmount] = useState('')
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
+  const paymentStorageKey = `educore:wallet-payment:${tenantId}:${selectedId ?? ''}`
+  const initialPaymentPending = rememberedPayment(paymentStorageKey)
+  const paymentPending = useRef(initialPaymentPending)
+  const [paymentAwaiting, setPaymentAwaiting] = useState(Boolean(initialPaymentPending))
   const pendingKey = useRef<string | null>(null)
   const path = id === 'BL01' ? '/billing/price-rules' : id === 'BL02' ? '/billing/sibling-evidence'
     : id === 'BL03' ? '/billing/periods' : id === 'BL04' ? '/billing/drafts'
@@ -59,7 +71,7 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
     { method: 'POST', body, idempotencyKey: key })
   useEffect(() => {
     const abort = new AbortController()
-    setLoading(true); setError(''); setData(undefined); setReceivable(null)
+    setLoading(true); setError(''); setData(undefined); setReceivable(null); setWallet(null)
     const query = list ? `?page=${page}&pageSize=20` : ''
     Promise.all([read<unknown>(path + query),
       id === 'BL03' ? read<Page<Student>>('/billing/students?pageSize=100') : Promise.resolve(null),
@@ -74,6 +86,11 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
             const value = await read<Receivable>(`/billing/invoices/${encodeURIComponent(selectedId)}/receivable`)
             if (!abort.signal.aborted) setReceivable(value)
           } catch { if (!abort.signal.aborted) setReceivable(null) }
+          const invoice = value as Detail
+          try {
+            const account = await read<{ balanceVnd: string; canTopUp: boolean }>(`/finance/students/${encodeURIComponent(invoice.studentId)}`)
+            if (!abort.signal.aborted) setWallet(account)
+          } catch { if (!abort.signal.aborted) setWallet(null) }
         }
       }).catch((cause) => { if (!abort.signal.aborted) setError(safeErrorMessage(cause)) })
       .finally(() => { if (!abort.signal.aborted) setLoading(false) })
@@ -82,15 +99,46 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
 
   async function act(suffix: string, body: unknown, next?: (value: GenerationResult | { id: string }) => void) {
     setWorking(true); setError('')
-    const key = pendingKey.current ?? crypto.randomUUID()
+    const isPayment = suffix.endsWith('/wallet-payments')
+    const prior = isPayment ? paymentPending.current : null
+    const key = prior?.key ?? pendingKey.current ?? crypto.randomUUID()
+    const payload = prior?.body ?? body
     pendingKey.current = key
+    if (isPayment && !prior) {
+      paymentPending.current = { key, body: payload as { amountVnd: string; reason: string; confirmed: true } }
+      setPaymentAwaiting(true)
+      try { window.sessionStorage.setItem(paymentStorageKey, JSON.stringify(paymentPending.current)) } catch { /* in-memory key remains */ }
+    }
     try {
-      const value = await write<GenerationResult | { id: string }>(suffix, body, key)
+      const value = await write<GenerationResult | { id: string }>(suffix, payload, key)
       pendingKey.current = null
+      if (isPayment) { paymentPending.current = null; setPaymentAwaiting(false); try { window.sessionStorage.removeItem(paymentStorageKey) } catch { /* no-op */ } }
       setReason(''); setConfirmed(false); setRevision((old) => old + 1)
       next?.(value)
-    } catch (cause) { setError(safeErrorMessage(cause)) }
+    } catch (cause) {
+      if (isPayment && cause instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(cause.status)) {
+        paymentPending.current = null; pendingKey.current = null; setPaymentAwaiting(false)
+        try { window.sessionStorage.removeItem(paymentStorageKey) } catch { /* no-op */ }
+      }
+      setError(isPayment && !(cause instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(cause.status))
+        ? 'Payment result needs receipt reconciliation with the original key.' : safeErrorMessage(cause))
+    }
     finally { setWorking(false) }
+  }
+  async function checkPaymentReceipt() {
+    const operation = paymentPending.current
+    if (!operation) return
+    const invoice = data as Detail | undefined
+    if (!invoice?.studentId) { setError('Payment target is unavailable. Keep the original operation key.'); return }
+    try {
+      const outcome = await read<{ status: string }>(`/finance/students/${encodeURIComponent(invoice.studentId)}/outcomes/PAY/${encodeURIComponent(operation.key)}`)
+      if (outcome.status === 'COMMITTED') {
+        paymentPending.current = null; pendingKey.current = null
+        setPaymentAwaiting(false)
+        try { window.sessionStorage.removeItem(paymentStorageKey) } catch { /* no-op */ }
+        setError(''); setRevision((n) => n + 1)
+      } else setError('No committed payment receipt is visible yet. Keep the same operation key.')
+    } catch { setError('Receipt lookup is unavailable. Keep the same operation key.') }
   }
   const nextPage = (value: number) => { setPage(value); setData(undefined) }
   const pageControls = (value: Page<unknown>) => <div className="billing-pagination"><span>Trang {value.page} · {value.total} kết quả</span><div>
@@ -186,6 +234,21 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
       </BillingCard>}
       {id === 'BL07' && <BillingCard title="Công nợ hiện tại" hint="Số dư ví chưa phân bổ không làm giảm công nợ.">
         {receivable ? <p>Nghĩa vụ sau điều chỉnh: <strong>{money(receivable.netObligationVnd)}</strong> · Đã phân bổ: <strong>{money(receivable.netAllocatedVnd)}</strong> · Còn phải thu: <strong>{money(receivable.outstandingVnd)}</strong></p> : <BillingState title="Chưa có số liệu công nợ">Không hiển thị số phải thu suy đoán từ ví hoặc snapshot gốc.</BillingState>}
+      </BillingCard>}
+      {id === 'BL07' && <BillingCard title="BL08 · Thanh toán rõ ràng từ ví">
+        {paymentAwaiting && <><p role="alert">Có Payment đang chờ đối soát biên nhận cùng khóa gốc.</p>
+          <button className="billing-button billing-button-secondary" onClick={() => void checkPaymentReceipt()}>Kiểm tra biên nhận Payment</button></>}
+        {wallet?.canTopUp && receivable && detail.status === 'ISSUED' && BigInt(receivable.outstandingVnd) > 0n ? <>
+          <p>Ví khả dụng: {money(wallet.balanceVnd)} · Còn thu: {money(receivable.outstandingVnd)}</p>
+          <label>Số tiền VND<input inputMode="numeric" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} /></label>
+          <label>Lý do / tham chiếu<input value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          <label className="billing-check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> Xác nhận thanh toán hóa đơn này từ ví</label>
+          <button className="billing-button" disabled={working || paymentAwaiting || !/^[1-9]\d*$/.test(paymentAmount) || !reason.trim() || !confirmed ||
+            BigInt(paymentAmount || '0') > BigInt(wallet.balanceVnd) || BigInt(paymentAmount || '0') > BigInt(receivable.outstandingVnd)}
+            onClick={() => act(`/invoices/${detail.id}/wallet-payments`, { amountVnd: paymentAmount, reason, confirmed: true }, () => setPaymentAmount(''))}>Thanh toán từ ví</button>
+        </> : <p>Thanh toán ví chỉ mở cho nhân sự có quyền hiện hành trên hóa đơn ISSUED còn công nợ.</p>}
+        <button className="billing-button billing-button-secondary" onClick={() => go('/finance/receivables')}>Mở ví và công nợ</button>
+        {detail.status === 'ISSUED' && <button className="billing-button billing-button-secondary" onClick={() => go(`/finance/invoices/${detail.id}/adjust`)}>Yêu cầu điều chỉnh hoặc hủy</button>}
       </BillingCard>}
       {id === 'BL07' && <BillingCard title="Lịch sử phân bổ và điều chỉnh">
         {detail.payments.length ? <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Khoản thu</th><th>Ngày</th><th>Nguồn</th><th>Số tiền</th><th>Phân bổ</th><th>Trạng thái</th></tr></thead><tbody>{detail.payments.map((payment) => <tr key={payment.id}><td>{payment.id}</td><td>{date(payment.paidAt)}</td><td>{payment.method}</td><td>{money(payment.amountVnd)}</td><td>{payment.allocations.map((allocation) => <div key={allocation.id}>{allocation.kind}: {money(allocation.amountVnd)}</div>)}</td><td>{payment.reversed ? 'Đã đảo' : 'Đã ghi nhận'}</td></tr>)}</tbody></table></div> : <BillingState title="Chưa có khoản thu">Không suy ra thanh toán từ số dư ví.</BillingState>}
