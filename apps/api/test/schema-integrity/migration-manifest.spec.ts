@@ -11,7 +11,7 @@ it('matches the reviewed ordered migration manifest and SQL', () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
-  expect(names).toHaveLength(49);
+  expect(names).toHaveLength(50);
   expect(names.every((name) => /^[0-9]{12}_[a-z0-9_]+$/.test(name))).toBe(true);
   expect(readFileSync(resolve(root, 'migration_lock.toml'), 'utf8')).toContain(
     'provider = "postgresql"',
@@ -30,6 +30,6 @@ it('matches the reviewed ordered migration manifest and SQL', () => {
     hash.update('\0');
   }
   expect(hash.digest('hex')).toBe(
-    'd8235a21dbd4b8af8fc05aaf0af61c8a36d9df10ab537b79ceea4d921c0130b9',
+    '40cfa6a538e4d7b19fdec479f48bb00efcd2a2fa91d43b8a620e6c7f46d41d1f',
   );
 });

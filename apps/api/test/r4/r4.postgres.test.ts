@@ -3227,7 +3227,7 @@ describe('R4 native PostgreSQL', () => {
     expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(1);
   });
   native('R9 N01 finance navigation and split projections enforce TENANT/STUDENT, not CLASS', async () => {
-    const { f, invoice } = await issuedFixture();
+    const { f, s, invoice, period } = await issuedFixture();
     const payment = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
     const base = `/api/v1/tenants/${f.tenant}`;
     const [role] = await admin`SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT'`;
@@ -3266,6 +3266,13 @@ describe('R4 native PostgreSQL', () => {
       student_id: f.student, class_id: f.class2, status: 'ACTIVE',
       effective_from: '2020-01-01T00:00:00Z', created_by_membership_id: f.member });
     const classActor = await actor(f, 'MANAGER', 'CLASS', f.class2);
+    const topUp = await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic receipt', reason: 'Scope regression setup', confirmed: true }).expect(200);
+    const requested = await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-1000', reason: 'Scope regression setup' }).expect(201);
     const classGet = (path: string) => request(app.getHttpServer()).get(base + path)
       .auth(classActor.accessToken, { type: 'bearer' });
     const classNav = await classGet('/access/navigation').expect(200);
@@ -3276,20 +3283,75 @@ describe('R4 native PostgreSQL', () => {
     await classGet(`/finance/students/${f.student}/receivables`).expect(403);
     await classGet(`/finance/invoices/${invoice}/request-preview`).expect(403);
     await classGet(`/billing/invoices/${invoice}`).expect(403);
-    // Known R2 contract exposure: the invoice was generated from classId, yet
-    // a class2-only grant can read its aggregate financial state. This is a
-    // release blocker, not an assertion that the behavior is acceptable.
-    const crossClass = await classGet(`/invoices/${invoice}/receivable`).expect(200);
-    expect(crossClass.body.invoiceId).toBe(invoice);
-    const crossClassWallet = await classGet(`/students/${f.student}/wallet`).expect(200);
-    expect(crossClassWallet.body).toHaveProperty('balanceVnd');
+    const before = (await admin`SELECT
+      (SELECT balance_vnd FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='TOP_UP') top_ups,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant}) payments,
+      (SELECT count(*)::int FROM approval_requests WHERE tenant_id=${f.tenant}) approvals,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}) receipts,
+      (SELECT count(*)::int FROM audit_logs WHERE tenant_id=${f.tenant}) audits`)[0];
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
+    await classGet(`/students/${f.student}/wallet`).expect(403);
+    await classGet(`/finance/students/${f.student}/outcomes/TOP_UP/${randomUUID()}`).expect(403);
+    await classGet('/approvals').expect(403);
+    await classGet(`/approvals/${requested.body.id}`).expect(403);
+    await request(app.getHttpServer()).post(base + `/approvals/${requested.body.id}/decision-outcomes`)
+      .auth(classActor.accessToken, { type: 'bearer' })
+      .send({ key: randomUUID(), decision: 'APPROVE', reason: 'Denied' }).expect(403);
+    const classPost = (path: string, body: object) => request(app.getHttpServer()).post(base + path)
+      .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID()).send(body);
+    await classPost(`/invoices/${invoice}/wallet-payments`,
+      { amountVnd: '1000', reason: 'Denied', confirmed: true }).expect(403);
+    await classPost(`/invoices/${invoice}/cancellation-requests`,{ reason: 'Denied' }).expect(403);
+    await classPost(`/wallet/top-ups/${topUp.body.id}/reversal-requests`,
+      { reason: 'Denied', confirmed: true }).expect(403);
+    await classPost(`/approvals/${requested.body.id}/decisions`,
+      { decision: 'APPROVE', reason: 'Denied' }).expect(403);
+    await classPost(`/approvals/${requested.body.id}/execute`,{ reason: 'Denied' }).expect(403);
+    await classPost(`/billing/periods/${period}/students/${f.student}/generations`,
+      { reason: 'Denied' }).expect(403);
+    const [issuedGeneration] = await admin`SELECT br.current_generation_id id FROM invoices i
+      JOIN billing_runs br ON br.tenant_id=i.tenant_id AND br.id=i.billing_run_id
+      WHERE i.tenant_id=${f.tenant} AND i.id=${invoice}`;
+    await classPost(`/billing/drafts/${invoice}/issue`,
+      { reason: 'Denied', confirmed: true, expectedGenerationId: issuedGeneration.id }).expect(403);
     await request(app.getHttpServer()).post(base + `/students/${f.student}/wallet/top-ups`)
       .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
       .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
-        evidence: 'Synthetic class-scope probe', reason: 'Cross-class probe', confirmed: true }).expect(200);
+        evidence: 'Synthetic class-scope probe', reason: 'Cross-class probe', confirmed: true }).expect(403);
     await request(app.getHttpServer()).post(base + `/invoices/${invoice}/adjustment-requests`)
       .auth(classActor.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
-      .send({ amountDeltaVnd: '-1000', reason: 'Cross-class probe' }).expect(201);
+      .send({ amountDeltaVnd: '-1000', reason: 'Cross-class probe' }).expect(403);
+    const after = (await admin`SELECT
+      (SELECT balance_vnd FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='TOP_UP') top_ups,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant}) payments,
+      (SELECT count(*)::int FROM approval_requests WHERE tenant_id=${f.tenant}) approvals,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}) receipts,
+      (SELECT count(*)::int FROM audit_logs WHERE tenant_id=${f.tenant}) audits`)[0];
+    expect(after).toEqual(before);
+    const studentActor = await actor(f, 'MANAGER', 'STUDENT', f.student);
+    const tenantActor = await actor(f, 'MANAGER', 'TENANT');
+    await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(200);
+    await request(app.getHttpServer()).get(base + `/students/${f.student2}/wallet`)
+      .auth(studentActor.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).get(base + `/invoices/${invoice}/receivable`)
+      .auth(tenantActor.accessToken, { type: 'bearer' }).expect(200);
+    const mixedAssignment = await put(admin as unknown as Query,'membership_roles',{
+      tenant_id:f.tenant,membership_id:classActor.member,role_id:role.id,
+      assigned_by_membership_id:f.member,
+    });
+    await put(admin as unknown as Query,'access_scopes',{
+      tenant_id:f.tenant,membership_role_id:mixedAssignment,scope_kind:'STUDENT',student_id:f.student,
+    });
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
+    const [invoicePermission] = await admin`SELECT id FROM permissions WHERE code='invoice.read'`;
+    await admin`INSERT INTO role_permissions(id,tenant_id,role_id,permission_id)
+      VALUES(gen_random_uuid(),${f.tenant},${role.id},${invoicePermission.id})`;
+    await classGet(`/invoices/${invoice}/receivable`).expect(200);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${mixedAssignment}`;
+    await classGet(`/invoices/${invoice}/receivable`).expect(403);
   });
   native('R9 N02 invoice preview binds all rights to one student and excludes wallet data', async () => {
     const { f, invoice } = await issuedFixture();
@@ -5189,7 +5251,7 @@ describe('R4 native PostgreSQL', () => {
     await expect(runtime.managementRead(parent.accessToken, f.tenant, 'PARENTS')).rejects.toThrow(/PERMISSION_OR_SCOPE_DENIED/);
   });
   native(
-    'A15 unrelated TENANT role cannot widen a CLASS financial grant',
+    'A15 unrelated TENANT role cannot rescue a CLASS-only financial grant',
     async () => {
       const f = await fresh(),
         s = await sessionFor(f),
@@ -5210,7 +5272,7 @@ describe('R4 native PostgreSQL', () => {
       await request(app.getHttpServer())
         .get(`/api/v1/tenants/${f.tenant}/students/${f.student}/wallet`)
         .auth(a.accessToken, { type: 'bearer' })
-        .expect(200);
+        .expect(403);
     },
   );
   native(
