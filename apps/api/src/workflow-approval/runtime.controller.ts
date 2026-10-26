@@ -211,6 +211,78 @@ export class RuntimeController {
       uuid(id),
     );
   }
+  @Get('finance/students') financeStudents(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string, @Query() q: unknown,
+  ) {
+    const p = page(q);
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_students($1::uuid,$2::int,$3::int) result',
+      uuid(t), p.page ?? 1, p.pageSize ?? 20);
+  }
+  @Get('finance/students/:id') financeWallet(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string, @Param('id') id: string,
+  ) {
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_wallet($1::uuid,$2::uuid) result',
+      uuid(t), uuid(id));
+  }
+  @Get('finance/students/:id/outcomes/:operation/:key') financeOutcome(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string,
+    @Param('id') id: string,
+    @Param('operation') operation: string, @Param('key') key: string,
+  ) {
+    if (!['TOP_UP', 'PAY', 'ADJUST_REQUEST', 'CANCEL_REQUEST', 'REVERSE_TOP_UP_REQUEST', 'EXECUTE_APPROVAL'].includes(operation))
+      throw new BadRequestException('INVALID_OPERATION');
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_outcome($1::uuid,$2::uuid,$3::text,$4::text) result',
+      uuid(t), uuid(id), operation, field({ key }, 'key', 200));
+  }
+  @Post('students/:id/wallet/top-ups') @HttpCode(200) topUp(
+    @Headers('authorization') a: string | undefined,
+    @Headers('idempotency-key') key: string,
+    @Param('tenantId') t: string, @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
+    const b = object(input, ['amountVnd', 'method', 'receiptReference', 'evidence', 'reason', 'confirmed']);
+    if (b.confirmed !== true || typeof b.amountVnd !== 'string' || !/^[1-9]\d*$/.test(b.amountVnd)
+      || !['CASH', 'BANK_TRANSFER'].includes(String(b.method))) throw new BadRequestException('INVALID_TOP_UP');
+    return this.service.billing(bearer(a), uuid(t), {
+      operation: 'TOP_UP', studentId: uuid(id), key: field({ key }, 'key', 200),
+      amountVnd: b.amountVnd, method: b.method,
+      receiptReference: field(b, 'receiptReference', 200).normalize('NFC').trim(),
+      evidence: field(b, 'evidence', 2000), reason: field(b, 'reason', 2000),
+    });
+  }
+  @Post('invoices/:id/wallet-payments') @HttpCode(200) walletPayment(
+    @Headers('authorization') a: string | undefined,
+    @Headers('idempotency-key') key: string,
+    @Param('tenantId') t: string, @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
+    const b = object(input, ['amountVnd', 'reason', 'confirmed']);
+    if (b.confirmed !== true || typeof b.amountVnd !== 'string' || !/^[1-9]\d*$/.test(b.amountVnd))
+      throw new BadRequestException('INVALID_PAYMENT');
+    return this.service.billing(bearer(a), uuid(t), {
+      operation: 'PAY', invoiceId: uuid(id), key: field({ key }, 'key', 200),
+      amountVnd: b.amountVnd, reason: field(b, 'reason', 2000),
+    });
+  }
+  @Post('wallet/top-ups/:id/reversal-requests') @HttpCode(200) reverseTopUp(
+    @Headers('authorization') a: string | undefined,
+    @Headers('idempotency-key') key: string,
+    @Param('tenantId') t: string, @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
+    const b = object(input, ['reason', 'confirmed']);
+    if (b.confirmed !== true) throw new BadRequestException('CONFIRMATION_REQUIRED');
+    return this.service.billing(bearer(a), uuid(t), {
+      operation: 'REVERSE_TOP_UP_REQUEST', topUpId: uuid(id),
+      key: field({ key }, 'key', 200), reason: field(b, 'reason', 2000),
+    });
+  }
   @Get('invoices/:id/receivable') invoice(
     @Headers('authorization') a: string | undefined,
     @Param('tenantId') t: string,
@@ -261,14 +333,19 @@ export class RuntimeController {
     @Param('tenantId') t: string,
     @Query() q: unknown,
   ) {
-    return this.read(a, t, 'APPROVALS', page(q));
+    const p = page(q);
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_approvals($1::uuid,NULL,$2::int,$3::int) result',
+      uuid(t), p.page ?? 1, p.pageSize ?? 20);
   }
   @Get('approvals/:id') approval(
     @Headers('authorization') a: string | undefined,
     @Param('tenantId') t: string,
     @Param('id') id: string,
   ) {
-    return this.read(a, t, 'APPROVALS', { id: uuid(id) });
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_approvals($1::uuid,$2::uuid) result',
+      uuid(t), uuid(id));
   }
   @Post('invoices/:id/adjustment-requests') adjust(
     @Headers('authorization') a: string | undefined,
@@ -316,6 +393,18 @@ export class RuntimeController {
       ...b,
       approvalId: uuid(id),
     });
+  }
+  @Post('approvals/:id/decision-outcomes') @HttpCode(200) decisionOutcome(
+    @Headers('authorization') a: string | undefined,
+    @Param('tenantId') t: string, @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
+    const b = object(input, ['key', 'decision', 'reason']);
+    if (!['APPROVE', 'REJECT', 'REQUEST_INFO'].includes(String(b.decision)))
+      throw new BadRequestException('INVALID_DECISION');
+    return this.service.run(bearer(a),
+      'SELECT educore_r4.finance_decision_outcome($1::uuid,$2::uuid,$3::text,$4::text,$5::text) result',
+      uuid(t), uuid(id), field(b, 'key', 200), String(b.decision), field(b, 'reason', 2000));
   }
   @Post('approvals/:id/execute') @HttpCode(200) execute(
     @Headers('authorization') a: string | undefined,

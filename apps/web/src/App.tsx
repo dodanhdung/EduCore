@@ -17,8 +17,7 @@ import type { AcademicId } from './screens/Academic Management/AcademicScreens.t
 import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
 import { SchedulingAttendanceProduction } from './screens/Scheduling & Resources/SchedulingAttendanceProduction.tsx'
 import { BillingProduction } from './screens/Billing & Receivables/BillingProduction.tsx'
-import { ReceivablesWalletScreen } from './screens/Billing & Receivables/BL09/ReceivablesWalletScreen.tsx'
-import { InvoiceAdjustmentScreen } from './screens/Billing & Receivables/BL10/InvoiceAdjustmentScreen.tsx'
+import { FinanceProduction } from './screens/Billing & Receivables/FinanceProduction.tsx'
 import { AssignmentsProduction } from './screens/Assignments & Grading/AssignmentsProduction.tsx'
 import { TeacherHomeScreen } from './screens/Role Portals/PO01/TeacherHomeScreen.tsx'
 import { StudentHomeScreen } from './screens/Role Portals/PO02/StudentHomeScreen.tsx'
@@ -166,8 +165,11 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
             id={result.route.id as 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07'}
             tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.draftId ?? result.params.invoiceId}
             api={api} navigate={navigate} />
-      : result.route.id === 'BL09' ? <ReceivablesWalletScreen onOpenInvoice={(id) => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(id)}`))} />
-      : result.route.id === 'BL10' ? <InvoiceAdjustmentScreen selectedId={result.params.invoiceId} onBack={() => navigate(tenantPath(tenant.id, `/finance/invoices/${encodeURIComponent(result.params.invoiceId ?? '')}`))} />
+      : (['BL09', 'BL10', 'OP04', 'OP05'] as string[]).includes(result.route.id)
+        ? <FinanceProduction key={`${tenant.id}:${result.route.id}:${result.params.invoiceId ?? result.params.requestId ?? ''}`}
+            id={result.route.id as 'BL09' | 'BL10' | 'OP04' | 'OP05'} tenantId={tenant.id}
+            token={session!.accessToken} selectedId={result.params.invoiceId ?? result.params.requestId}
+            api={api} navigate={navigate} />
       : (['AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07'] as string[]).includes(result.route.id)
         ? <AssignmentsProduction key={`${tenant.id}:${result.route.id}:${result.params.assignmentId ?? result.params.submissionId ?? ''}`}
           id={result.route.id as 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'} tenantId={tenant.id}
