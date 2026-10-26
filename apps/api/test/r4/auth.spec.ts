@@ -11,13 +11,14 @@ import { SmtpOtpDelivery } from '../../src/identity-access/otp-delivery.js';
 describe('R4 authentication crypto and deployment boundaries', () => {
   const key = 'k'.repeat(64),
     tokens = new AccessTokens(key, 'educore', 'web');
+  // These real 64 MiB Argon2 calls can queue behind other parallel Vitest workers.
   it('Argon2id is salted and verifies only the supplied password', async () => {
     const hash = await passwordHash('Twelve+ password!');
     expect(hash).toMatch(/^\$argon2id\$v=19\$m=65536,t=3,p=1\$/);
     expect(await passwordMatches('Twelve+ password!', hash)).toBe(true);
     expect(await passwordMatches('Incorrect password!', hash)).toBe(false);
     expect(await passwordHash('Twelve+ password!')).not.toBe(hash);
-  });
+  }, 15_000);
   it('rejects short passwords and unknown stored hash algorithms', async () => {
     await expect(passwordHash('too short')).rejects.toThrow('PASSWORD_POLICY');
     expect(await passwordMatches('anything', '$plain$text')).toBe(false);
@@ -29,7 +30,7 @@ describe('R4 authentication crypto and deployment boundaries', () => {
     await expect(passwordHash('a'.repeat(1025))).rejects.toThrow('PASSWORD_POLICY');
     await expect(passwordHash('😀'.repeat(256))).resolves.toMatch(/^\$argon2id\$/);
     await expect(passwordHash('😀'.repeat(257))).rejects.toThrow('PASSWORD_POLICY');
-  });
+  }, 15_000);
   it('uses a strict JWT algorithm, issuer, audience and 15-minute lifespan', () => {
     const token = tokens.issue('user', 'session', 'tenant'),
       claims = tokens.verify(token);
