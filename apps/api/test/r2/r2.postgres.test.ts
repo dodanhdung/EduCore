@@ -1645,6 +1645,21 @@ describe('R2 actual NestJS services / restricted PostgreSQL LOGIN', () => {
       expect(await balance(c)).toBe('100000');
     }
   });
+  native('R9 C13 duplicate monthly generation waits and keeps one invoice', async () => {
+    for (const commit of [true, false]) {
+      const c = await fixture();
+      const body = { operation: 'GENERATE', studentId: c.f.student, periodId: c.period };
+      const r = await race(c, 'duplicate-monthly-generation',
+        { ...body, ...intent() }, { ...body, ...intent() }, commit);
+      expect(r.two.code).toBe(commit ? '23505' : null);
+      const [state] = await admin.unsafe(`SELECT
+        (SELECT count(*)::int FROM billing_runs WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) runs,
+        (SELECT count(*)::int FROM billing_run_generations WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) generations,
+        (SELECT count(*)::int FROM invoices WHERE tenant_id=$1 AND student_id=$2 AND period_id=$3) invoices`,
+        [c.f.tenant, c.f.student, c.period]);
+      expect(state).toMatchObject({ runs: 1, generations: 1, invoices: 1 });
+    }
+  });
   native('C04 two recomputes CAS, commit/rollback and old replay', async () => {
     for (const commit of [true, false]) {
       const c = await fixture();

@@ -3368,6 +3368,126 @@ describe('R4 native PostgreSQL', () => {
     expect((await request(app.getHttpServer()).get(base + `/finance/students/${f.student}`)
       .auth(s.accessToken, { type: 'bearer' }).expect(200)).body.balanceVnd).toBe('100000');
   });
+  native('R9 F01 authenticated source-to-invoice-to-wallet-to-approval chain persists once', async () => {
+    const { f, s, period } = await issuedFixture(false);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const billing = `${base}/billing`;
+    const get = (path: string) => request(app.getHttpServer()).get(path)
+      .auth(s.accessToken, { type: 'bearer' });
+    const post = (path: string, body: object, key = randomUUID()) =>
+      request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+        .set('Idempotency-Key', key).send(body);
+
+    expect((await get(`${billing}/price-rules`).expect(200)).body.items)
+      .toEqual([expect.objectContaining({ scope: 'COURSE', amountVnd: '800000' })]);
+    expect((await get(`${billing}/periods`).expect(200)).body.items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: period })]));
+    const generated = await post(`${billing}/periods/${period}/students/${f.student}/generations`,
+      { reason: 'R9 monthly source review' }).expect(200);
+    const invoice = generated.body.invoiceId as string;
+    expect(generated.body).toMatchObject({ status: 'DRAFT', totalVnd: '800000' });
+    const draft = await get(`${billing}/drafts/${invoice}`).expect(200);
+    expect(draft.body).toMatchObject({ id: invoice, currentGenerationId: generated.body.id, canIssue: true });
+    expect(draft.body.lines).toEqual([expect.objectContaining({
+      source: expect.objectContaining({ sessionId: f.session, participantId: f.participant,
+        sourceBusinessDate: '2025-09-20', unitPriceVnd: '800000' }),
+    })]);
+    const issued = await post(`${billing}/drafts/${invoice}/issue`,
+      { reason: 'Reviewed source', confirmed: true, expectedGenerationId: generated.body.id }).expect(200);
+    expect(issued.body.status).toBe('ISSUED');
+    const [original] = await admin`SELECT status, total_vnd::text total,
+      snapshot_json::text snapshot, invoice_number number FROM invoices WHERE tenant_id=${f.tenant} AND id=${invoice}`;
+    expect(original).toMatchObject({ status: 'ISSUED', total: '800000' });
+    expect(original.number).toMatch(/^INV-/);
+    expect((await admin`SELECT count(*)::int n FROM invoiced_participation_claims
+      WHERE tenant_id=${f.tenant} AND participant_id=${f.participant}`)[0].n).toBe(1);
+
+    const topKey = randomUUID(), payKey = randomUUID();
+    const topBody = { amountVnd: '800000', method: 'CASH', receiptReference: randomUUID(),
+      evidence: 'Verified synthetic receipt', reason: 'Manual verification', confirmed: true };
+    await post(`${base}/students/${f.student}/wallet/top-ups`, topBody, topKey).expect(200);
+    expect((await admin`SELECT count(*)::int n FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}`)[0].n).toBe(0);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body.outstandingVnd).toBe('800000');
+    const payBody = { amountVnd: '800000', reason: 'Explicit wallet allocation', confirmed: true };
+    await post(`${base}/invoices/${invoice}/wallet-payments`, payBody, payKey).expect(200);
+    await post(`${base}/invoices/${invoice}/wallet-payments`, payBody, payKey).expect(200);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body.outstandingVnd).toBe('0');
+    const asked = await post(`${base}/invoices/${invoice}/adjustment-requests`,
+      { amountDeltaVnd: '-100000', reason: 'Reviewed source correction' }).expect(201);
+    const approval = asked.body.id as string;
+    expect((await get(`${base}/approvals/${approval}`).expect(200)).body.status).toBe('PENDING_APPROVAL');
+    await post(`${base}/approvals/${approval}/decisions`,
+      { decision: 'APPROVE', reason: 'Manual approval' }).expect(200);
+    const approved = await get(`${base}/approvals/${approval}`).expect(200);
+    expect(approved.body).toMatchObject({ status: 'APPROVED', executionReceipt: null });
+    const [before] = await admin`SELECT
+      (SELECT count(*)::int FROM approval_decisions WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) decisions,
+      (SELECT count(*)::int FROM invoice_adjustments WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) adjustments,
+      (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance`;
+    expect(before).toMatchObject({ decisions: 1, adjustments: 0, balance: '0' });
+
+    const executeKey = randomUUID();
+    const execution = await post(`${base}/approvals/${approval}/execute`,
+      { reason: 'Explicit execution' }, executeKey).expect(200);
+    expect(execution.body).toMatchObject({ status: 'COMPLETED', refundVnd: '100000' });
+    await post(`${base}/approvals/${approval}/execute`,
+      { reason: 'Explicit execution' }, executeKey).expect(200);
+    const done = await get(`${base}/approvals/${approval}`).expect(200);
+    expect(done.body).toMatchObject({ status: 'COMPLETED',
+      executionReceipt: expect.objectContaining({ refundVnd: '100000' }) });
+    const [after] = await admin`SELECT
+      (SELECT count(*)::int FROM invoice_adjustments WHERE tenant_id=${f.tenant} AND approval_request_id=${approval}) adjustments,
+      (SELECT count(*)::int FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}) payments,
+      (SELECT coalesce(sum(amount_vnd),0)::text FROM receivable_allocations WHERE tenant_id=${f.tenant} AND invoice_id=${invoice}) allocated,
+      (SELECT count(*)::int FROM wallet_transactions WHERE tenant_id=${f.tenant} AND kind='INVOICE_REFUND'
+        AND payment_id IN (SELECT id FROM payments WHERE tenant_id=${f.tenant} AND invoice_id=${invoice})) refunds,
+      (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}
+        AND operation_type='ROOT_EFFECT' AND idempotency_key=${`APPROVAL:${approval}`}) root_receipts,
+      (SELECT balance_vnd::text FROM wallet_accounts WHERE tenant_id=${f.tenant} AND student_id=${f.student}) balance`;
+    expect(after).toMatchObject({ adjustments: 1, payments: 1, allocated: '700000', refunds: 1,
+      root_receipts: 1, balance: '100000' });
+    const [audit] = await admin`SELECT correlation_id::text correlation FROM audit_logs
+      WHERE tenant_id=${f.tenant} AND event_type='EXECUTE_APPROVAL' AND entity_id=${approval}`;
+    expect(audit.correlation).toBe(execution.headers['x-request-id']);
+    expect((await get(`${base}/invoices/${invoice}/receivable`).expect(200)).body)
+      .toMatchObject({ netObligationVnd: '700000', netAllocatedVnd: '700000', outstandingVnd: '0' });
+    const [immutable] = await admin`SELECT status, total_vnd::text total,
+      snapshot_json::text snapshot, invoice_number number FROM invoices WHERE tenant_id=${f.tenant} AND id=${invoice}`;
+    expect(immutable).toEqual(original);
+  });
+  native('R9 S05 wrong approver and ineligible self-approval leave decision absent', async () => {
+    const { f, s, invoice } = await issuedFixture();
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const otherManager = await actor(f, 'MANAGER');
+    const unrelated = await actor(f, 'ACADEMIC_STAFF');
+    const parent = await actor(f, 'PARENT');
+    const asked = await request(app.getHttpServer()).post(`${base}/invoices/${invoice}/adjustment-requests`)
+      .auth(s.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountDeltaVnd: '-10000', reason: 'Separate approval required' }).expect(201);
+    const path = `${base}/approvals/${asked.body.id}/decisions`;
+    const decision = { decision: 'APPROVE', reason: 'Reviewed by another Manager' };
+    await request(app.getHttpServer()).post(path).auth(unrelated.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(403);
+    await request(app.getHttpServer()).post(path).auth(s.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(403);
+    expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].n).toBe(0);
+    await request(app.getHttpServer()).post(`${base}/students/${f.student}/wallet/top-ups`)
+      .auth(parent.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID())
+      .send({ amountVnd: '1000', method: 'CASH', receiptReference: randomUUID(),
+        evidence: 'Synthetic', reason: 'Forbidden parent mutation', confirmed: true }).expect(403);
+    await request(app.getHttpServer()).get(`${base}/students/${f.student}/wallet`)
+      .auth(parent.accessToken, { type: 'bearer' }).expect(403);
+    await request(app.getHttpServer()).post(path).auth(otherManager.accessToken, { type: 'bearer' })
+      .set('Idempotency-Key', randomUUID()).send(decision).expect(200);
+    const [persisted] = await admin`SELECT status FROM approval_requests WHERE tenant_id=${f.tenant}
+      AND id=${asked.body.id}`;
+    expect(persisted.status).toBe('APPROVED');
+    expect((await admin`SELECT self_approved FROM approval_decisions WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].self_approved).toBe(false);
+    expect((await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE tenant_id=${f.tenant}
+      AND approval_request_id=${asked.body.id}`)[0].n).toBe(0);
+  });
   native('R8 F03 invalid TOP_UP reversal is full, approved and balance bounded', async () => {
     const { f, s, invoice } = await issuedFixture();
     const base = `/api/v1/tenants/${f.tenant}`;
@@ -3988,6 +4108,30 @@ describe('R4 native PostgreSQL', () => {
       ).toBe(1);
     },
   );
+  native('R9 X12 decision and explicit execution serialize across connections', async () => {
+    for (const commit of [true, false]) {
+      const { f, s, invoice } = await issuedFixture();
+      const ap = await runtime.billing(s.accessToken, f.tenant, {
+        ...intent(), operation: 'ADJUST_REQUEST', invoiceId: invoice, deltaVnd: '10000',
+      }) as { id: string };
+      const result = await race('decision-vs-execution', {
+        token: s.accessToken,
+        sql: 'SELECT educore_r2.r4_decide($1::uuid,$2::jsonb) result',
+        args: [f.tenant, JSON.stringify({ ...intent(), approvalId: ap.id, decision: 'APPROVE' })],
+      }, {
+        token: s.accessToken,
+        sql: 'SELECT educore_r2.execute($1::uuid,$2::jsonb) result',
+        args: [f.tenant, JSON.stringify({ ...intent(), approvalId: ap.id, operation: 'EXECUTE_APPROVAL' })],
+      }, commit);
+      expect(result.two.code).toBe(commit ? null : '23514');
+      const [persisted] = await admin`SELECT status FROM approval_requests WHERE tenant_id=${f.tenant} AND id=${ap.id}`;
+      expect(persisted.status).toBe(commit ? 'COMPLETED' : 'PENDING_APPROVAL');
+      expect((await admin`SELECT count(*)::int n FROM approval_decisions WHERE tenant_id=${f.tenant}
+        AND approval_request_id=${ap.id}`)[0].n).toBe(commit ? 1 : 0);
+      expect((await admin`SELECT count(*)::int n FROM invoice_adjustments WHERE tenant_id=${f.tenant}
+        AND approval_request_id=${ap.id}`)[0].n).toBe(commit ? 1 : 0);
+    }
+  });
   native(
     'X09 target obligation changes invalidate another approved payload',
     async () => {
