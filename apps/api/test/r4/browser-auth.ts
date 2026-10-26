@@ -14,7 +14,7 @@ import { CaptureOtpDelivery } from '../../src/identity-access/otp-delivery.js';
 export const edgePath = process.env.R7_TEST_EDGE_PATH ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 export const browserAvailable = existsSync(edgePath);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until<T>(check: () => Promise<T>, label: string): Promise<T> {
+export async function until<T>(check: () => Promise<T>, label: string): Promise<T> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const result = await check();
@@ -26,7 +26,7 @@ async function until<T>(check: () => Promise<T>, label: string): Promise<T> {
 
 // Test-only CDP transport: never log credentials, headers, cookie values,
 // tokens, DOM contents or debugger payloads. All commands stay in memory.
-async function cdp(url: string) {
+export async function cdp(url: string) {
   const ws = new WebSocket(url);
   const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const observers = new Set<(event: { method?: string; params?: unknown }) => void>();

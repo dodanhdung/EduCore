@@ -39,7 +39,8 @@ import request from 'supertest';
 import { RuntimeService } from '../../src/workflow-approval/runtime.service.js';
 import { R4Worker } from '../../src/automation-jobs/worker.js';
 import { registerNavigationProposalTests } from './navigation-proposal.cases.js';
-import { browserAuthJourney, browserAvailable } from './browser-auth.js';
+import { browserAuthJourney, browserAvailable, until } from './browser-auth.js';
+import { withAcademicBrowser } from './browser-academic.js';
 import { RecoveryWorker } from '../../src/identity-access/recovery-worker.js';
 import { decryptRecovery, parseRecoveryKey } from '../../src/identity-access/recovery-envelope.js';
 import { encryptRecovery } from '../../src/identity-access/recovery-envelope.js';
@@ -2232,6 +2233,176 @@ describe('R4 native PostgreSQL', () => {
     expect(row.revoked).toBeGreaterThanOrEqual(1);
     (evidence.cases as Record<string, unknown>).browser = verified;
   });
+  it.skipIf(!browserAvailable)('R9.2 Parent two-child browser scope and revocation', async () => {
+    const f = await fresh();
+    const parent = await actor(f, 'PARENT');
+    const link = async (studentId: string) => put(admin as unknown as Query, 'parent_student_links', {
+      tenant_id: f.tenant, parent_membership_id: parent.member, student_id: studentId,
+      relationship: 'PARENT', evidence_reference: 'R9 disposable fixture',
+      verified_by_membership_id: f.member, verified_at: new Date(),
+    });
+    const firstLink = await link(f.student);
+    await link(f.student2);
+    const third = await put(admin as unknown as Query, 'student_profiles', {
+      tenant_id: f.tenant, student_code: `S3-${randomUUID()}`, full_name: 'Third student', status: 'ACTIVE',
+    });
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const bearer = (r: request.Test) => r.set('Authorization', `Bearer ${parent.accessToken}`);
+    await bearer(request(app.getHttpServer()).get(`${base}/portal/children/${third}`)).expect(404);
+    await bearer(request(app.getHttpServer()).get(`${base}/portal/billing/${third}`)).expect(404);
+    const browser = await withAcademicBrowser(app, async (b) => {
+      await b.viewport(1280, 800, false);
+      await b.login(parent.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/parent`);
+      await b.wait('document.querySelector("#portal-parent-child")?.options.length === 2', 'PARENT_CHILDREN');
+      const options = await b.evaluate<string[]>('Array.from(document.querySelector("#portal-parent-child").options, option => option.value)');
+      expect(options).toEqual(expect.arrayContaining([f.student, f.student2]));
+      expect(options).not.toContain(third);
+      await b.viewport(390, 844, true);
+      await b.select('#portal-parent-child', f.student2);
+      await b.wait(`document.querySelector('#portal-parent-child')?.value === ${JSON.stringify(f.student2)} && document.querySelector('.portal-page')?.textContent.includes('Student Two')`, 'SECOND_CHILD');
+      const secondOnly = await b.evaluate<boolean>('!document.querySelector(".portal-heading p")?.textContent.includes("Student One")');
+      expect(secondOnly).toBe(true);
+      await b.route(`/app/${f.tenant}/parent/children/${third}`);
+      await b.wait('document.body.textContent.includes("Không có quyền") || document.body.textContent.includes("Không thể tải")', 'THIRD_CHILD_DENIED');
+      expect(b.network.some(r => r.path === `${base}/portal/children/${third}` && r.status === 404)).toBe(true);
+      await admin`UPDATE parent_student_links SET revoked_at=clock_timestamp() WHERE id=${firstLink}`;
+      await b.route(`/app/${f.tenant}/parent`);
+      await b.wait('document.querySelector("#portal-parent-child")?.options.length === 1', 'REVOKED_LINK');
+      const remaining = await b.evaluate<string[]>('Array.from(document.querySelector("#portal-parent-child").options, option => option.value)');
+      expect(remaining).toEqual([f.student2]);
+      expect(b.network.some(r => r.path === `${base}/portal/context` && r.status === 200)).toBe(true);
+      return { browserVersion: b.browserVersion, responses: b.network.filter(r => r.path.startsWith(base)) };
+    });
+    await bearer(request(app.getHttpServer()).get(`${base}/portal/children/${f.student}`)).expect(404);
+    (evidence.cases as Record<string, unknown>).r9Parent = {
+      browser: browser.browserVersion, network: browser.responses,
+      verifiedLinks: 2, thirdStudentDenied: true, revokedLinkDenied: true,
+      desktop: '1280x800', mobile: '390x844',
+    };
+  }, 120_000);
+  it.skipIf(!browserAvailable)('R9.2 Teacher Student assignment browser lifecycle', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const teacher = await actor(f, 'TEACHER', 'CLASS', f.classId);
+    const student = await actor(f, 'STUDENT', 'STUDENT', f.student);
+    await admin`UPDATE teacher_profiles SET membership_id=${teacher.member} WHERE tenant_id=${f.tenant} AND id=${f.teacher}`;
+    await admin`UPDATE student_profiles SET membership_id=${student.member} WHERE tenant_id=${f.tenant} AND id=${f.student}`;
+    await put(admin as unknown as Query, 'class_teacher_assignments', {
+      tenant_id: f.tenant, class_id: f.classId, teacher_id: f.teacher,
+      role_kind: 'PRIMARY', valid_from: '2020-01-01T00:00:00Z', assigned_by_membership_id: f.member,
+    });
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const title = `R9 browser assignment ${randomUUID()}`;
+    const browser = await withAcademicBrowser(app, async (b) => {
+      await b.viewport(1280, 800, false);
+      await b.login(teacher.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/teaching/assignments/new`);
+      await b.wait('!!document.querySelector(".as-actions button")', 'ASSIGNMENT_FORM');
+      await b.fill('.as-field input:not([type])', title);
+      await b.select('.as-field select', f.classId);
+      await b.fill('.as-field textarea', 'A real browser assignment');
+      await b.value('.as-field input[type="datetime-local"]', '2099-10-05T10:00');
+      await b.wait('!document.querySelector(".as-actions button:last-child")?.disabled', 'VALID_ASSIGNMENT');
+      await b.evaluate('window.confirm = () => true');
+      await b.click('.as-actions button:last-child');
+      await b.wait(`location.pathname.includes('/teaching/assignments/') && document.querySelector('.as-page')?.textContent.includes(${JSON.stringify(title)})`, 'PUBLISHED_ASSIGNMENT');
+      const [assignment] = await admin`SELECT id,status,revision FROM assignments WHERE tenant_id=${f.tenant} AND title=${title}`;
+      expect(assignment).toMatchObject({ status: 'PUBLISHED', revision: 2 });
+      const [recipient] = await admin`SELECT id FROM assignment_recipients WHERE assignment_id=${assignment.id} AND student_id=${f.student} AND revoked_at IS NULL`;
+      expect(recipient?.id).toBeTruthy();
+      expect((await admin`SELECT count(*)::int n FROM outbox_events WHERE tenant_id=${f.tenant} AND aggregate_id=${assignment.id}`)[0].n).toBe(1);
+      await request(app.getHttpServer()).get(`${base}/assignments/${assignment.id}`)
+        .auth(student.accessToken, { type: 'bearer' }).expect(200);
+      await b.login(student.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/my/assignments/${assignment.id}`);
+      await b.wait(`document.querySelector('.as-page')?.textContent.includes(${JSON.stringify(title)}) && !!document.querySelector('.as-field textarea')`, 'STUDENT_ASSIGNMENT');
+      await b.fill('.as-field textarea', 'R9 submitted answer');
+      await b.wait('!document.querySelector(".as-actions button")?.disabled || Array.from(document.querySelectorAll("button")).some(x => x.textContent.includes("Nộp bài") && !x.disabled)', 'SUBMISSION_READY');
+      await b.evaluate('Array.from(document.querySelectorAll("button")).find(x => x.textContent.includes("Nộp bài"))?.click()');
+      await b.wait('!!document.querySelector(".as-notice") || !!document.querySelector(".as-error")', 'SUBMISSION_RESULT');
+      expect(b.network.some(r => r.path.endsWith(`/assignment-recipients/${recipient.id}/submissions`) && r.method === 'POST' && r.status === 201),
+        JSON.stringify(b.network.filter(r => r.path.endsWith(`/assignment-recipients/${recipient.id}/submissions`)))).toBe(true);
+      const [submission] = await admin`SELECT s.id,s.current_version_id FROM submissions s WHERE s.recipient_id=${recipient.id}`;
+      expect(submission?.current_version_id).toBeTruthy();
+      await b.login(teacher.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/teaching/submissions/${submission.id}/grade`);
+      await b.wait('!!document.querySelector(".as-actions button")', 'GRADE_FORM');
+      await b.fill('.as-field input[inputmode="decimal"]', '8.5');
+      await b.fill('.as-field textarea', 'Reviewed in R9 browser');
+      await b.click('.as-actions button:first-child');
+      await b.wait('document.querySelector(".as-page")?.textContent.includes("DRAFT")', 'GRADE_DRAFT');
+      const [draft] = await admin`SELECT id,status,revision_no FROM grades WHERE submission_version_id=${submission.current_version_id}`;
+      expect(draft.status).toBe('DRAFT');
+      await request(app.getHttpServer()).get(`${base}/submission-versions/${submission.current_version_id}/grade-draft`)
+        .auth(student.accessToken, { type: 'bearer' }).expect(403);
+      await b.evaluate('window.confirm = () => true');
+      await b.click('.as-actions button:last-child');
+      await b.wait('document.querySelector(".as-page")?.textContent.includes("PUBLISHED")', 'GRADE_PUBLISHED');
+      expect((await admin`SELECT status FROM grades WHERE id=${draft.id}`)[0].status).toBe('PUBLISHED');
+      await b.login(student.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/my/assignments/${assignment.id}`);
+      await b.wait('document.querySelector(".as-page")?.textContent.includes("8.5/10")', 'STUDENT_PUBLISHED_GRADE');
+      await b.login(teacher.email, password, f.tenant);
+      await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${teacher.assignment}`;
+      const revokedList = await request(app.getHttpServer()).get(`${base}/teaching/assignments`)
+        .auth(teacher.accessToken, { type: 'bearer' }).expect(200);
+      expect(revokedList.body).toEqual([]);
+      const priorReads = b.network.filter(r => r.path === `${base}/teaching/assignments`).length;
+      await b.route(`/app/${f.tenant}/teaching/assignments`);
+      await until(async () => b.network.filter(r => r.path === `${base}/teaching/assignments`).length > priorReads
+        || b.evaluate<boolean>('!document.querySelector(".app-shell")'), 'TEACHER_REVOKED_SCOPE');
+      expect(await b.evaluate<boolean>(`!document.querySelector('.as-page')?.textContent.includes(${JSON.stringify(title)})`)).toBe(true);
+      return { browserVersion: b.browserVersion, responses: b.network.filter(r => r.path.startsWith(base)) };
+    });
+    (evidence.cases as Record<string, unknown>).r9Learning = { browser: browser.browserVersion,
+      network: browser.responses, assignmentPublished: true, submissionPersisted: true,
+      draftPrivate: true, gradePublished: true, revokedTeacherDenied: true };
+  }, 120_000);
+  it.skipIf(!browserAvailable)('R9.2 Manager schedule preview confirmation and conflict browser', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z', policyEffectiveFrom: '2020-01-01T00:00:00Z' });
+    const [course] = await admin`SELECT subject_id,level_id FROM courses WHERE id=${f.course}`;
+    await put(admin as unknown as Query, 'teacher_competencies', {
+      tenant_id: f.tenant, teacher_id: f.teacher, subject_id: course.subject_id,
+      level_id: course.level_id, verified_at: '2025-01-01',
+    });
+    await put(admin as unknown as Query, 'class_teacher_assignments', {
+      tenant_id: f.tenant, class_id: f.classId, teacher_id: f.teacher,
+      role_kind: 'PRIMARY', valid_from: '2020-01-01T00:00:00Z', assigned_by_membership_id: f.member,
+    });
+    const manager = await sessionFor(f);
+    const base = `/api/v1/tenants/${f.tenant}`;
+    const bearer = (r: request.Test) => r.set('Authorization', `Bearer ${manager.accessToken}`);
+    const before = await admin`SELECT count(*)::int n FROM resource_bookings WHERE session_id=${f.session}`;
+    expect(before[0].n).toBe(0);
+    const browser = await withAcademicBrowser(app, async (b) => {
+      await b.viewport(1280, 800, false);
+      await b.login(manager.email, password, f.tenant);
+      await b.route(`/app/${f.tenant}/schedule/sessions/${f.session}`);
+      await b.wait('Array.from(document.querySelectorAll(".attendance-primary")).some(x => x.textContent.includes("Xác nhận buổi") && !x.disabled)', 'SCHEDULE_PREVIEW_READY');
+      expect((await admin`SELECT status FROM class_sessions WHERE id=${f.session}`)[0].status).toBe('DRAFT');
+      expect(b.network.some(r => r.path === `${base}/scheduling/drafts/${f.session}/preview` && r.status === 200)).toBe(true);
+      await b.evaluate('Array.from(document.querySelectorAll(".attendance-primary")).find(x => x.textContent.includes("Xác nhận buổi"))?.click()');
+      await until(async () => b.network.some(r => r.path === `${base}/scheduling/sessions/${f.session}/confirm` && r.status === 201), 'SCHEDULE_CONFIRM_HTTP');
+      expect((await admin`SELECT status FROM class_sessions WHERE id=${f.session}`)[0].status).toBe('CONFIRMED');
+      expect((await admin`SELECT count(*)::int n FROM resource_bookings WHERE session_id=${f.session}`)[0].n).toBeGreaterThan(0);
+      expect((await admin`SELECT count(*)::int n FROM audit_logs WHERE tenant_id=${f.tenant} AND entity_id=${f.session}`)[0].n).toBeGreaterThan(0);
+      const [times] = await admin`SELECT starts_at,ends_at FROM class_sessions WHERE id=${f.session}`;
+      const conflict = await bearer(request(app.getHttpServer()).post(`${base}/scheduling/sessions`))
+        .set('Idempotency-Key', randomUUID()).send({ classId: f.classId, teacherId: f.teacher,
+          deliveryMode: 'ONLINE', startsAt: times.starts_at, endsAt: times.ends_at,
+          reason: 'R9 conflict fixture' }).expect(201);
+      await b.route(`/app/${f.tenant}/schedule/sessions/${conflict.body.id}`);
+      await b.wait('Array.from(document.querySelectorAll(".attendance-primary")).some(x => x.textContent.includes("Xác nhận buổi") && x.disabled)', 'SCHEDULE_CONFLICT_PREVIEW');
+      expect(b.network.some(r => r.path === `${base}/scheduling/drafts/${conflict.body.id}/preview` && r.status === 200)).toBe(true);
+      await bearer(request(app.getHttpServer()).post(`${base}/scheduling/sessions/${conflict.body.id}/confirm`))
+        .set('Idempotency-Key', randomUUID()).send({ reason: 'Expected conflict' }).expect(409);
+      expect((await admin`SELECT status FROM class_sessions WHERE id=${conflict.body.id}`)[0].status).toBe('DRAFT');
+      return { browserVersion: b.browserVersion, responses: b.network.filter(r => r.path.startsWith(base)) };
+    });
+    (evidence.cases as Record<string, unknown>).r9Manager = { browser: browser.browserVersion,
+      network: browser.responses, previewUnreserved: true, confirmedBooking: true,
+      auditPersisted: true, conflictRejected: true };
+  }, 120_000);
   it('D01 restricted runtime starts; anonymous principal cannot bind', async () => {
     expect(() => auth.me('invalid')).toThrow('AUTH_REQUIRED');
     await expect(
