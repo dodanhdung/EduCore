@@ -10,6 +10,7 @@ import { requestTrace } from './request-context.js';
 import { SessionGuard } from './session.guard.js';
 import { NavigationController } from './navigation.controller.js';
 import { NavigationService } from './navigation.service.js';
+import { PortalController } from './portal.controller.js';
 import { AssignmentService } from '../assignments-grading/assignment.service.js';
 import {
   AssignmentController,
@@ -43,6 +44,7 @@ export class R4Module {
       controllers: [
         AuthController,
         NavigationController,
+        PortalController,
         RuntimeController,
         AssignmentController,
         SubmissionController,

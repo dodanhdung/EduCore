@@ -5,6 +5,7 @@ export type PortalSession = { id: string; studentIds: string[]; teacherId: strin
 export type ChildLink = { studentId: string; name: string; status: 'VERIFIED' | 'REVOKED' | 'INACTIVE' | 'UNVERIFIED' }
 export type PortalNotice = { id: string; recipientId: string; text: string; occurredAt: string }
 export type PortalData = {
+  availability?: { schedule: boolean; assignments: boolean; grades: boolean; leave: boolean };
   scope?: { viewerId: string; tenantId: string };
   sampleNow: string; timeZone: string; teacherId: string; teacherName: string; studentId: string; studentName: string;
   sessions: PortalSession[]; assignments: AssignmentData; links: ChildLink[];

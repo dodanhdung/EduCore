@@ -495,6 +495,130 @@ afterAll(async () => {
   console.log('R4 sanitized evidence: ' + path);
 });
 describe('R4 native PostgreSQL', () => {
+  native('R8 P01 scoped dashboard counts distinct active learners and issued debt', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const other = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const s = await sessionFor(f);
+    const get = () => request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/portal/overview`)
+      .auth(s.accessToken, { type: 'bearer' });
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/portal/overview`).expect(401);
+    const first = await get().expect(200);
+    expect(first.body).toMatchObject({ students: 1, classes: 2, outstandingVnd: '0' });
+    await put(admin as unknown as Query, 'enrollments', {
+      tenant_id: f.tenant, student_id: f.student, class_id: f.class2, status: 'ACTIVE',
+      effective_from: '2020-01-01T00:00:00Z', created_by_membership_id: f.member,
+    });
+    expect((await get().expect(200)).body.students).toBe(1);
+    await admin`UPDATE classes SET status='ARCHIVED' WHERE id=${f.class2}`;
+    expect((await get().expect(200)).body.classes).toBe(1);
+    await admin`UPDATE invoices SET status='ISSUED',invoice_number='R8-P01',
+      issued_at=clock_timestamp(),due_at=clock_timestamp()+interval '14 days' WHERE id=${f.invoice}`;
+    expect((await get().expect(200)).body.outstandingVnd).toBe('100000');
+    await request(app.getHttpServer()).get(`/api/v1/tenants/${other.tenant}/portal/overview`)
+      .auth(s.accessToken, { type: 'bearer' }).expect(403);
+  });
+
+  native('R8 P02 verified children and finance reads revoke on the next request', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const other = await fresh();
+    const parent = await actor(f, 'PARENT', 'STUDENT', f.student);
+    await put(admin as unknown as Query, 'access_scopes', { tenant_id: f.tenant,
+      membership_role_id: parent.assignment, scope_kind: 'STUDENT', student_id: f.student2 });
+    const first = await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+      parent_membership_id: parent.member, student_id: f.student, relationship: 'PARENT',
+      verified_at: new Date(), verified_by_membership_id: f.member });
+    const second = await put(admin as unknown as Query, 'parent_student_links', { tenant_id: f.tenant,
+      parent_membership_id: parent.member, student_id: f.student2, relationship: 'PARENT',
+      verified_at: new Date(), verified_by_membership_id: f.member });
+    const base = `/api/v1/tenants/${f.tenant}/portal`;
+    const get = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(parent.accessToken, { type: 'bearer' });
+    const context = await get('/context').expect(200);
+    expect(context.body.children.map((row: { id: string }) => row.id)).toEqual([f.student, f.student2]);
+    const parentNav = await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(parent.accessToken, { type: 'bearer' }).expect(200);
+    expect(parentNav.body.screenIds).toEqual(expect.arrayContaining(['PO03', 'PO04', 'PO05']));
+    await get(`/children/${f.student}`).expect(200);
+    await get(`/children/${other.student}`).expect(404);
+    await get(`/billing/${other.student}`).expect(404);
+    await admin`UPDATE invoices SET status='ISSUED',invoice_number='R8-P02',
+      issued_at=clock_timestamp(),due_at=clock_timestamp()+interval '14 days' WHERE id=${f.invoice}`;
+    const bill = await get(`/billing/${f.student}`).expect(200);
+    expect(bill.body).toMatchObject({ status: 'PARTIAL', invoiceCount: 1,
+      totals: { outstandingVnd: '100000' }, wallet: null });
+    expect(bill.body.invoices).toHaveLength(1);
+    await admin`DELETE FROM role_permissions rp USING roles r,permissions p
+      WHERE rp.tenant_id=${f.tenant} AND rp.role_id=r.id AND rp.permission_id=p.id
+        AND r.tenant_id=${f.tenant} AND r.code='PARENT' AND p.code='receivable.read'`;
+    expect((await get(`/billing/${f.student}`).expect(200)).body).toMatchObject({ status: 'UNAVAILABLE', invoices: null });
+    await admin`UPDATE parent_student_links SET revoked_at=clock_timestamp() WHERE id=${first}`;
+    await get(`/children/${f.student}`).expect(404);
+    await get(`/billing/${f.student}`).expect(404);
+    expect((await get('/context').expect(200)).body.children.map((row: { id: string }) => row.id)).toEqual([f.student2]);
+    await admin`UPDATE parent_student_links SET revoked_at=clock_timestamp() WHERE id=${second}`;
+    expect((await get('/context').expect(200)).body.children).toEqual([]);
+  });
+
+  native('R8 P03 class scope is partial and Student finance stays unavailable', async () => {
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z' });
+    const scoped = await actor(f, 'MANAGER', 'CLASS', f.classId);
+    const student = await actor(f, 'STUDENT', 'STUDENT', f.student);
+    await admin`UPDATE student_profiles SET membership_id=${student.member} WHERE id=${f.student}`;
+    await admin`UPDATE invoices SET status='ISSUED',invoice_number='R8-P03',
+      issued_at=clock_timestamp(),due_at=clock_timestamp()+interval '14 days' WHERE id=${f.invoice}`;
+    const base = `/api/v1/tenants/${f.tenant}/portal`;
+    const scopedRead = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(scoped.accessToken, { type: 'bearer' });
+    const studentRead = (path: string) => request(app.getHttpServer()).get(base + path)
+      .auth(student.accessToken, { type: 'bearer' });
+    expect((await scopedRead('/overview').expect(200)).body).toMatchObject({
+      students: 1, classes: 1, outstandingVnd: null,
+    });
+    const scopedNav = await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(scoped.accessToken, { type: 'bearer' }).expect(200);
+    expect(scopedNav.body.screenIds).toContain('G01');
+    expect((await studentRead('/context').expect(200)).body.student.id).toBe(f.student);
+    const studentNav = await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(student.accessToken, { type: 'bearer' }).expect(200);
+    expect(studentNav.body.screenIds).toContain('PO02');
+    expect(studentNav.body.screenIds).not.toContain('PO05');
+    expect((await studentRead(`/billing/${f.student}`).expect(200)).body).toMatchObject({
+      status: 'UNAVAILABLE', invoices: null, wallet: null,
+    });
+    await studentRead(`/billing/${f.student2}`).expect(404);
+  });
+
+  native('R8 P04 teacher sessions require a current assignment and current grant', async () => {
+    const startsAt = new Date(Date.now() + 86400_000);
+    const endsAt = new Date(startsAt.getTime() + 3600_000);
+    const f = await fresh({ enrollmentFrom: '2020-01-01T00:00:00Z',
+      start: startsAt.toISOString(), end: endsAt.toISOString() });
+    const manager = await sessionFor(f);
+    const teacher = await actor(f, 'TEACHER', 'CLASS', f.classId);
+    const otherTeacher = await actor(f, 'TEACHER', 'CLASS', f.classId);
+    await admin`UPDATE teacher_profiles SET membership_id=${teacher.member} WHERE id=${f.teacher}`;
+    await put(admin as unknown as Query, 'class_teacher_assignments', {
+      tenant_id: f.tenant, class_id: f.classId, teacher_id: f.teacher,
+      role_kind: 'PRIMARY', valid_from: '2020-01-01T00:00:00Z', assigned_by_membership_id: f.member,
+    });
+    await runtime.run(manager.accessToken,
+      'SELECT educore_r3.scheduling($1::uuid,$2::jsonb) result', f.tenant,
+      JSON.stringify({ ...intent(), operation: 'CONFIRM', sessionId: f.session }));
+    const path = `/api/v1/tenants/${f.tenant}/portal/teacher-sessions`;
+    const own = () => request(app.getHttpServer()).get(path).auth(teacher.accessToken, { type: 'bearer' });
+    expect((await own().expect(200)).body.items.map((row: { id: string }) => row.id)).toEqual([f.session]);
+    const teacherNav = await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${f.tenant}/access/navigation`)
+      .auth(teacher.accessToken, { type: 'bearer' }).expect(200);
+    expect(teacherNav.body.screenIds).toContain('PO01');
+    await request(app.getHttpServer()).get(path).auth(otherTeacher.accessToken, { type: 'bearer' }).expect(403);
+    await admin`UPDATE membership_roles SET revoked_at=clock_timestamp() WHERE id=${teacher.assignment}`;
+    await own().expect(403);
+  });
+
   native('R8 N01 authenticated inbox, scoped audit and job projections', async () => {
     const f = await fresh(), other = await fresh(), s = await sessionFor(f);
     const base = `/api/v1/tenants/${f.tenant}`;
@@ -1996,7 +2120,7 @@ describe('R4 native PostgreSQL', () => {
     const authorization = `Bearer ${accountant.accessToken}`;
     const menu = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .set('Authorization', authorization).expect(200);
-    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'GL01', 'OP04', 'OP05']);
+    expect(menu.body.screenIds).toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'G01', 'GL01', 'OP04', 'OP05']);
     const resource = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/approvals/${randomUUID()}`)
       .set('Authorization', authorization).expect(403);
     expect(resource.body.code).toBe('FORBIDDEN');

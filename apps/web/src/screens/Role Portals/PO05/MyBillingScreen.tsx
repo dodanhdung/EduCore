@@ -3,8 +3,46 @@ import type { ChildSelection, PortalData } from '../PortalTypes.ts'
 import { authorizedChild, portalScopeMatches, selectedChildId, verifiedChildren } from '../PortalTypes.ts'
 import { PortalCard, PortalMoney, PortalPage, PortalState } from '../PortalPrimitives.tsx'
 
-export function MyBillingScreen({ data, mode, studentId, initialChildId, viewerId, tenantId, onOpenInvoice, state = 'ready' }: { data?: PortalData; mode: 'student' | 'parent' | 'unresolved'; studentId?: string; initialChildId?: string; viewerId?: string; tenantId?: string; onOpenInvoice?: (invoiceId: string, studentId: string) => void; state?: 'ready' | 'loading' | 'forbidden' }) {
+export type LiveBilling = { id: string; name: string; timeZone: string; asOf: string;
+  status: 'PARTIAL' | 'UNAVAILABLE'; wallet: null; invoiceLimit?: number;
+  invoiceCount?: number; totals?: { netObligationVnd: string; allocatedVnd: string; outstandingVnd: string };
+  invoices: { id: string; number: string | null; dueAt: string | null;
+    netObligationVnd: string; allocatedVnd: string; outstandingVnd: string }[] | null }
+type Live = { context: { children: { id: string; name: string }[]; student: { id: string; name: string } | null };
+  billing: LiveBilling | null; selectedId?: string; onSelectChild: (studentId: string) => void }
+
+export function MyBillingScreen({ data, mode, studentId, initialChildId, viewerId, tenantId, onOpenInvoice, live, state = 'ready' }: { data?: PortalData; mode: 'student' | 'parent' | 'unresolved'; studentId?: string; initialChildId?: string; viewerId?: string; tenantId?: string; onOpenInvoice?: (invoiceId: string, studentId: string) => void; live?: Live; state?: 'ready' | 'loading' | 'forbidden' }) {
   const [selection, setSelection] = useState<ChildSelection>()
+  if (live) {
+    const { context, billing } = live
+    const selected = live.selectedId
+    const rows = billing?.invoices ?? null
+    const invoices = rows ?? []
+    const sum = (key: 'netObligationVnd' | 'allocatedVnd' | 'outstandingVnd') =>
+      billing?.totals?.[key] ?? invoices.reduce((value, row) => value + BigInt(row[key]), 0n).toString()
+    return <PortalPage title="Học phí của tôi / của con" detail="Chỉ xem · hóa đơn đã phát hành">
+      {context.children.length > 0 && <PortalCard title="Chọn học sinh"><label className="portal-label" htmlFor="live-billing-child">Học sinh</label>
+        <select className="portal-select" id="live-billing-child" value={selected ?? ''} onChange={e => live.onSelectChild(e.target.value)}>
+          {context.children.map(child => <option key={child.id} value={child.id}>{child.name}</option>)}
+        </select></PortalCard>}
+      {!selected ? <PortalState title="Không có học sinh được phép xem">Chưa có hồ sơ học sinh hiện hành.</PortalState>
+        : billing?.status !== 'PARTIAL' || rows === null ? <PortalState title="Dữ liệu tài chính chưa khả dụng">Quyền xem hóa đơn và công nợ hiện hành chưa đủ cho học sinh này.</PortalState>
+          : <><div className="portal-grid"><div className="portal-card portal-kpi"><span>Hóa đơn đã phát hành</span><strong>{billing.invoiceCount ?? invoices.length}</strong></div>
+              <div className="portal-card portal-kpi"><span>Còn phải thu</span><strong><PortalMoney value={sum('outstandingVnd')} /></strong></div>
+              <div className="portal-card portal-kpi"><span>Số dư ví</span><strong>Chưa có quyền xem</strong></div></div>
+            <PortalCard title="Nghĩa vụ và phân bổ"><p>Nghĩa vụ ròng: <PortalMoney value={sum('netObligationVnd')} /></p>
+              <p>Đã phân bổ ròng: <PortalMoney value={sum('allocatedVnd')} /></p>
+              <p className="portal-muted">Số dư ví chưa sử dụng không làm giảm khoản còn phải thu.</p></PortalCard>
+            <PortalCard title="Hóa đơn đã phát hành">{invoices.length ? <div className="portal-table-scroll"><table className="portal-table">
+              <thead><tr><th>Số hóa đơn</th><th>Hạn</th><th>Nghĩa vụ ròng</th><th>Đã phân bổ</th><th>Còn phải thu</th></tr></thead>
+              <tbody>{invoices.map(row => <tr key={row.id}><td>{row.number ?? row.id}</td><td>{row.dueAt ?? 'Chưa có'}</td>
+                <td><PortalMoney value={row.netObligationVnd} /></td><td><PortalMoney value={row.allocatedVnd} /></td>
+                <td><PortalMoney value={row.outstandingVnd} /></td></tr>)}</tbody></table></div>
+              : <p>Chưa có hóa đơn đã phát hành.</p>}</PortalCard>
+            <PortalCard title="Ví và lịch sử giao dịch"><p>Chưa có hợp đồng đọc ví và lịch sử giao dịch cho Student/Parent.</p></PortalCard>
+          </>}
+    </PortalPage>
+  }
   if (state === 'forbidden') return <PortalState title="Không có quyền xem học phí">Cần quyền xem dữ liệu tài chính của chính học sinh hoặc con được liên kết.</PortalState>
   if (state === 'loading' || !data) return <PortalState title="Đang chờ dữ liệu học phí">Chờ API trả hóa đơn, ví và phạm vi xem hiện hành.</PortalState>
   if (!portalScopeMatches(data, viewerId, tenantId)) return <PortalState title="Đang chờ phạm vi xem mới">Chờ dữ liệu học phí theo người xem và trung tâm hiện tại.</PortalState>
