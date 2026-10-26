@@ -794,9 +794,9 @@ describe('R4 native PostgreSQL', () => {
     expect(jobs.body.total).toBe(1);
     expect(jobs.body.items[0].id).toBe(schedule.body.id);
     await read(`/jobs/${billing.body.id}`).expect(404);
-    const old = await runtime.read<{ total: number }>(scoped.accessToken, f.tenant, 'AUDIT', { page: 1 });
+    const old = await runtime.read(scoped.accessToken, f.tenant, 'AUDIT', { page: 1 }) as { total: number };
     expect(old.total).toBeGreaterThanOrEqual(1);
-    expect(await runtime.read<{ total: number }>(scoped.accessToken, f.tenant, 'JOBS', { page: 1 })).toMatchObject({ total: 1 });
+    expect(await runtime.read(scoped.accessToken, f.tenant, 'JOBS', { page: 1 })).toMatchObject({ total: 1 });
     await admin`UPDATE membership_roles SET revoked_at=clock_timestamp()
       WHERE tenant_id=${f.tenant} AND membership_id=${scoped.member} AND revoked_at IS NULL`;
     await read('/audit').expect(403);

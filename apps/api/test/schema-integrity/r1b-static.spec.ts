@@ -76,7 +76,12 @@ describe('R1b offline checks (not PostgreSQL verification)', () => {
     );
   });
   it('keeps the generated R1a baseline immutable and without R1b or Wallet deltas', () => {
-    expect(createHash('sha256').update(baselineSql()).digest('hex')).toBe(
+    // Git stores LF; Windows checkouts can contain CRLF without changing SQL.
+    expect(
+      createHash('sha256')
+        .update(baselineSql().replace(/\r\n/g, '\n'))
+        .digest('hex'),
+    ).toBe(
       'c134fc7e71cc102236ee2c7c8e386f17467ef65d6050e3c7e75147413de37b20',
     );
     expect(baselineSql().match(/CREATE TABLE/g)).toHaveLength(62);
