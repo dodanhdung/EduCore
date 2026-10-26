@@ -58,11 +58,14 @@ afterEach((context) =>
 );
 afterAll(finish);
 let latencyFixture: Awaited<ReturnType<typeof fresh>> | undefined;
+const migrationManifest = () => readdirSync(resolve('prisma/migrations'))
+  .filter((name) => /^\d/.test(name)).sort();
 
 it('R6-01 all historical checksums, live catalog, owners, search paths and privilege inventory', async () => {
   const migrations =
-    await admin`SELECT migration_name,checksum,finished_at IS NOT NULL AND rolled_back_at IS NULL healthy FROM _prisma_migrations ORDER BY migration_name`;
-  expect(migrations).toHaveLength(24);
+    await admin`SELECT migration_name,checksum,finished_at IS NOT NULL AND rolled_back_at IS NULL healthy
+      FROM _prisma_migrations ORDER BY started_at,id`;
+  expect(migrations.map((m) => m.migration_name)).toEqual(migrationManifest());
   for (const m of migrations) {
     expect(m.healthy).toBe(true);
     expect(m.checksum).toBe(migrationChecksum(String(m.migration_name)));
@@ -168,7 +171,7 @@ it('R6-01 all historical checksums, live catalog, owners, search paths and privi
   expect(prisma(['migrate', 'deploy'])).toContain('No pending migrations');
   expect(
     (await admin`SELECT count(*)::int n FROM _prisma_migrations`)[0].n,
-  ).toBe(24);
+  ).toBe(migrationManifest().length);
   const drift = prisma([
     'migrate',
     'diff',
@@ -197,7 +200,8 @@ it('R6-02 real Prisma failed migration history, DDL rollback, refusal, resolve a
       );
     }
   }
-  const probe = '202610210025_r6_test_only_probe';
+  const latest = migrationManifest().at(-1)!;
+  const probe = `${String(BigInt(latest.slice(0, 12)) + 1n).padStart(12, '0')}_r6_test_only_probe`;
   mkdirSync(join(dir, probe));
   writeFileSync(
     join(dir, probe, 'migration.sql'),
@@ -314,15 +318,24 @@ it('R6-03 populated synthetic R4 checkpoint upgrades to R5 without rewriting sou
     p.proowner::regrole::text owner,p.proacl::text acl,p.proconfig configuration,p.prosecdef definer
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname LIKE 'educore%' ORDER BY 1`;
   const oldFunctions = await definitions(target.db);
-  prisma(['migrate', 'deploy'], target.url);
+  const historicalTarget = '202610200024_r6_sibling_integrity';
+  const historicalManifest = migrationManifest().filter((name) => name <= historicalTarget);
+  expect(historicalManifest.at(-1)).toBe(historicalTarget);
+  for (const name of historicalManifest.filter((name) => name > '202610190018_r4_members')) {
+    mkdirSync(join(dir, name));
+    copyFileSync(resolve('prisma/migrations', name, 'migration.sql'), join(dir, name, 'migration.sql'));
+  }
+  prisma(['migrate', 'deploy', '--config', config], target.url);
   expect(
     await target.db`SELECT to_jsonb(e) row FROM enrollments e WHERE id=${f.enrollment}`,
   ).toEqual(before);
-  expect(
-    (
-      await target.db`SELECT count(*)::int n FROM _prisma_migrations WHERE finished_at IS NOT NULL`
-    )[0].n,
-  ).toBe(24);
+  const upgradedHistory = await target.db`SELECT migration_name,checksum,
+    finished_at IS NOT NULL AND rolled_back_at IS NULL healthy FROM _prisma_migrations ORDER BY started_at,id`;
+  expect(upgradedHistory.map((row) => row.migration_name)).toEqual(historicalManifest);
+  for (const row of upgradedHistory) {
+    expect(row.healthy).toBe(true);
+    expect(row.checksum).toBe(migrationChecksum(String(row.migration_name)));
+  }
   expect(
     (
       await target.db`SELECT id FROM verified_sibling_relationships WHERE id=${validReversedPair}`
@@ -800,7 +813,7 @@ it('R6-06 coordinated quiescent DB and real private-volume restore with fresh gl
         `SELECT json_build_object('migrations',(SELECT count(*) FROM _prisma_migrations),'invalidConstraints',(SELECT count(*) FROM pg_constraint WHERE NOT convalidated),'submissionLinks',(SELECT count(*) FROM submission_files),'databaseBytes',pg_database_size(current_database()),'sourceTimezone',(SELECT timezone FROM tenants WHERE id='${f.tenant}'))`,
       ]).toString(),
     );
-    expect(snapshot.migrations).toBe(24);
+    expect(snapshot.migrations).toBe(migrationManifest().length);
     expect(snapshot.invalidConstraints).toBe(0);
     expect(Number(snapshot.submissionLinks)).toBeGreaterThan(0);
     const counts = await admin`SELECT count(*)::int n FROM stored_files`;

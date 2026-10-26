@@ -80,3 +80,33 @@ test('OP07 keeps retry unavailable when server says NEEDS_INFORMATION', async ()
     assert.doesNotMatch(document.body.textContent, /Xác nhận retry/)
   } finally { await close() }
 })
+
+for (const status of [403, 409]) test(`OP07 removes stale retry eligibility after HTTP ${status}`, async () => {
+  const job = { id: recordId, jobKind: 'SCHEDULE_CHECK', status: 'FAILED', attemptCount: 1,
+    nextAttemptAt: at, lastErrorCode: '40001', policyVersionId: recordId, correlationId: recordId,
+    sourceType: 'ClassSession', sourceId: recordId, retryEligible: true, attempts: [] }
+  let retryCalls = 0
+  handler = async (url, options) => {
+    if (options.method === 'POST') { retryCalls++; return json({ code: status === 403 ? 'FORBIDDEN' : 'CONFLICT' }, status) }
+    if (String(url).endsWith(`/jobs/${recordId}`)) return json(job)
+    if (String(url).includes('/audit/operations/')) return json({ code: 'FORBIDDEN' }, 403)
+    return json({ items: [job], page: 1, pageSize: 20, total: 1, timezone: 'Asia/Ho_Chi_Minh' })
+  }
+  const previousConfirm = window.confirm
+  window.confirm = () => true
+  const close = await mount(OperationsProduction, { id: 'OP07', tenantId, token: 'TEST_TOKEN' })
+  try {
+    const view = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Xem')
+    await act(async () => { view.click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    const reason = document.querySelector('textarea')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(reason, 'Reviewed source')
+      reason.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    const retry = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Xác nhận retry')
+    await act(async () => { retry.click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    assert.equal(retryCalls, 1)
+    assert.equal(document.querySelector('textarea'), null)
+    assert.doesNotMatch(document.body.textContent, /Xác nhận retry/)
+  } finally { window.confirm = previousConfirm; await close() }
+})

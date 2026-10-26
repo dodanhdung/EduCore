@@ -87,9 +87,13 @@ export function OperationsProduction({ id, tenantId, token }: { id: 'OP06' | 'OP
       const result = await api.learning<{ id: string; status: string }>(tenantId, `/jobs/${encodeURIComponent(job.id)}/retry`, token,
         { method: 'POST', body: { reason: reason.trim(), confirmed: true }, idempotencyKey: retryKey.current.key })
       if (result.id !== job.id || result.status !== 'READY') throw new ApiError(502, 'INVALID_RESPONSE')
+      setSelectedJob(null)
       setMessage('Máy chủ đã nhận yêu cầu retry; đang tải trạng thái mới.'); setRevision((value) => value + 1)
       setSelectedJob(await api.learning<Job>(tenantId, `/jobs/${encodeURIComponent(job.id)}`, token))
-    } catch (error) { setMessage(safeErrorMessage(error)); setRevision((value) => value + 1) }
+    } catch (error) {
+      if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) setSelectedJob(null)
+      setMessage(safeErrorMessage(error)); setRevision((value) => value + 1)
+    }
     finally { setBusy(false) }
   }
   return <div className="management" data-screen-id={id}>
