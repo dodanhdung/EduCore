@@ -4251,17 +4251,49 @@ describe('R4 native PostgreSQL', () => {
           await admin`SELECT actor_kind,actor_membership_id FROM audit_logs WHERE tenant_id=${f.tenant} AND entity_id=${j.id} AND event_type='JOB_FAILED'`
         )[0],
       ).toMatchObject({ actor_kind: 'WORKER', actor_membership_id: null });
-      await worker.dispatch();
-      expect(
-        (
-          await runtime.run<{ count: number }>(
-            s.accessToken,
-            'SELECT educore_r4.inbox($1::uuid,$2::text) result',
-            f.tenant,
-            'UNREAD_COUNT',
-          )
-        ).count,
-      ).toBeGreaterThan(0);
+      const alerts = await admin`SELECT id,event_key,payload_json,status,available_at<=clock_timestamp() eligible
+        FROM outbox_events WHERE tenant_id=${f.tenant} AND event_type='ADMIN_ALERT'
+          AND aggregate_id=${j.id}`;
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({
+        event_key: `JOB:${j.id}:${claim!.fence}:FAILED`,
+        payload_json: { jobId: j.id, status: 'FAILED' },
+        status: 'NEW', eligible: true,
+      });
+      const [recipient] = await admin`SELECT
+        educore_r4.has_permission(${f.tenant}::uuid,${f.member}::uuid,'job.read') job_read,
+        educore_r4.has_permission(${f.tenant}::uuid,${f.member}::uuid,'notification.read') notification_read,
+        educore_r4.can_event(${f.tenant}::uuid,${f.member}::uuid,${alerts[0].id}::uuid,'notification.read') eligible`;
+      expect(recipient).toMatchObject({ job_read: true, notification_read: true, eligible: true });
+      const [queue] = await admin`SELECT count(*)::int n FROM outbox_events
+        WHERE status='NEW' AND available_at<=clock_timestamp()
+          AND event_type IN ('ScheduleChanged','SCHEDULE_CHANGED','ASSIGNMENT_PUBLISHED','ADMIN_ALERT')`;
+      let dispatches = 0;
+      let targetDispatched = false;
+      // dispatch_event processes one eligible event per call. The snapshot count
+      // bounds how many older events can precede this job's alert.
+      for (; dispatches < queue.n; dispatches++) {
+        const dispatched = await worker.dispatch() as { id?: string } | null;
+        if (dispatched?.id === alerts[0].id) { targetDispatched = true; dispatches++; break; }
+      }
+      expect(targetDispatched).toBe(true);
+      const [delivered] = await admin`SELECT e.status,
+        count(n.id)::int notifications,
+        count(n.id) FILTER (WHERE n.recipient_membership_id=${f.member} AND n.read_at IS NULL)::int manager_unread,
+        count(n.id) FILTER (WHERE n.recipient_membership_id=${a.member})::int revoked_initiator_notifications
+        FROM outbox_events e LEFT JOIN notifications n ON n.tenant_id=e.tenant_id AND n.outbox_event_id=e.id
+        WHERE e.tenant_id=${f.tenant} AND e.id=${alerts[0].id} GROUP BY e.status`;
+      expect(delivered).toMatchObject({ status: 'DONE', notifications: 1, manager_unread: 1,
+        revoked_initiator_notifications: 0 });
+      const inbox = await runtime.run<{ items: { id: string }[] }>(s.accessToken,
+        'SELECT educore_r4.inbox($1::uuid,$2::text) result', f.tenant, 'LIST');
+      const [notification] = await admin`SELECT id FROM notifications
+        WHERE tenant_id=${f.tenant} AND outbox_event_id=${alerts[0].id} AND recipient_membership_id=${f.member}`;
+      expect(inbox.items.map((item) => item.id)).toContain(notification.id);
+      (evidence.cases as Record<string, unknown>).revokedWorkerAlert = {
+        targetEventCreatedOnce: true, dispatches, targetDispatched, managerUnread: delivered.manager_unread,
+        revokedInitiatorNotifications: delivered.revoked_initiator_notifications,
+      };
     },
   );
   native(

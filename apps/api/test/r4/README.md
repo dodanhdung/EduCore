@@ -26,6 +26,18 @@ For a focused rerun, append `-TestFilter 'C06|X13'`. The harness invokes Node
 directly for this case so regex metacharacters never pass through `pnpm.cmd`.
 Filtered skips are not full-suite evidence. Each rerun still uses a new cluster.
 
+The separate R8 scheduling/attendance HTTP file has its own fixed database-name
+admission contract and is excluded from the ordinary R4 suite. Run it only with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File apps/api/test/r4/start-r8-scheduling-attendance-native.ps1 -RunTests
+```
+
+That runner creates a different fresh local PostgreSQL 16 container, checks the
+empty catalog and ownership, deploys the current migration chain, verifies an
+empty tenant baseline, then runs only the standalone file. It retains the
+container and sanitized environment evidence; no R4 database is reused.
+
 Run native tests only with `powershell -NoProfile -ExecutionPolicy Bypass -File
 apps/api/test/r4/start-r4-native.ps1 -RunTests` from the repository root. The
 runner creates and verifies a new isolated PostgreSQL 16 cluster before it sets
