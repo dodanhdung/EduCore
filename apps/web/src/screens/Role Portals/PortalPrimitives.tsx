@@ -11,6 +11,7 @@ export function PortalState({ title, children }: { title: string; children: Reac
   return <section className="portal-card portal-state" role="status"><h2>{title}</h2><p>{children}</p></section>
 }
 export function PortalLink({ to, navigate, children }: { to: string; navigate: (path: string) => void; children: ReactNode }) {
+  if (!to) return <span className="portal-pending">{children}: chưa được cấp quyền truy cập</span>
   return <a className="portal-link" href={to} onClick={(event) => { if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate(to) }}>{children}</a>
 }
 export function PortalMoney({ value }: { value: string }) {

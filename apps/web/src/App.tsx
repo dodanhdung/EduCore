@@ -19,12 +19,8 @@ import { SchedulingAttendanceProduction } from './screens/Scheduling & Resources
 import { BillingProduction } from './screens/Billing & Receivables/BillingProduction.tsx'
 import { FinanceProduction } from './screens/Billing & Receivables/FinanceProduction.tsx'
 import { AssignmentsProduction } from './screens/Assignments & Grading/AssignmentsProduction.tsx'
-import { TeacherHomeScreen } from './screens/Role Portals/PO01/TeacherHomeScreen.tsx'
-import { StudentHomeScreen } from './screens/Role Portals/PO02/StudentHomeScreen.tsx'
-import { ParentHomeScreen } from './screens/Role Portals/PO03/ParentHomeScreen.tsx'
-import { ChildLearningScreen } from './screens/Role Portals/PO04/ChildLearningScreen.tsx'
-import { MyBillingScreen } from './screens/Role Portals/PO05/MyBillingScreen.tsx'
-import { portalPath } from './screens/Role Portals/PortalNavigation.ts'
+import { PortalProduction } from './screens/Role Portals/PortalProduction.tsx'
+import { DashboardProduction } from './screens/Management & Operations/G01/DashboardProduction.tsx'
 import './App.css'
 import { ManagementScreen } from './screens/Management & Operations/ManagementScreens.tsx'
 import { ProductionManagement } from './screens/Management & Operations/ProductionManagement.tsx'
@@ -120,6 +116,7 @@ export function AppShell({ route, tenant, navigate, onLogout, children, preview 
 }
 
 export function AppView({ state, path, navigate, onLogout, controller = sessions }: { state: AuthState; path: string; navigate: (path: string) => void; onLogout: () => void; controller?: SessionController }) {
+  const [portalChild, setPortalChild] = useState<{ tenantId: string; viewerId: string; studentId: string } | null>(null)
   const result = resolveRoute(path, state)
   if (result.kind === 'not-found') return <ErrorScreen code="404" navigate={navigate} />
   if (result.kind === 'public') {
@@ -175,11 +172,14 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
         ? <AssignmentsProduction key={`${tenant.id}:${result.route.id}:${result.params.assignmentId ?? result.params.submissionId ?? ''}`}
           id={result.route.id as 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'} tenantId={tenant.id}
           token={session!.accessToken} selectedId={result.params.assignmentId ?? result.params.submissionId} navigate={navigate} />
-      : result.route.id === 'PO01' ? <TeacherHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
-      : result.route.id === 'PO02' ? <StudentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
-      : result.route.id === 'PO03' ? <ParentHomeScreen navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} viewerId={session?.principal.id} tenantId={tenant.id} />
-      : result.route.id === 'PO04' ? <ChildLearningScreen studentId={result.params.studentId} navigate={navigate} path={(id, recordId) => portalPath(tenant.id, id, recordId)} />
-      : result.route.id === 'PO05' ? <MyBillingScreen mode="unresolved" viewerId={session?.principal.id} tenantId={tenant.id} />
+      : result.route.id === 'G01' ? <DashboardProduction key={`${tenant.id}:${session!.accessToken}`} tenantId={tenant.id} token={session!.accessToken} />
+      : (['PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as string[]).includes(result.route.id)
+        ? <PortalProduction key={`${tenant.id}:${session!.accessToken}:${result.route.id}:${result.params.studentId ?? ''}`}
+            id={result.route.id as 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'} tenantId={tenant.id}
+            token={session!.accessToken} viewerId={session!.principal.id} selectedId={result.params.studentId}
+            initialChildId={portalChild?.tenantId === tenant.id && portalChild.viewerId === session!.principal.id ? portalChild.studentId : undefined}
+            onChooseChild={studentId => setPortalChild({ tenantId: tenant.id, viewerId: session!.principal.id, studentId })}
+            allowed={session!.navigation?.screenIds ?? []} navigate={navigate} />
       : (['OP06', 'OP07'] as string[]).includes(result.route.id)
         ? <OperationsProduction key={`${tenant.id}:${result.route.id}`} id={result.route.id as 'OP06' | 'OP07'} tenantId={tenant.id} token={session!.accessToken} />
       : (managementIds as readonly string[]).includes(result.route.id) ? ['OP01', 'OP02', 'OP03'].includes(result.route.id)
