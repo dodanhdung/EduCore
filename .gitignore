@@ -30,5 +30,6 @@ Thumbs.db
 *.tsbuildinfo
 # Tài liệu nội bộ
 artifacts/
+/\.local/
 .agents/
 /roadmap.md

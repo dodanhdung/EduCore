@@ -1,5 +1,38 @@
 # R9 closure proposal — MVP controlled pilot, 27 October 2026
 
+## Current owner-narrowed R9 closure: local MVP
+
+**Technical verdict:** `R9_04_MVP_LOCAL_READY_FOR_OWNER_REVIEW`. **Recommendation:** `R9_LOCAL_CLOSURE_RECOMMENDED`. The owner now defines R9 completion as `R9_COMPLETE_MVP_LOCAL_READY`, not real-user pilot readiness. Only the owner may declare it after reviewing this task's ZIP and new files. No Git/PR/merge, hosted CI or deployment was performed.
+
+Local checklist: dedicated PostgreSQL 16 initialization and 50 migrations PASS; restricted built API and Vite Web start at loopback PASS; synthetic Manager login/select/dashboard three KPIs/AC01/BL09/UI TOP_UP/logout and protected denial PASS; finance assertion requires BL09, HTTP 200 and database top-up/payment/balance deltas PASS; stop/restart retains wallet data and private file root PASS; API/Web typecheck/build/tests/lint and schema manifest PASS; [local runbook](R9_04_LOCAL_MVP_RUNBOOK.md) complete; R10 limitations recorded in the risk register. The owner can use `start-local.ps1` daily without reseeding or resetting. The application is currently running at `http://127.0.0.1:5173/login` from the final local restart.
+
+Historical R9.4 automated regression remains `R9_04_REGRESSION_GATE_PARTIAL` due to OTP timing FAIL. The pilot/production closure proposal below remains a separate future decision: production OTP recovery, real-user onboarding, target restore, hosted CI and public deployment were not part of this local acceptance. Any confirmed critical finance, tenant-isolation or account-takeover defect would overturn local readiness; none was confirmed in the cited local checks.
+
+### Remaining owner action for local closure
+
+1. Review the new launcher, browser assertion, local evidence/runbook and all task files in the ZIP before Git.
+2. Run the daily start/login/stop commands on the owner's Windows account and confirm the intended synthetic-only scope.
+3. Record explicit local R9 acceptance. Separately authorize any later Git/CI or real-user pilot work.
+
+## Final owner GO/NO-GO packet at `c12f732`
+
+**Technical verdict:** `R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW`. **Closure recommendation:** `R9_CLOSURE_CONDITIONAL`. The built application works for a synthetic Manager on fresh local PostgreSQL 16: authenticated built Web login/tenant/dashboard with three scoped KPIs, BL09 real API data, manual TOP_UP (one wallet transaction, balance `1000`, zero invoice Payments), logout and protected-route denial. Corrected HTTP smoke enforces 200/200/200/200/403/202/202/204/401, rejecting a deliberate 500-for-403 mismatch. Previous F-B01/02/03 finance execution and tenant/CLASS denials remain `PREVIOUSLY_VERIFIED` at `6d274fd` with unchanged production behavior; the current task did not repeat the entire approval execution lifecycle.
+
+The isolated R6-06 restore passed on a new source and different restored PG16 database/private root, including wallet, published grade, authorized private file, forbidden file denial and built API Manager overview 200. The local recovery point and hashes are in the [smoke evidence](R9_04_PILOT_SMOKE_EVIDENCE.json). The same-image tiny fixture does not establish target-host RPO/RTO. Teacher, Student and verified-linked Parent have prior targeted R9 browser/native evidence but no fresh built-Web or target-host journey in this task. Academic Staff and Accountant remain excluded. Financial and resource-scope integrity has no confirmed critical defect in the cited synthetic checks.
+
+**Real-user pilot activation remains blocked by OTP delivery.** The current production worker refuses to start, and the secure SMTP proposal is unimplemented and unapproved. The official OTP timing equivalence test remains FAIL; D1 was approved as a separate diagnostic but not run here, and residual risk has not been accepted. Hosted GitHub Actions, target deployment, target paired restore, real email and owner sign-off are `NOT RUN` or pending. No `R9_COMPLETE_MVP_PILOT_READY` claim is made.
+
+### Smallest remaining first-session checklist
+
+1. Owner reviews this ZIP and all new paths; approves the exact initial four-role access list, exclusions and current permission scopes. Keep Academic Staff/Accountant out unless their separate walkthrough passes.
+2. Security owner reviews/approves a separate production OTP worker implementation, secure SMTP/key custody and failure procedure; verify real delivery, expiry, single use, old-session revocation and generic responses on a pilot-like host. Do not change the local-only guard as a shortcut.
+3. Owner accepts or rejects the **limited-pilot** OTP timing residual risk in writing, naming D1 owner and the first R10 security checkpoint. Monitor 429/503, delivery failures and repeatable external classification; stop on credible enumeration or account takeover.
+4. After separate Git/deployment authorization and hosted CI, execute built-Web login/select/essential workflow/scope denial/logout for each invited actor on the target host; verify named Manager finance grants and eligible source.
+5. Establish target backup schedule/operator/encryption, take a coordinated DB/private-file snapshot and restore into a separate target; verify login, wallet/invoice, grade and authorized/forbidden file access. Record RPO/RTO observations and stop if restore fails.
+6. Owner records explicit GO/NO-GO and only then may declare `R9_COMPLETE_MVP_PILOT_READY`. Noncritical observed UX defects enter the minimal R10 backlog in the risk register.
+
+### Previous checkpoint proposal (historical where superseded)
+
 **MVP verdict:** `R9_04_MVP_PILOT_PARTIAL`.
 
 **R9 recommendation:** `R9_CLOSURE_CONDITIONAL`. This is a recommendation to complete the listed owner gates, **not** an R9 closure approval. `R9_COMPLETE_MVP_PILOT_READY` is **not valid yet**. The official automated regression remains `R9_04_REGRESSION_GATE_PARTIAL` and the earlier RC remains `R9_04_RC_PARTIAL` because the OTP timing equivalence test still fails.

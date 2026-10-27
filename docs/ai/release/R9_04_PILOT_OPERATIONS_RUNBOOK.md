@@ -1,5 +1,15 @@
 # R9.4 controlled-pilot operations runbook — proposed, not deployed
 
+**Scope note:** This runbook remains for a future real-user pilot. The current owner-narrowed R9 decision is synthetic **local MVP** readiness, documented in `R9_04_LOCAL_MVP_RUNBOOK.md`; it does not satisfy this pilot runbook's production OTP or target-host gates. Keep the two operating modes separate.
+
+## Final local verification and first-session operating rule
+
+At `c12f732`, fresh smoke `a4b6aa891eb44812b869d655ff70f8b4` passed measured HTTP codes, authenticated built-Web Edge Manager dashboard/BL09/TOP_UP/logout and SQL persistence. Targeted R6-06 passed a distinct PG16 restore with paired private files, restricted-role service reads and a built-API Manager overview 200. The coordinated recovery point was `2026-10-27T00:20:25.845Z`; migration revision `202610260005_r9_conservative_finance_scope`, 50 migrations, dump SHA-256 `53c16053d8dc9a08f8535e379f5ff49f0d688cfc0d1a9b8ab909cefd08d17c63`, private synthetic file SHA-256 `6f71714ba1d09b1fc838e8661ee4d0170fd38f6913426432ad289af8ecc52510`. The dump and file remain outside the review ZIP. Same-image local recovery is verified; target-host backup cadence, recoverable media, RPO/RTO and `TARGET_PILOT_RESTORE_NOT_RUN` remain open.
+
+Before inviting real users: owner approves named tenant/Manager/Teacher/Student/verified Parent scope, exact current grants and exclusions; separately approves and tests a production-compatible OTP worker with secure SMTP and real delivery/expiry/reset; explicitly accepts or rejects the limited-pilot OTP timing risk; runs target built-Web role journeys and a paired restore into a separate target; observes hosted CI after separately authorized Git; records a GO decision. Academic Staff/Accountant are excluded. No development-mode worker or synthetic SMTP may serve real accounts. Until these steps finish, the supported activity is a synthetic demonstration only.
+
+The procedures below remain proposed. References to the earlier render-only Edge check and earlier R6 evidence describe the previous checkpoint; the current local results above supersede them.
+
 This procedure is for owner review before the first real pilot session. It does not authorize deployment, production data access, Git operations or real email integration. Local proof: `R9_04_PILOT_SMOKE_EVIDENCE.json`. The smoke runner `apps/api/test/pilot/start-pilot-smoke.ps1` admits a **new disposable loopback PostgreSQL 16** container, uses `seed-demo.ts`, starts built API/Web and local fake SMTP/OTP worker, checks synthetic HTTP operations, stops helper processes and retains the container. It is **not** a target-host deployment tool.
 
 ## 1. Pilot scope and accountable operators

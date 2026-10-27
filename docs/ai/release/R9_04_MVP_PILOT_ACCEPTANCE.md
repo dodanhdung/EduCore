@@ -1,5 +1,28 @@
 # R9.4 MVP pilot acceptance — owner review, 27 October 2026
 
+## Owner-narrowed R9 local MVP decision — current scope
+
+**Local technical verdict: `R9_04_MVP_LOCAL_READY_FOR_OWNER_REVIEW`; recommendation: `R9_LOCAL_CLOSURE_RECOMMENDED`.** The owner narrowed R9 closure to `R9_COMPLETE_MVP_LOCAL_READY`, which only the owner may formally declare. The [local runbook](R9_04_LOCAL_MVP_RUNBOOK.md) and [local evidence](R9_04_LOCAL_MVP_EVIDENCE.json) document a working Windows launcher, real React/Nest/PostgreSQL Manager walkthrough, safe stop/restart, persistent wallet data and private-file root, and focused checks. The local demo is synthetic; it uses a Vite development server and known test fixture password.
+
+The pilot assessment below is a **different scope**. Its `R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW` follow-up and earlier `R9_04_MVP_PILOT_PARTIAL` checkpoint describe stages of real-user pilot preparation; neither converts the official OTP timing FAIL to PASS or approves production recovery. Real-user pilot and production readiness remain unresolved and are not required for this local R9 decision. No owner closure approval is inferred.
+
+## Final closure follow-up at `c12f732` — current assessment
+
+**Technical verdict: `R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW`; R9 recommendation: `R9_CLOSURE_CONDITIONAL`.** This is a local synthetic MVP result, not real-user GO or `R9_COMPLETE_MVP_PILOT_READY`. The production-mode OTP delivery path remains blocked pending a separately approved implementation and real delivery test. The official R4 OTP timing equivalence case remains FAIL and `PILOT_SECURITY_RISK_ACCEPTANCE_REQUIRED`; D1 was not run here. Hosted GitHub Actions and target-host checks remain `NOT RUN`.
+
+| Gate | Result | Measured boundary |
+| --- | --- | --- |
+| A — HTTP smoke assertions | `PASS` | Runner now checks actual 200/200/200/200/403/202/202/204/401 statuses and response shape/resource binding. A deliberate 500-for-403 probe was rejected. Fresh PostgreSQL 16 smoke run `a4b6aa891eb44812b869d655ff70f8b4` passed. |
+| B — built-Web Manager | `PASS` locally | Edge CDP drove built React assets against built NestJS and fresh restricted PostgreSQL: UI login/select, three dashboard KPIs, BL09 real data, manual 1,000 VND TOP_UP, logout and protected-route denial. SQL postcheck: one TOP_UP, zero invoice Payments, wallet balance `1000`. Teacher/Student/Parent built-Web and target-host journeys remain `NOT RUN` here; prior R9 development-Web journeys are `PREVIOUSLY_VERIFIED`. |
+| C — real-user OTP delivery | `BLOCKED` | Local fake SMTP accepted a synthetic `.invalid` OTP; production worker still rejects production mode. [OTP delivery proposal](R9_04_OTP_PILOT_DELIVERY_PROPOSAL.md) is `PROPOSED`, not approved or implemented. |
+| D — isolated restore | `PASS` locally | Targeted R6-06 1/1 on fresh PG16: coordinated DB/private-file backup, different empty restore database/root, restricted credentials, wallet/published grade/private-file reads, forbidden file denial and built API authorized Manager overview 200. Recovery point `2026-10-27T00:20:25.845Z`; 50 migrations, zero invalid constraints. `TARGET_PILOT_RESTORE_NOT_RUN`. |
+| E — pilot access list | `OWNER_DECISION_REQUIRED` | Proposed Manager, Teacher, Student and verified-linked Parent; Academic Staff/Accountant excluded. Only Manager has a fresh built-Web journey in this task. Named pilot users and current grants must be verified on target host. |
+| OTP timing residual risk | `OWNER_DECISION_REQUIRED` | Official FAIL persists. Limited-pilot acceptance needs explicit owner sign-off, monitoring, stop conditions and D1 owner/checkpoint. |
+
+The current browser action and the direct HTTP setup are separate: the browser itself submitted login, tenant selection, BL09 TOP_UP and logout; the smoke runner's HTTP calls independently checked status/tenant binding and SQL postchecks checked persistence. No production business logic, SQL migration, permission grant or official security threshold changed. Review [sanitized evidence](R9_04_PILOT_SMOKE_EVIDENCE.json) and the exact new helper before Git. The prior checkpoint narrative below is retained as historical evidence and is superseded where it says authenticated built-Web or current local restore was not run.
+
+## Prior checkpoint narrative (historical)
+
 **Verdict: `R9_04_MVP_PILOT_PARTIAL`.** The application and key synthetic workflows work locally. A specific pilot access list, target-environment restore/startup, independent role walkthroughs and owner acceptance of unresolved OTP timing risk remain open. This is MVP pilot preparation, not production readiness or `R9_COMPLETE_MVP_PILOT_READY`.
 
 ## Scope and evidence boundary

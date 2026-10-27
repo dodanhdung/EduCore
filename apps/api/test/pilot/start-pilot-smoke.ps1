@@ -51,6 +51,15 @@ function Status-Of([scriptblock]$operation) {
     throw
   }
 }
+function Require-Status([int]$actual, [int]$expected, [string]$operation) {
+  if ($actual -ne $expected) { throw "UNEXPECTED_HTTP_STATUS:${operation}:expected=${expected}:actual=${actual}" }
+  return $actual
+}
+function Read-JsonResponse([scriptblock]$operation, [int]$expected, [string]$name) {
+  $response = & $operation
+  $status = Require-Status ([int]$response.StatusCode) $expected $name
+  return @{ status = $status; body = ($response.Content | ConvertFrom-Json) }
+}
 
 $runId = [Guid]::NewGuid().ToString('N')
 $container = "educore-pilot-smoke-$runId"
@@ -248,32 +257,71 @@ server.listen(Number(process.env.PILOT_SMTP_PORT), '127.0.0.1');
 
   $origin = "http://localhost:$webPort"
   $body = @{ email = 'admin@pilot.invalid'; password = $demoPassword } | ConvertTo-Json -Compress
-  $login = Invoke-RestMethod -Uri "$apiOrigin/api/v1/auth/login" -Method Post -Headers @{ Origin = $origin } -ContentType 'application/json' -Body $body
+  $loginResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/login" -Method Post -Headers @{ Origin = $origin } -ContentType 'application/json' -Body $body -UseBasicParsing } 200 'login'
+  $login = $loginResponse.body
   if (-not $login.accessToken -or @($login.allowedTenants).Count -ne 1) { throw 'LOGIN_OR_TENANT_LIST_FAILED' }
   $tenant = $login.allowedTenants[0].id
-  $select = Invoke-RestMethod -Uri "$apiOrigin/api/v1/auth/select-tenant" -Method Post -Headers @{ Authorization = "Bearer $($login.accessToken)" } -ContentType 'application/json' -Body (@{ tenantId = $tenant } | ConvertTo-Json -Compress)
+  $selectResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/select-tenant" -Method Post -Headers @{ Authorization = "Bearer $($login.accessToken)" } -ContentType 'application/json' -Body (@{ tenantId = $tenant } | ConvertTo-Json -Compress) -UseBasicParsing } 200 'selectTenant'
+  $select = $selectResponse.body
   if (-not $select.accessToken -or $select.principal.tenantId -ne $tenant) { throw 'TENANT_SELECTION_FAILED' }
   $authorized = @{ Authorization = "Bearer $($select.accessToken)" }
-  $navigation = Invoke-RestMethod -Uri "$apiOrigin/api/v1/tenants/$tenant/access/navigation" -Headers $authorized
-  $overview = Invoke-RestMethod -Uri "$apiOrigin/api/v1/tenants/$tenant/portal/overview" -Headers $authorized
+  $navigationResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/tenants/$tenant/access/navigation" -Headers $authorized -UseBasicParsing } 200 'navigation'
+  $overviewResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/tenants/$tenant/portal/overview" -Headers $authorized -UseBasicParsing } 200 'dashboard'
+  $navigation = $navigationResponse.body
+  $overview = $overviewResponse.body
   if (@($navigation.screenIds).Count -lt 1 -or $navigation.tenantId -ne $tenant -or
       $null -eq $overview.students -or $null -eq $overview.classes -or $null -eq $overview.outstandingVnd) { throw 'TENANT_BOUND_PROJECTIONS_FAILED' }
-  $result.http.login = 200
-  $result.http.selectTenant = 200
-  $result.http.navigation = 200
-  $result.http.dashboard = 200
+  $result.http.login = $loginResponse.status
+  $result.http.selectTenant = $selectResponse.status
+  $result.http.navigation = $navigationResponse.status
+  $result.http.dashboard = $overviewResponse.status
   $result.http.dashboardShape = 'three_scoped_kpis'
+  $env:PILOT_WEB_ORIGIN = $origin
+  $env:PILOT_API_ORIGIN = $apiOrigin
+  $env:PILOT_BROWSER_EMAIL = 'admin@pilot.invalid'
+  $env:PILOT_BROWSER_PASSWORD = $demoPassword
+  $env:PILOT_BROWSER_TENANT = $tenant
+  $env:PILOT_BROWSER_SCENARIO = 'FINANCE_UI_SMOKE'
+  $env:PILOT_AUDIT_DB_URL = $adminUrl
+  $ErrorActionPreference = 'Continue'
+  try { $browserOutput = & $node (Join-Path $PSScriptRoot 'built-web-browser.mjs') 2>&1; $browserExit = $LASTEXITCODE }
+  finally {
+    $ErrorActionPreference = 'Stop'
+    foreach ($key in @('PILOT_WEB_ORIGIN','PILOT_API_ORIGIN','PILOT_BROWSER_EMAIL','PILOT_BROWSER_PASSWORD','PILOT_BROWSER_TENANT','PILOT_BROWSER_SCENARIO','PILOT_AUDIT_DB_URL')) { [Environment]::SetEnvironmentVariable($key,$null,'Process') }
+  }
+  if ($browserExit -eq 0) { $result.browser = $browserOutput | Out-String | ConvertFrom-Json }
+  else { $result.browser = @{ result = 'NOT_VERIFIED'; errorCode = 'BUILT_WEB_BROWSER_FAILED' } }
+  if ($result.browser.topUp -eq 'PASS_UI_HTTP_200_WALLET_HISTORY') {
+    $env:PILOT_ADMIN_URL = $adminUrl
+    $financeCheck = @'
+import postgres from 'postgres';
+const sql = postgres(process.env.PILOT_ADMIN_URL, { max: 1 });
+try {
+  const [row] = await sql`SELECT
+    (SELECT count(*)::int FROM public.wallet_transactions WHERE kind='TOP_UP' AND amount_vnd=1000) topups,
+    (SELECT count(*)::int FROM public.payments) invoice_payments,
+    (SELECT coalesce(sum(balance_vnd),0)::text FROM public.wallet_accounts) wallet_balance`;
+  console.log(JSON.stringify(row));
+} finally { await sql.end(); }
+'@
+    Push-Location $apiRoot
+    try { $finance = $financeCheck | & $node --input-type=module - | Out-String | ConvertFrom-Json; if ($LASTEXITCODE -ne 0) { throw 'FINANCE_POSTCHECK_QUERY_FAILED' } }
+    finally { Pop-Location; Remove-Item Env:PILOT_ADMIN_URL -ErrorAction SilentlyContinue }
+    if ($finance.topups -ne 1 -or $finance.invoice_payments -ne 0 -or $finance.wallet_balance -ne '1000') { throw 'TOP_UP_INVOICE_OR_WALLET_INVARIANT_FAILED' }
+    $result.browser | Add-Member -NotePropertyName financePersistence -NotePropertyValue @{ topUps = $finance.topups; invoicePayments = $finance.invoice_payments; walletBalanceVnd = $finance.wallet_balance }
+  }
   $wrong = [Guid]::NewGuid().ToString()
   $crossTenantStatus = Status-Of { Invoke-WebRequest -Uri "$apiOrigin/api/v1/tenants/$wrong/portal/overview" -Headers $authorized -UseBasicParsing }
-  if ($crossTenantStatus -eq 200) { throw 'CROSS_TENANT_READ_ALLOWED' }
-  $result.http.crossTenantStatus = $crossTenantStatus
+  $result.http.crossTenantStatus = Require-Status $crossTenantStatus 403 'crossTenant'
   $otpBody = @{ email = 'unknown@pilot.invalid' } | ConvertTo-Json -Compress
-  $otp = Invoke-RestMethod -Uri "$apiOrigin/api/v1/auth/password/otp/request" -Method Post -ContentType 'application/json' -Body $otpBody
+  $otpResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/password/otp/request" -Method Post -ContentType 'application/json' -Body $otpBody -UseBasicParsing } 202 'unknownOtp'
+  $otp = $otpResponse.body
   if ($otp.accepted -ne $true) { throw 'GENERIC_OTP_RESPONSE_FAILED' }
-  $result.http.unknownOtp = 202
-  $knownOtp = Invoke-RestMethod -Uri "$apiOrigin/api/v1/auth/password/otp/request" -Method Post -ContentType 'application/json' -Body (@{ email='admin@pilot.invalid' } | ConvertTo-Json -Compress)
+  $result.http.unknownOtp = $otpResponse.status
+  $knownOtpResponse = Read-JsonResponse { Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/password/otp/request" -Method Post -ContentType 'application/json' -Body (@{ email='admin@pilot.invalid' } | ConvertTo-Json -Compress) -UseBasicParsing } 202 'knownOtp'
+  $knownOtp = $knownOtpResponse.body
   if ($knownOtp.accepted -ne $true) { throw 'KNOWN_OTP_RESPONSE_FAILED' }
-  $result.http.knownOtp = 202
+  $result.http.knownOtp = $knownOtpResponse.status
   $env:PILOT_ADMIN_URL = $adminUrl
   $deliveryCheck = @'
 import postgres from 'postgres';
@@ -292,11 +340,13 @@ finally { await sql.end(); }
   Remove-Item Env:PILOT_ADMIN_URL -ErrorAction SilentlyContinue
   if (-not $accepted) { throw 'LOCAL_OTP_DELIVERY_NOT_ACCEPTED' }
   $result.http.localOtpWorkerDelivery = 'ACCEPTED_BY_SMTP'
-  $null = Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/logout" -Method Post -Headers $authorized -UseBasicParsing
+  $logoutResponse = Invoke-WebRequest -Uri "$apiOrigin/api/v1/auth/logout" -Method Post -Headers $authorized -UseBasicParsing
+  $result.http.logout = Require-Status ([int]$logoutResponse.StatusCode) 204 'logout'
   $afterLogout = Status-Of { Invoke-WebRequest -Uri "$apiOrigin/api/v1/tenants/$tenant/portal/overview" -Headers $authorized -UseBasicParsing }
-  if ($afterLogout -ne 401) { throw 'LOGOUT_DID_NOT_REVOKE_SESSION' }
-  $result.http.logout = 204
-  $result.http.revokedSessionStatus = $afterLogout
+  $result.http.revokedSessionStatus = Require-Status $afterLogout 401 'revokedSession'
+  if ($result.browser.result -ne 'PASS' -or $result.browser.scenario -ne 'FINANCE_UI_SMOKE' -or
+      $result.browser.topUp -ne 'PASS_UI_HTTP_200_WALLET_HISTORY' -or
+      $result.browser.financePersistence.invoicePaymentsAdded -ne 0) { throw 'FINANCE_UI_SMOKE_NOT_VERIFIED' }
   $result.status = 'PASS'
 } catch {
   $result.status = 'FAIL'

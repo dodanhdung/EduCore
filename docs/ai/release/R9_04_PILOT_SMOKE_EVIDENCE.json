@@ -148,11 +148,79 @@
     "targetPilotBackupScheduleAndRestore": "NOT_CONFIGURED_OR_VERIFIED",
     "targetDeployment": "NOT_RUN"
   },
+  "finalClosureFollowup": {
+    "sourceRevision": "c12f7325a268261d5b4986571aa145e56325ee53",
+    "date": "2026-10-27",
+    "runnerStatusAssertion": "PASS_MEASURED_ALL_NINE_EXPECTED_HTTP_CODES",
+    "mismatchProbe": "PASS_500_REJECTED_AS_CROSS_TENANT_STATUS",
+    "freshSmokeRunId": "a4b6aa891eb44812b869d655ff70f8b4",
+    "freshPg16": "PASS_50_MIGRATIONS_RESTRICTED_ROLES",
+    "http": {
+      "login": 200,
+      "selectTenant": 200,
+      "navigation": 200,
+      "dashboard": 200,
+      "wrongTenant": 403,
+      "unknownOtp": 202,
+      "knownOtp": 202,
+      "logout": 204,
+      "revokedToken": 401
+    },
+    "edgeBuiltWeb": {
+      "result": "PASS_REAL_REACT_BUILT_ASSETS_AND_NEST_POSTGRES",
+      "actor": "SYNTHETIC_MANAGER",
+      "login": 200,
+      "tenantSelection": 200,
+      "dashboardKpis": 3,
+      "bl09AuthorizedApi": 200,
+      "manualTopUpUiAndApi": 200,
+      "topUpWalletTransactions": 1,
+      "invoicePaymentsAfterTopUp": 0,
+      "walletBalanceVndAfterTopUp": "1000",
+      "logout": 204,
+      "protectedAfterLogout": "DENIED",
+      "browserProfileInReviewZip": false
+    },
+    "isolatedRestore": {
+      "test": "R6-06",
+      "result": "PASS_1_OF_1_TARGETED",
+      "freshSourceRunId": "b889c68925394055aa9f29f1ee078d96",
+      "restoredDatabaseRunId": "245d4b3ac69b47679d731355afb7f0e9",
+      "differentRestoredDatabase": true,
+      "pairedPrivateFileSnapshot": true,
+      "recoveryPointUtc": "2026-10-27T00:20:25.845Z",
+      "postgresMajor": 16,
+      "migrations": 50,
+      "migrationRevision": "202610260005_r9_conservative_finance_scope",
+      "dumpSha256": "53c16053d8dc9a08f8535e379f5ff49f0d688cfc0d1a9b8ab909cefd08d17c63",
+      "privateFileSha256": "6f71714ba1d09b1fc838e8661ee4d0170fd38f6913426432ad289af8ecc52510",
+      "submissionLinks": 1,
+      "publishedGradeAndWalletAndAuthorizedPrivateDownload": "PASS_VIA_RESTRICTED_SERVICES",
+      "unauthorizedFileAccess": "DENIED",
+      "builtApiProcessAgainstRestoredDatabase": "PASS_AUTHORIZED_MANAGER_OVERVIEW_200",
+      "targetPilotHostRestore": "TARGET_PILOT_RESTORE_NOT_RUN"
+    },
+    "productionOtpWorker": "BLOCKED_PENDING_SEPARATE_SECURITY_IMPLEMENTATION",
+    "otpTimingOfficial": "FAIL_UNRESOLVED",
+    "d1Diagnostic": "NOT_RUN_THIS_TASK",
+    "hostedGithubActions": "NOT_RUN",
+    "technicalVerdict": "R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW",
+    "closureRecommendation": "R9_CLOSURE_CONDITIONAL",
+    "r9Complete": false
+  },
   "releaseStatus": {
     "mvpPilot": "R9_04_MVP_PILOT_PARTIAL",
     "r9ClosureRecommendation": "R9_CLOSURE_CONDITIONAL",
     "r9Complete": false,
     "regressionGate": "R9_04_REGRESSION_GATE_PARTIAL",
     "rc": "R9_04_RC_PARTIAL"
+  },
+  "statusScopeClarification": {
+    "releaseStatus": "HISTORICAL_PILOT_CHECKPOINT_AT_6d274fd",
+    "finalClosureFollowup": "LATER_LOCAL_SYNTHETIC_PILOT_REVIEW_AT_c12f732_NOT_REAL_USER_GO",
+    "localMvpCurrent": "R9_04_MVP_LOCAL_READY_FOR_OWNER_REVIEW_IN_R9_04_LOCAL_MVP_EVIDENCE.json",
+    "historicalAutomatedRegression": "FAIL_OTP_TIMING_REMAINS_UNCHANGED",
+    "realUserPilot": "UNRESOLVED",
+    "production": "NOT_APPROVED"
   }
 }

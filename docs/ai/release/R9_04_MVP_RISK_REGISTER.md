@@ -1,5 +1,26 @@
 # R9.4 MVP pilot risk register and R10 candidates — owner review
 
+## Local MVP R9 scope and R10 queue
+
+For the owner-narrowed **synthetic Windows local MVP**, the launcher, Manager browser journey, server-side finance assertion and stop/restart persistence passed; see `R9_04_LOCAL_MVP_EVIDENCE.json`. The local recommendation is `R9_LOCAL_CLOSURE_RECOMMENDED`, pending owner file review and explicit acceptance. The pilot gates below remain valid for any later **real-user** use and must not be read as local blockers unless a new confirmed critical defect appears. The official OTP timing case remains FAIL; no production security approval is claimed.
+
+Minimal R10 queue: PO05 learner finance/wallet reader permissions and navigation, AC09 financial transfer policy, legacy/mixed invoice adoption policy, mobile finance before mobile use, and concrete UI bugs that emerge from the 11 existing lint warnings. OTP D1 and production recovery delivery remain separate security/pilot work before real-user exposure; they are not accepted as safe for production by local R9 closure. No P1 feature or permission expansion is implied.
+
+## Final closure update, 27 October 2026
+
+At local source `c12f732`, the corrected smoke and authenticated built-Web Manager/BL09 journey passed on a fresh PG16 cluster, including a UI TOP_UP and SQL proof of **zero** invoice Payments. Targeted R6-06 passed a new paired DB/private-file restore and built-API authorized read against the restored database. These results close the **local** portions of P-G01 and P-G02. The target-host browser walkthroughs for each invited actor and `TARGET_PILOT_RESTORE_NOT_RUN` remain first-session gates. The earlier table below records the previous checkpoint and must be read with this update.
+
+| Decision | Current classification | Exposure, owner action and stop rule |
+| --- | --- | --- |
+| Production OTP delivery (P-G07) | `BLOCKED` for real-user activation | Current entry point rejects production mode; local fake SMTP is synthetic only. Approve and verify a separate secure worker/SMTP design before invitations. Stop recovery/invitations on delivery, key or secure-cookie failure. |
+| OTP timing (P-G05) | `PILOT_SECURITY_RISK_ACCEPTANCE_REQUIRED` | Official equivalence FAIL; generic 202 shape and prior IP throttle are controls, not proof of no signal. Public recovery may be reachable by outsiders even with few named pilot users. Owner must record limited exposure and D1 security owner/checkpoint, inspect 429/503 and repeatable classifier reports daily, and suspend recovery/invitations on credible enumeration or account takeover. D1 was not run in this task. |
+| Target environment and roles (P-G01/02/03/04) | `OWNER_DECISION_REQUIRED` | Name tenant/users, confirm current grants, target built-Web role workflows and paired restore before first session; Academic Staff/Accountant stay excluded unless separately tested. Stop on tenant/file leak, wrong money, failed restore or unapproved role grant. |
+| GitHub CI and closure (P-G06) | `NOT_RUN` / `OWNER_DECISION_REQUIRED` | Review new files before Git; authorize Git/PR separately, observe hosted CI and explicitly decide GO/NO-GO. No owner acceptance is inferred from this document. |
+
+**Minimal R10 backlog after owner-approved pilot:** PO05 learner finance/wallet reads and discoverability, AC09 transfer handoff policy, legacy/mixed adoption policy, mobile finance browser checks before mobile use, and the 11 existing Web lint warnings as observed bugs warrant. D1 and any confirmed identity/security defect retain their security gate and cannot be silently deferred as UX work. No P1 feature is opened by this backlog.
+
+## Previous checkpoint register (historical where superseded)
+
 Baseline: `test/r9-04-release-candidate` at `6d274fda8a5606519b0ad84e7fa864bec4cb4f24`, 27 October 2026. Classifications apply to the **proposed narrow pilot**, not an approved deployment. No entry is owner-accepted by this document. A required pilot workflow cannot be moved to R10 solely to obtain a READY verdict.
 
 ## Pre-session gates and security decision
