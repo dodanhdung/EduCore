@@ -1,0 +1,72 @@
+# R9.4 MVP pilot acceptance — owner review, 27 October 2026
+
+## Owner-narrowed R9 local MVP decision — current scope
+
+**Local technical verdict: `R9_04_MVP_LOCAL_READY_FOR_OWNER_REVIEW`; recommendation: `R9_LOCAL_CLOSURE_RECOMMENDED`.** The owner narrowed R9 closure to `R9_COMPLETE_MVP_LOCAL_READY`, which only the owner may formally declare. The [local runbook](R9_04_LOCAL_MVP_RUNBOOK.md) and [local evidence](R9_04_LOCAL_MVP_EVIDENCE.json) document a working Windows launcher, real React/Nest/PostgreSQL Manager walkthrough, safe stop/restart, persistent wallet data and private-file root, and focused checks. The local demo is synthetic; it uses a Vite development server and known test fixture password.
+
+The pilot assessment below is a **different scope**. Its `R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW` follow-up and earlier `R9_04_MVP_PILOT_PARTIAL` checkpoint describe stages of real-user pilot preparation; neither converts the official OTP timing FAIL to PASS or approves production recovery. Real-user pilot and production readiness remain unresolved and are not required for this local R9 decision. No owner closure approval is inferred.
+
+## Final closure follow-up at `c12f732` — current assessment
+
+**Technical verdict: `R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW`; R9 recommendation: `R9_CLOSURE_CONDITIONAL`.** This is a local synthetic MVP result, not real-user GO or `R9_COMPLETE_MVP_PILOT_READY`. The production-mode OTP delivery path remains blocked pending a separately approved implementation and real delivery test. The official R4 OTP timing equivalence case remains FAIL and `PILOT_SECURITY_RISK_ACCEPTANCE_REQUIRED`; D1 was not run here. Hosted GitHub Actions and target-host checks remain `NOT RUN`.
+
+| Gate | Result | Measured boundary |
+| --- | --- | --- |
+| A — HTTP smoke assertions | `PASS` | Runner now checks actual 200/200/200/200/403/202/202/204/401 statuses and response shape/resource binding. A deliberate 500-for-403 probe was rejected. Fresh PostgreSQL 16 smoke run `a4b6aa891eb44812b869d655ff70f8b4` passed. |
+| B — built-Web Manager | `PASS` locally | Edge CDP drove built React assets against built NestJS and fresh restricted PostgreSQL: UI login/select, three dashboard KPIs, BL09 real data, manual 1,000 VND TOP_UP, logout and protected-route denial. SQL postcheck: one TOP_UP, zero invoice Payments, wallet balance `1000`. Teacher/Student/Parent built-Web and target-host journeys remain `NOT RUN` here; prior R9 development-Web journeys are `PREVIOUSLY_VERIFIED`. |
+| C — real-user OTP delivery | `BLOCKED` | Local fake SMTP accepted a synthetic `.invalid` OTP; production worker still rejects production mode. [OTP delivery proposal](R9_04_OTP_PILOT_DELIVERY_PROPOSAL.md) is `PROPOSED`, not approved or implemented. |
+| D — isolated restore | `PASS` locally | Targeted R6-06 1/1 on fresh PG16: coordinated DB/private-file backup, different empty restore database/root, restricted credentials, wallet/published grade/private-file reads, forbidden file denial and built API authorized Manager overview 200. Recovery point `2026-10-27T00:20:25.845Z`; 50 migrations, zero invalid constraints. `TARGET_PILOT_RESTORE_NOT_RUN`. |
+| E — pilot access list | `OWNER_DECISION_REQUIRED` | Proposed Manager, Teacher, Student and verified-linked Parent; Academic Staff/Accountant excluded. Only Manager has a fresh built-Web journey in this task. Named pilot users and current grants must be verified on target host. |
+| OTP timing residual risk | `OWNER_DECISION_REQUIRED` | Official FAIL persists. Limited-pilot acceptance needs explicit owner sign-off, monitoring, stop conditions and D1 owner/checkpoint. |
+
+The current browser action and the direct HTTP setup are separate: the browser itself submitted login, tenant selection, BL09 TOP_UP and logout; the smoke runner's HTTP calls independently checked status/tenant binding and SQL postchecks checked persistence. No production business logic, SQL migration, permission grant or official security threshold changed. Review [sanitized evidence](R9_04_PILOT_SMOKE_EVIDENCE.json) and the exact new helper before Git. The prior checkpoint narrative below is retained as historical evidence and is superseded where it says authenticated built-Web or current local restore was not run.
+
+## Prior checkpoint narrative (historical)
+
+**Verdict: `R9_04_MVP_PILOT_PARTIAL`.** The application and key synthetic workflows work locally. A specific pilot access list, target-environment restore/startup, independent role walkthroughs and owner acceptance of unresolved OTP timing risk remain open. This is MVP pilot preparation, not production readiness or `R9_COMPLETE_MVP_PILOT_READY`.
+
+## Scope and evidence boundary
+
+Local branch `test/r9-04-release-candidate`, HEAD `6d274fda8a5606519b0ad84e7fa864bec4cb4f24`. Prior four OTP decision files remain untracked and untouched by this task. Current task adds a disposable production-entry smoke runner, this packet and release-document addenda; no production business logic, permission grant, SQL or official security test changed. Sources include Requirements v5.1 FR-01/Q-01 and Wallet B1–B5, UC-03/21–26/34/37, `PROJECT_CONTEXT.md`, current route/controller/test code, R9.4 matrix/scope/demo documents, gate-closure evidence and OTP decision packet. Historical native/browser evidence at `f2691ae` and `6b24f86` plus the subsequently committed test-only follow-up `6d274fd` is **PREVIOUSLY_VERIFIED**, not a rerun here. The source delta from `f2691ae` to HEAD changes test verification and release docs, not production behavior.
+
+The fresh local smoke used a newly admitted disposable PostgreSQL 16 cluster, 50 migrations, separate restricted AUTH/API/business-worker/OTP-worker logins, built `apps/api/dist/main.js`, built Vite Web preview, private temporary file root and local fake SMTP. It ran with `NODE_ENV=development` so the local-only recovery worker could start. This is a real API production entry point, **not** a deployed `NODE_ENV=production` or target-host rehearsal. The current recovery-worker entry point explicitly refuses production mode (`PRODUCTION_OTP_WORKER_NOT_APPROVED`); production-mode pilot recovery needs a separate owner-approved solution. HTTP login 200, tenant selection 200, scoped navigation/dashboard 200, wrong-tenant overview 403, unknown/known OTP requests 202, synthetic delivery `ACCEPTED_BY_SMTP`, logout 204 and revoked-token overview 401 passed. The built Web preview served its asset-bearing HTML. Its first inline Edge dump was too early to verify React, but a separate isolated Edge check **did render the built login form** (`#login-email`). That follow-up did not log in through the built browser or run against a target host; existing R4 Edge journeys exercised real React/Nest/PostgreSQL through the development Vite server. No claim of production-build browser E2E is made.
+
+## Practical P0 workflow matrix
+
+`WORKING` means executed evidence at this source state or an equivalent production-code state; `WORKING_WITH_LIMITATIONS` retains specific unverified pilot/deployment steps. “Previously” marks earlier local evidence. UI_E2E means an actual Edge action, not direct HTTP fixture setup.
+
+| Area and essential outcome | Pilot status | Executed evidence and boundary |
+| --- | --- | --- |
+| Authentication/IAM: login, select tenant, logout, live scope | `WORKING_WITH_LIMITATIONS` | Fresh built-API HTTP smoke passed; previously R4 A19 Edge login/tenant/logout/recovery and current-scope tests passed. Target-origin cookies/SMTP and OTP timing remain open. |
+| Management: members and approved assignments | `WORKING_WITH_LIMITATIONS` | Previously R4 member/role/link authorization HTTP passed; Manager Edge navigation passed. Fresh manager-only seed did not execute member mutation or guided operator sequence. |
+| Academic: eligible catalog/class/enrollment | `WORKING_WITH_LIMITATIONS` | Previously R3/R4 native and R9 Edge academic journeys passed. AC09 transfer confirmation is `EXCLUDED_FROM_PILOT` pending financial handoff policy. |
+| Scheduling: draft, preview, confirm/conflict | `WORKING_WITH_LIMITATIONS` | Previously R9 Edge schedule/conflict and R8 standalone HTTP scheduling passed. Preview created no booking; confirm enforced conflict. No target-host guided sequence. |
+| Attendance: mark/finalize | `WORKING_WITH_LIMITATIONS` | Previously R9 Edge attendance/leave and R8 standalone finalization passed with scoped server checks. No target-host guided sequence. |
+| Assignments: publish, submit, grade, published view/private files | `WORKING_WITH_LIMITATIONS` | Previously R5 44/44 native and R9 Edge Teacher/Student lifecycle passed; draft grades and unrelated submissions remained private. File volume restore in R6 was local only. |
+| Billing: eligible source, generation, review, issue | `WORKING_WITH_LIMITATIONS` | Previously R2/R4 finance invariants and R9 F-B01 Edge UI_E2E passed. Only new eligible sources; legacy/mixed adoption `EXCLUDED_FROM_PILOT`. |
+| Wallet: manual TOP_UP, explicit invoice payment | `WORKING_WITH_LIMITATIONS` | F-B01 Edge UI_E2E and SQL checks: 800000 VND top-up, **zero** invoice Payments at top-up, then one wallet invoice Payment. No bank/gateway integration. |
+| Approvals: request, decide, explicit execute | `WORKING_WITH_LIMITATIONS` | F-B01 Edge UI_E2E: `APPROVED` had zero adjustment and no new credit; execution produced one adjustment/receipt, 100000 VND internal credit, 700000 VND final allocation. F-B02 revoked execution and F-B03 tenant isolation passed previously. |
+| Notifications, jobs, audit | `WORKING_WITH_LIMITATIONS` | Previously R4 exact-event revoked-worker alert passed focused and full; R6 outbox/worker tests passed. Fresh pilot smoke did not create an operational job or inspect inbox/audit UI. |
+| Dashboard: three scoped KPIs | `WORKING` locally | Fresh built-API overview returned three scoped values and cross-tenant request was 403; previously R4 P01 and Web G01 tests passed. |
+| Teacher/Student/Parent portals | `WORKING_WITH_LIMITATIONS` | Previously R9 Edge Teacher/Student and verified Parent child-switch/revocation passed. PO05 Student finance and Parent/Student wallet reads are `EXCLUDED_FROM_PILOT` wherever current grants deny them; no role-name bypass. |
+
+## Candidate pilot actor list — **PROPOSED, OWNER APPROVAL REQUIRED**
+
+| Actor | Candidate access | Evidence and condition before first session |
+| --- | --- | --- |
+| Manager | Include for approved management, academic and scoped finance operations | Fresh manager HTTP login/navigation/dashboard; prior Edge Manager auth and F-B01 finance. Provision named individual, verify exact grants, use explicit finance approvals and receipts. |
+| Teacher | Include only for assigned class and learning workflow | Prior Edge Teacher/Student lifecycle; create a named pilot fixture and verify login/navigation in target environment. |
+| Student | Include only for own learning and submission | Prior Edge lifecycle; verify current enrollment and published-only grade visibility in target environment. No wallet mutation. |
+| Parent | Include only for verified-linked child learning | Prior Edge two-child/revocation; provision and verify link and child switch in target environment. Exclude PO05/wallet reads unless current server grant permits specific read. |
+| Academic Staff | Exclude from initial access list | Approved backend workflows exist, but independent production-entry actor login/navigation/writer walkthrough is not recorded. Manager may perform eligible academic work within current grants. Include only after this role's walkthrough passes. |
+| Accountant | Exclude from initial access list | F-B01 used an eligible Manager; an independent Accountant browser login/finance workflow is not recorded. Do not broaden grants for a demo. Include only after this role's walkthrough passes. |
+
+This is a narrow initial access proposal, not a claim that all six actors completed a guided demo. If the actual pilot requires Academic Staff or Accountant, their missing actor walkthrough becomes a **pilot BLOCKER** until executed. Any excluded workflow must show an explicit safe unavailable/forbidden state. The owner must approve the access list and exclusions before inviting real users.
+
+## Financial, security and operational decision
+
+No confirmed cross-tenant leak, double payment, wallet corruption, unauthorized adjustment, false `COMPLETED`, or failed recovery was found in the cited passing cases. That statement is bounded by synthetic fixtures and the commits above. The fresh HTTP smoke verified current restricted role startup and wrong-tenant denial; prior F-B01/02/03 plus R2/R4 tests remain the critical finance evidence. CLASS-only aggregate finance access was denied in the prior R4 cases. No new production code or DB security contract requires rerunning R1b/R2/R3/R5/R6 native suites here.
+
+The official OTP timing equivalence test **FAILS** and remains `R9_04_REGRESSION_GATE_PARTIAL`. The prior nine condition results have generic HTTP shape and no established high-severity external classifier; they do not prove absence of a side channel. The current smoke confirmed generic 202 responses and local restricted-worker SMTP acceptance; prior R4 A08c verified ten allowed OTP throttle attempts and the eleventh denied. Treat this as `PILOT_SECURITY_RISK_ACCEPTANCE_REQUIRED`: only the owner can accept residual risk for limited exposure, with D1 diagnostic and a stop condition. No security test threshold or production OTP code changed.
+
+R6-06 previously passed coordinated **local** PostgreSQL/private-file restore with restricted role reprovisioning on the same image. The fresh pilot-smoke database was **not** backed up and restored. No actual pilot host, private volume, real SMTP, live data, hosted GitHub CI or six-actor guided session was used. The production-mode recovery-worker guard and target delivery path are unresolved. These are concrete pre-session obligations, not R10 cosmetic backlog items. Follow `R9_04_PILOT_OPERATIONS_RUNBOOK.md` and `R9_04_R9_CLOSURE_PROPOSAL.md` for the owner gate.

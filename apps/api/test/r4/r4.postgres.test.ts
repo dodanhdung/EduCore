@@ -1097,11 +1097,11 @@ describe('R4 native PostgreSQL', () => {
     const financeNav = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .auth(s.accessToken, { type: 'bearer' }).expect(200);
     expect(financeNav.body.screenIds.filter((id: string) => id.startsWith('BL')))
-      .toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07']);
+      .toEqual(['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07', 'BL09']);
     const scopedAccountant = await actor(f, 'ACCOUNTANT', 'STUDENT', f.student);
     const scopedNav = await request(app.getHttpServer()).get(`/api/v1/tenants/${f.tenant}/access/navigation`)
       .auth(scopedAccountant.accessToken, { type: 'bearer' }).expect(200);
-    expect(scopedNav.body.screenIds.filter((id: string) => id.startsWith('BL'))).toEqual([]);
+    expect(scopedNav.body.screenIds.filter((id: string) => id.startsWith('BL'))).toEqual(['BL09']);
     const accountant = await actor(f, 'ACCOUNTANT');
     await admin`DELETE FROM role_permissions WHERE tenant_id=${f.tenant}
       AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='ACCOUNTANT')
@@ -3705,7 +3705,7 @@ describe('R4 native PostgreSQL', () => {
       await b.click('.billing-card:nth-of-type(3) input[type="checkbox"]');
       await b.wait(`document.querySelector('.billing-card:nth-of-type(3) button.billing-button')?.disabled === false`, 'TOP_UP_ENABLED');
       await action(2);
-      await until(() => b.network.some((r) => r.path.endsWith('/top-ups')
+      await until(async () => b.network.some((r) => r.path.endsWith('/top-ups')
         && r.method === 'POST' && r.status === 200), 'TOP_UP_HTTP_200');
       expect((await admin`SELECT balance_vnd::text balance FROM wallet_accounts
         WHERE tenant_id=${f.tenant} AND student_id=${f.student}`)[0].balance).toBe('800000');
@@ -3717,7 +3717,7 @@ describe('R4 native PostgreSQL', () => {
       await b.click('.billing-card:nth-of-type(4) input[type="checkbox"]');
       await b.wait(`document.querySelector('.billing-card:nth-of-type(4) button.billing-button')?.disabled === false`, 'PAY_ENABLED');
       await action(3);
-      await until(() => b.network.some((r) => r.path.endsWith('/wallet-payments')
+      await until(async () => b.network.some((r) => r.path.endsWith('/wallet-payments')
         && r.method === 'POST' && r.status === 200), 'PAY_HTTP_200');
       await b.wait(`document.querySelector('.billing-card:nth-of-type(3)')?.textContent.includes('Còn phải thu:')
         && document.querySelector('.billing-card:nth-of-type(3)')?.textContent.includes('0 ₫')`, 'RECEIVABLE_PAID');
@@ -3730,7 +3730,7 @@ describe('R4 native PostgreSQL', () => {
       await b.click('.billing-card:nth-of-type(2) input[type="checkbox"]');
       await b.wait(`document.querySelector('.billing-card:nth-of-type(2) button.billing-button')?.disabled === false`, 'ADJUST_REQUEST_ENABLED');
       await action(1);
-      await until(() => b.network.some((r) => r.path.endsWith('/adjustment-requests')
+      await until(async () => b.network.some((r) => r.path.endsWith('/adjustment-requests')
         && r.method === 'POST' && r.status === 201), 'ADJUST_REQUEST_HTTP_201');
       const [asked] = await admin`SELECT id FROM approval_requests WHERE tenant_id=${f.tenant}
         AND target_id=${draft.id} AND operation_type='ADJUST_REQUEST' ORDER BY created_at DESC LIMIT 1`;
@@ -3801,7 +3801,7 @@ describe('R4 native PostgreSQL', () => {
         AND role_id=(SELECT id FROM roles WHERE tenant_id=${f.tenant} AND code='MANAGER')
         AND permission_id=(SELECT id FROM permissions WHERE code='approval.execute')`;
       await b.click('.billing-card:nth-of-type(2) button.billing-button');
-      await until(() => b.network.some((r) => r.path.endsWith(`/approvals/${asked.body.id}/execute`)
+      await until(async () => b.network.some((r) => r.path.endsWith(`/approvals/${asked.body.id}/execute`)
         && r.method === 'POST' && r.status === 403), 'REVOKED_EXECUTION_HTTP_403');
       await b.wait(`!!document.querySelector('.billing-page [role="alert"]')
         && !document.querySelector('.billing-page')?.textContent.includes('COMPLETED')`, 'EXECUTION_DENIED_UI');
@@ -4251,17 +4251,49 @@ describe('R4 native PostgreSQL', () => {
           await admin`SELECT actor_kind,actor_membership_id FROM audit_logs WHERE tenant_id=${f.tenant} AND entity_id=${j.id} AND event_type='JOB_FAILED'`
         )[0],
       ).toMatchObject({ actor_kind: 'WORKER', actor_membership_id: null });
-      await worker.dispatch();
-      expect(
-        (
-          await runtime.run<{ count: number }>(
-            s.accessToken,
-            'SELECT educore_r4.inbox($1::uuid,$2::text) result',
-            f.tenant,
-            'UNREAD_COUNT',
-          )
-        ).count,
-      ).toBeGreaterThan(0);
+      const alerts = await admin`SELECT id,event_key,payload_json,status,available_at<=clock_timestamp() eligible
+        FROM outbox_events WHERE tenant_id=${f.tenant} AND event_type='ADMIN_ALERT'
+          AND aggregate_id=${j.id}`;
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({
+        event_key: `JOB:${j.id}:${claim!.fence}:FAILED`,
+        payload_json: { jobId: j.id, status: 'FAILED' },
+        status: 'NEW', eligible: true,
+      });
+      const [recipient] = await admin`SELECT
+        educore_r4.has_permission(${f.tenant}::uuid,${f.member}::uuid,'job.read') job_read,
+        educore_r4.has_permission(${f.tenant}::uuid,${f.member}::uuid,'notification.read') notification_read,
+        educore_r4.can_event(${f.tenant}::uuid,${f.member}::uuid,${alerts[0].id}::uuid,'notification.read') eligible`;
+      expect(recipient).toMatchObject({ job_read: true, notification_read: true, eligible: true });
+      const [queue] = await admin`SELECT count(*)::int n FROM outbox_events
+        WHERE status='NEW' AND available_at<=clock_timestamp()
+          AND event_type IN ('ScheduleChanged','SCHEDULE_CHANGED','ASSIGNMENT_PUBLISHED','ADMIN_ALERT')`;
+      let dispatches = 0;
+      let targetDispatched = false;
+      // dispatch_event processes one eligible event per call. The snapshot count
+      // bounds how many older events can precede this job's alert.
+      for (; dispatches < queue.n; dispatches++) {
+        const dispatched = await worker.dispatch() as { id?: string } | null;
+        if (dispatched?.id === alerts[0].id) { targetDispatched = true; dispatches++; break; }
+      }
+      expect(targetDispatched).toBe(true);
+      const [delivered] = await admin`SELECT e.status,
+        count(n.id)::int notifications,
+        count(n.id) FILTER (WHERE n.recipient_membership_id=${f.member} AND n.read_at IS NULL)::int manager_unread,
+        count(n.id) FILTER (WHERE n.recipient_membership_id=${a.member})::int revoked_initiator_notifications
+        FROM outbox_events e LEFT JOIN notifications n ON n.tenant_id=e.tenant_id AND n.outbox_event_id=e.id
+        WHERE e.tenant_id=${f.tenant} AND e.id=${alerts[0].id} GROUP BY e.status`;
+      expect(delivered).toMatchObject({ status: 'DONE', notifications: 1, manager_unread: 1,
+        revoked_initiator_notifications: 0 });
+      const inbox = await runtime.run<{ items: { id: string }[] }>(s.accessToken,
+        'SELECT educore_r4.inbox($1::uuid,$2::text) result', f.tenant, 'LIST');
+      const [notification] = await admin`SELECT id FROM notifications
+        WHERE tenant_id=${f.tenant} AND outbox_event_id=${alerts[0].id} AND recipient_membership_id=${f.member}`;
+      expect(inbox.items.map((item) => item.id)).toContain(notification.id);
+      (evidence.cases as Record<string, unknown>).revokedWorkerAlert = {
+        targetEventCreatedOnce: true, dispatches, targetDispatched, managerUnread: delivered.manager_unread,
+        revokedInitiatorNotifications: delivered.revoked_initiator_notifications,
+      };
     },
   );
   native(

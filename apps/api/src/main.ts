@@ -36,7 +36,11 @@ async function bootstrap() {
     const port = Number(process.env.PORT ?? 3000);
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw Error('INVALID_PORT');
-    await app.listen(port);
+    const bindHost = process.env.R4_BIND_HOST;
+    if (bindHost && !['127.0.0.1', '::1', 'localhost'].includes(bindHost))
+      throw Error('INVALID_LOCAL_BIND_HOST');
+    if (bindHost) await app.listen(port, bindHost);
+    else await app.listen(port);
   } catch (error) {
     await app?.close();
     await repository.close();

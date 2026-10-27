@@ -1,0 +1,447 @@
+﻿{
+    "schemaVersion":  1,
+    "date":  "2026-10-27",
+    "scope":  "Synthetic local disposable PostgreSQL 16 tests only",
+    "timingRuns":  [
+                       {
+                           "label":  "baseline_full_2026_10_27",
+                           "testedCommit":  "f2691ae",
+                           "evidenceId":  "educore-r4-evidence-9Tdpus",
+                           "suiteStatus":  "FAIL",
+                           "bootstrapResamples":  10000,
+                           "conditions":  {
+                                              "healthy":  {
+                                                              "status":  "PASS",
+                                                              "knownSamples":  400,
+                                                              "unknownSamples":  400,
+                                                              "knownPerSlot":  [
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50
+                                                                               ],
+                                                              "responseShapeEquivalent":  true,
+                                                              "aucPoint":  0.5064875,
+                                                              "auc95Ci":  [
+                                                                              0.47839984375,
+                                                                              0.5347042968749999
+                                                                          ],
+                                                              "medianDifferenceMs":  -0.04455000000001519,
+                                                              "medianDifference95CiMs":  [
+                                                                                             -0.22930874999999487,
+                                                                                             0.18235374999999965
+                                                                                         ],
+                                                              "p95DifferenceMs":  0.31662000000000035,
+                                                              "p95Difference95CiMs":  [
+                                                                                          -0.8484711250000014,
+                                                                                          1.66102600000001
+                                                                                      ],
+                                                              "medianLimitMs":  10,
+                                                              "p95LimitMs":  25,
+                                                              "httpKnownMedianMs":  108.55075,
+                                                              "httpUnknownMedianMs":  108.59530000000001,
+                                                              "httpKnownP95Ms":  122.66412,
+                                                              "httpUnknownP95Ms":  122.3475,
+                                                              "serviceKnownMedianMs":  3.403250000003027,
+                                                              "serviceUnknownMedianMs":  2.2135999999954947,
+                                                              "serviceKnownP95Ms":  5.751249999992431,
+                                                              "serviceUnknownP95Ms":  5.289619999990099
+                                                          },
+                                              "slow_reject":  {
+                                                                  "status":  "FAIL",
+                                                                  "knownSamples":  400,
+                                                                  "unknownSamples":  400,
+                                                                  "knownPerSlot":  [
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50
+                                                                                   ],
+                                                                  "responseShapeEquivalent":  true,
+                                                                  "aucPoint":  0.47335625,
+                                                                  "auc95Ci":  [
+                                                                                  0.440693515625,
+                                                                                  0.504750625
+                                                                              ],
+                                                                  "medianDifferenceMs":  -0.15625,
+                                                                  "medianDifference95CiMs":  [
+                                                                                                 -0.33746374999999024,
+                                                                                                 0.1013112500000089
+                                                                                             ],
+                                                                  "p95DifferenceMs":  -0.7328850000000102,
+                                                                  "p95Difference95CiMs":  [
+                                                                                              -1.9290649999999943,
+                                                                                              0.20082000000000733
+                                                                                          ],
+                                                                  "medianLimitMs":  10,
+                                                                  "p95LimitMs":  25,
+                                                                  "httpKnownMedianMs":  108.44775,
+                                                                  "httpUnknownMedianMs":  108.604,
+                                                                  "httpKnownP95Ms":  120.75389499999999,
+                                                                  "httpUnknownP95Ms":  121.48678,
+                                                                  "serviceKnownMedianMs":  2.9888000000064494,
+                                                                  "serviceUnknownMedianMs":  1.915949999995064,
+                                                                  "serviceKnownP95Ms":  5.068609999994805,
+                                                                  "serviceUnknownP95Ms":  3.9200549999964984
+                                                              },
+                                              "concurrency_four":  {
+                                                                       "status":  "FAIL",
+                                                                       "knownSamples":  400,
+                                                                       "unknownSamples":  400,
+                                                                       "knownPerSlot":  [
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50
+                                                                                        ],
+                                                                       "responseShapeEquivalent":  true,
+                                                                       "aucPoint":  0.47668125,
+                                                                       "auc95Ci":  [
+                                                                                       0.44935625,
+                                                                                       0.503419296875
+                                                                                   ],
+                                                                       "medianDifferenceMs":  -0.19045000000001266,
+                                                                       "medianDifference95CiMs":  [
+                                                                                                      -0.3252062500000093,
+                                                                                                      -0.04899999999999238
+                                                                                                  ],
+                                                                       "p95DifferenceMs":  -0.612550000000013,
+                                                                       "p95Difference95CiMs":  [
+                                                                                                   -1.5440317499999925,
+                                                                                                   1.1458525000000115
+                                                                                               ],
+                                                                       "medianLimitMs":  10,
+                                                                       "p95LimitMs":  25,
+                                                                       "httpKnownMedianMs":  108.2007,
+                                                                       "httpUnknownMedianMs":  108.39115000000001,
+                                                                       "httpKnownP95Ms":  121.008575,
+                                                                       "httpUnknownP95Ms":  121.621125,
+                                                                       "serviceKnownMedianMs":  2.901400000002468,
+                                                                       "serviceUnknownMedianMs":  1.998650000008638,
+                                                                       "serviceKnownP95Ms":  4.844939999986672,
+                                                                       "serviceUnknownP95Ms":  3.7814500000022235
+                                                                   }
+                                          },
+                           "global503":  "PASS",
+                           "postlookup":  "PASS"
+                       },
+                       {
+                           "label":  "closure_diagnostic_focused_2026_10_27",
+                           "testedCommit":  "6b24f86",
+                           "evidenceId":  "educore-r4-evidence-mPLopX",
+                           "suiteStatus":  "FAIL",
+                           "bootstrapResamples":  10000,
+                           "conditions":  {
+                                              "healthy":  {
+                                                              "status":  "FAIL",
+                                                              "knownSamples":  400,
+                                                              "unknownSamples":  400,
+                                                              "knownPerSlot":  [
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50
+                                                                               ],
+                                                              "responseShapeEquivalent":  true,
+                                                              "aucPoint":  0.474109375,
+                                                              "auc95Ci":  [
+                                                                              0.446978046875,
+                                                                              0.5004549218750001
+                                                                          ],
+                                                              "medianDifferenceMs":  -0.055949999999995725,
+                                                              "medianDifference95CiMs":  [
+                                                                                             -0.25475125000000104,
+                                                                                             0.1324012499999899
+                                                                                         ],
+                                                              "p95DifferenceMs":  -0.5902750000000054,
+                                                              "p95Difference95CiMs":  [
+                                                                                          -7.071633750000005,
+                                                                                          0.11543000000001769
+                                                                                      ],
+                                                              "medianLimitMs":  10,
+                                                              "p95LimitMs":  25,
+                                                              "httpKnownMedianMs":  108.3493,
+                                                              "httpUnknownMedianMs":  108.40525,
+                                                              "httpKnownP95Ms":  117.854745,
+                                                              "httpUnknownP95Ms":  118.44502,
+                                                              "serviceKnownMedianMs":  2.7078500000025088,
+                                                              "serviceUnknownMedianMs":  1.491600000001199,
+                                                              "serviceKnownP95Ms":  4.6288899999992275,
+                                                              "serviceUnknownP95Ms":  2.9474100000046746
+                                                          },
+                                              "slow_reject":  {
+                                                                  "status":  "PASS",
+                                                                  "knownSamples":  400,
+                                                                  "unknownSamples":  400,
+                                                                  "knownPerSlot":  [
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50
+                                                                                   ],
+                                                                  "responseShapeEquivalent":  true,
+                                                                  "aucPoint":  0.488896875,
+                                                                  "auc95Ci":  [
+                                                                                  0.4552496875,
+                                                                                  0.522138203125
+                                                                              ],
+                                                                  "medianDifferenceMs":  0,
+                                                                  "medianDifference95CiMs":  [
+                                                                                                 -0.22930000000000916,
+                                                                                                 0.14220375000000296
+                                                                                             ],
+                                                                  "p95DifferenceMs":  -0.10434500000000924,
+                                                                  "p95Difference95CiMs":  [
+                                                                                              -6.337589999999992,
+                                                                                              0.6452666250000006
+                                                                                          ],
+                                                                  "medianLimitMs":  10,
+                                                                  "p95LimitMs":  25,
+                                                                  "httpKnownMedianMs":  108.05590000000001,
+                                                                  "httpUnknownMedianMs":  108.05590000000001,
+                                                                  "httpKnownP95Ms":  110.78059499999999,
+                                                                  "httpUnknownP95Ms":  110.88494,
+                                                                  "serviceKnownMedianMs":  2.727149999998801,
+                                                                  "serviceUnknownMedianMs":  1.4726499999960652,
+                                                                  "serviceKnownP95Ms":  4.431774999996559,
+                                                                  "serviceUnknownP95Ms":  2.7448100000059634
+                                                              },
+                                              "concurrency_four":  {
+                                                                       "status":  "PASS",
+                                                                       "knownSamples":  400,
+                                                                       "unknownSamples":  400,
+                                                                       "knownPerSlot":  [
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50
+                                                                                        ],
+                                                                       "responseShapeEquivalent":  true,
+                                                                       "aucPoint":  0.500796875,
+                                                                       "auc95Ci":  [
+                                                                                       0.47392335937499996,
+                                                                                       0.52822203125
+                                                                                   ],
+                                                                       "medianDifferenceMs":  -0.06654999999997813,
+                                                                       "medianDifference95CiMs":  [
+                                                                                                      -0.20050250000000497,
+                                                                                                      0.166903749999998
+                                                                                                  ],
+                                                                       "p95DifferenceMs":  0.37904500000001917,
+                                                                       "p95Difference95CiMs":  [
+                                                                                                   -2.9683246249999953,
+                                                                                                   2.5833999999999975
+                                                                                               ],
+                                                                       "medianLimitMs":  10,
+                                                                       "p95LimitMs":  25,
+                                                                       "httpKnownMedianMs":  108.13945000000001,
+                                                                       "httpUnknownMedianMs":  108.20599999999999,
+                                                                       "httpKnownP95Ms":  115.258735,
+                                                                       "httpUnknownP95Ms":  114.87968999999998,
+                                                                       "serviceKnownMedianMs":  2.6995999999999185,
+                                                                       "serviceUnknownMedianMs":  1.5451000000030035,
+                                                                       "serviceKnownP95Ms":  5.107915000001227,
+                                                                       "serviceUnknownP95Ms":  3.0959949999953014
+                                                                   }
+                                          },
+                           "global503":  "PASS",
+                           "postlookup":  "PASS"
+                       },
+                       {
+                           "label":  "closure_full_2026_10_27",
+                           "testedCommit":  "6b24f86+uncommitted-test-fix",
+                           "evidenceId":  "educore-r4-evidence-HBfZiP",
+                           "suiteStatus":  "FAIL",
+                           "bootstrapResamples":  10000,
+                           "conditions":  {
+                                              "healthy":  {
+                                                              "status":  "PASS",
+                                                              "knownSamples":  400,
+                                                              "unknownSamples":  400,
+                                                              "knownPerSlot":  [
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50,
+                                                                                   50
+                                                                               ],
+                                                              "responseShapeEquivalent":  true,
+                                                              "aucPoint":  0.48865625,
+                                                              "auc95Ci":  [
+                                                                              0.455561953125,
+                                                                              0.522046953125
+                                                                          ],
+                                                              "medianDifferenceMs":  -0.11135000000001583,
+                                                              "medianDifference95CiMs":  [
+                                                                                             -0.30379999999999574,
+                                                                                             0.10270499999999877
+                                                                                         ],
+                                                              "p95DifferenceMs":  8.772869999999998,
+                                                              "p95Difference95CiMs":  [
+                                                                                          0.1607700000000012,
+                                                                                          9.665609624999993
+                                                                                      ],
+                                                              "medianLimitMs":  10,
+                                                              "p95LimitMs":  25,
+                                                              "httpKnownMedianMs":  108.10634999999999,
+                                                              "httpUnknownMedianMs":  108.21770000000001,
+                                                              "httpKnownP95Ms":  119.16369499999999,
+                                                              "httpUnknownP95Ms":  110.39082499999999,
+                                                              "serviceKnownMedianMs":  2.69189999999071,
+                                                              "serviceUnknownMedianMs":  1.5411999999996624,
+                                                              "serviceKnownP95Ms":  4.349594999999674,
+                                                              "serviceUnknownP95Ms":  2.7766400000102256
+                                                          },
+                                              "slow_reject":  {
+                                                                  "status":  "PASS",
+                                                                  "knownSamples":  400,
+                                                                  "unknownSamples":  400,
+                                                                  "knownPerSlot":  [
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50,
+                                                                                       50
+                                                                                   ],
+                                                                  "responseShapeEquivalent":  true,
+                                                                  "aucPoint":  0.4915625,
+                                                                  "auc95Ci":  [
+                                                                                  0.460615625,
+                                                                                  0.52279390625
+                                                                              ],
+                                                                  "medianDifferenceMs":  -0.12255000000000393,
+                                                                  "medianDifference95CiMs":  [
+                                                                                                 -0.2980075000000017,
+                                                                                                 0.07225625000001079
+                                                                                             ],
+                                                                  "p95DifferenceMs":  0.061170000000018376,
+                                                                  "p95Difference95CiMs":  [
+                                                                                              -7.117199999999997,
+                                                                                              6.913239999999988
+                                                                                          ],
+                                                                  "medianLimitMs":  10,
+                                                                  "p95LimitMs":  25,
+                                                                  "httpKnownMedianMs":  108.0479,
+                                                                  "httpUnknownMedianMs":  108.17045,
+                                                                  "httpKnownP95Ms":  110.524635,
+                                                                  "httpUnknownP95Ms":  110.46346499999999,
+                                                                  "serviceKnownMedianMs":  2.6128000000026077,
+                                                                  "serviceUnknownMedianMs":  1.4595999999946798,
+                                                                  "serviceKnownP95Ms":  5.297369999998771,
+                                                                  "serviceUnknownP95Ms":  2.705824999996543
+                                                              },
+                                              "concurrency_four":  {
+                                                                       "status":  "FAIL",
+                                                                       "knownSamples":  400,
+                                                                       "unknownSamples":  400,
+                                                                       "knownPerSlot":  [
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50,
+                                                                                            50
+                                                                                        ],
+                                                                       "responseShapeEquivalent":  true,
+                                                                       "aucPoint":  0.46871875,
+                                                                       "auc95Ci":  [
+                                                                                       0.436687578125,
+                                                                                       0.501025859375
+                                                                                   ],
+                                                                       "medianDifferenceMs":  -0.20345000000000368,
+                                                                       "medianDifference95CiMs":  [
+                                                                                                      -0.3624999999999975,
+                                                                                                      -0.0271337499999922
+                                                                                                  ],
+                                                                       "p95DifferenceMs":  -0.06057999999998742,
+                                                                       "p95Difference95CiMs":  [
+                                                                                                   -4.927182499999997,
+                                                                                                   4.947302750000152
+                                                                                               ],
+                                                                       "medianLimitMs":  10,
+                                                                       "p95LimitMs":  25,
+                                                                       "httpKnownMedianMs":  108.16215,
+                                                                       "httpUnknownMedianMs":  108.3656,
+                                                                       "httpKnownP95Ms":  110.38399000000001,
+                                                                       "httpUnknownP95Ms":  110.44457,
+                                                                       "serviceKnownMedianMs":  2.5873499999870546,
+                                                                       "serviceUnknownMedianMs":  1.380300000004354,
+                                                                       "serviceKnownP95Ms":  4.65437499999825,
+                                                                       "serviceUnknownP95Ms":  2.50679000000382
+                                                                   }
+                                          },
+                           "global503":  "PASS",
+                           "postlookup":  "PASS"
+                       }
+                   ],
+    "workerAlert":  {
+                        "focused":  {
+                                        "evidenceId":  "educore-r4-evidence-WjILwC",
+                                        "targetEventCreatedOnce":  true,
+                                        "dispatches":  1,
+                                        "targetDispatched":  true,
+                                        "managerUnread":  1,
+                                        "revokedInitiatorNotifications":  0
+                                    },
+                        "full":  {
+                                     "evidenceId":  "educore-r4-evidence-HBfZiP",
+                                     "targetEventCreatedOnce":  true,
+                                     "dispatches":  2,
+                                     "targetDispatched":  true,
+                                     "managerUnread":  1,
+                                     "revokedInitiatorNotifications":  0
+                                 }
+                    },
+    "r8Standalone":  {
+                         "runnerEnvironmentId":  "educore-r8-scheduling-native-818e091d30334fa18f2988a2660780e1",
+                         "status":  "PASS",
+                         "passed":  1,
+                         "total":  1,
+                         "skipped":  0,
+                         "postgresMajor":  16,
+                         "finishedMigrations":  50,
+                         "failedMigrations":  0,
+                         "preTestTenants":  0,
+                         "postTestTenants":  1,
+                         "postTestAttendanceFinalizations":  1,
+                         "postTestAttendanceRecords":  1
+                     },
+    "r9FinancialBrowser":  {
+                               "fullR4EvidenceId":  "educore-r4-evidence-HBfZiP",
+                               "fB01":  "PASS",
+                               "fB02":  "PASS",
+                               "fB03":  "PASS"
+                           }
+}

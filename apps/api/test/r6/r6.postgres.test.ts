@@ -10,6 +10,8 @@ import {
 } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { cpus, totalmem } from 'node:os';
 import request from 'supertest';
 import { AssignmentService } from '../../src/assignments-grading/assignment.service.js';
@@ -765,8 +767,46 @@ it('R6-06 coordinated quiescent DB and real private-volume restore with fresh gl
     auth.config,
   );
   const restoredFiles = new FileService(restoredAuth, restoredStorage);
+  let builtApiRestored: 'PASS' | 'NOT_RUN' = 'NOT_RUN';
   try {
     await restoredRepo.assertRuntime();
+    if (process.env.R6_VERIFY_BUILT_API === '1') {
+      const portServer = createServer();
+      await new Promise<void>((resolveListen) => portServer.listen(0, '127.0.0.1', resolveListen));
+      const address = portServer.address();
+      if (!address || typeof address === 'string') throw Error('RESTORE_API_PORT_UNAVAILABLE');
+      const apiPort = address.port;
+      await new Promise<void>((resolveClose) => portServer.close(() => resolveClose()));
+      const built = spawn(process.execPath, ['dist/main.js'], {
+        cwd: resolve('.'), windowsHide: true, stdio: 'ignore', env: {
+          ...process.env, NODE_ENV: 'development', PORT: String(apiPort),
+          R4_AUTH_URL: authU.toString(), R4_API_URL: u.toString(), R4_WORKER_URL: workerU.toString(),
+          R4_WORKER_ENABLED: '0', R4_JWT_SECRET: auth.config.jwtSecret,
+          R4_OTP_PEPPER: auth.config.otpPepper, R4_JWT_ISSUER: auth.config.issuer,
+          R4_JWT_AUDIENCE: auth.config.audience, R4_WEB_ORIGINS: 'http://localhost:5173',
+          R4_OTP_MODE: 'unavailable', R5_PRIVATE_STORAGE_ROOT: restoredRoot,
+        },
+      });
+      try {
+        let ready = false;
+        for (let attempt = 0; attempt < 80; attempt++) {
+          if (built.exitCode !== null) throw Error('RESTORED_BUILT_API_EXITED');
+          try { ready = (await fetch(`http://127.0.0.1:${apiPort}/`)).status === 200; } catch { /* booting */ }
+          if (ready) break;
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+        }
+        if (!ready) throw Error('RESTORED_BUILT_API_TIMEOUT');
+        const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1/tenants/${f.tenant}/portal/overview`, {
+          headers: { Authorization: `Bearer ${f.managerActor.token}` },
+        });
+        expect(response.status).toBe(200);
+        const overview = await response.json() as { tenantId?: string; students?: number | null; classes?: number | null };
+        expect(overview.tenantId).toBe(f.tenant);
+        expect(overview.students).not.toBeNull();
+        expect(overview.classes).not.toBeNull();
+        builtApiRestored = 'PASS';
+      } finally { built.kill(); }
+    }
     const wallet = await restoredRepo.transaction(f.managerActor.token, (tx) =>
       tx.$queryRawUnsafe<{ result: unknown }[]>(
         'SELECT educore_r2.summary($1::uuid,$2::uuid) result',
@@ -857,6 +897,7 @@ it('R6-06 coordinated quiescent DB and real private-volume restore with fresh gl
       counts[0].n,
     );
     evidence.restore = {
+      builtApiRestored,
       recoveryPoint,
       method:
         'quiescent single-writer fixture; logical dump + copied file tree',
@@ -865,8 +906,10 @@ it('R6-06 coordinated quiescent DB and real private-volume restore with fresh gl
       database: restoredDb,
       elapsedMs,
       dumpBytes: dump.length,
+      dumpSha256: sha(dump),
       fileBytes: pdf.length,
-      sha256: sha(pdf),
+      fileSha256: sha(pdf),
+      migrationRevision: migrationManifest().at(-1),
       snapshot,
       globalRoles:
         'restored passwordless then restricted passwords separately provisioned',

@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-27",
+  "branch": "test/r9-04-release-candidate",
+  "head": "6d274fda8a5606519b0ad84e7fa864bec4cb4f24",
+  "analysisNodeVersion": "v24.12.0",
+  "localDockerServerVersion": "29.8.2",
+  "scope": "Synthetic local MVP pilot verification; no live pilot deployment or customer data",
+  "localCiEquivalent": {
+    "frozenOfflineInstall": "PASS_EXISTING_CACHE",
+    "prismaValidate": "PASS",
+    "prismaGenerate": "PASS",
+    "migrationManifest": "PASS_1_OF_1",
+    "apiTypecheck": "PASS",
+    "apiUnitOffline": "PASS_102_OF_102",
+    "apiE2eOffline": "PASS_1_OF_1",
+    "r1bWasm": "PASS_15_OF_15",
+    "apiBuild": "PASS",
+    "apiLint": "PASS",
+    "webTests": "PASS_290_OF_290",
+    "webBuild": "PASS",
+    "webLint": "PASS_WITH_11_EXISTING_WARNINGS",
+    "gitDiffCheck": "PASS",
+    "hostedGitHubActions": "NOT_RUN"
+  },
+  "freshPilotSmoke": {
+    "runner": "apps/api/test/pilot/start-pilot-smoke.ps1",
+    "firstAttempt": {
+      "runId": "505de87e8dee4925a7213ceab39b5e29",
+      "freshPostgresAdmission": "PASS",
+      "result": "FAIL_RUNNER_NATIVE_STDERR_HANDLING",
+      "applicationStarted": false,
+      "resourceReused": false
+    },
+    "verifiedAttempt": {
+      "runId": "4004c2408fc84a458884310cd2e5a539",
+      "sourceRevision": "6d274fda8a5606519b0ad84e7fa864bec4cb4f24",
+      "freshPostgresMajor": 16,
+      "postgresServerVersion": "16.15 (Debian 16.15-1.pgdg13+2)",
+      "admission": "PASS_EMPTY_LOOPBACK_ANONYMOUS_VOLUME",
+      "finishedMigrations": 50,
+      "failedMigrations": 0,
+      "preSeedTenants": 0,
+      "postSmokeSyntheticTenants": 1,
+      "postSmokeAcceptedRecoveryDeliveries": 1,
+      "syntheticSeed": "PASS_MANAGER_ONLY_DEMO_FIXTURE",
+      "runtimeRoles": [
+        "RESTRICTED_AUTH",
+        "RESTRICTED_API",
+        "RESTRICTED_BUSINESS_WORKER",
+        "RESTRICTED_OTP_WORKER"
+      ],
+      "builtApiProductionEntry": "PASS_WITH_NODE_ENV_DEVELOPMENT",
+      "builtWebPreviewHttp": "PASS_ASSET_BEARING_HTML",
+      "edgeBuiltWebLoginDom": "NOT_VERIFIED",
+      "localFakeSmtpAndOtpWorker": "PASS",
+      "http": {
+        "login": 200,
+        "selectTenant": 200,
+        "serverNavigation": 200,
+        "threeScopedDashboardKpis": 200,
+        "wrongTenantOverview": 403,
+        "unknownOtpGeneric": 202,
+        "knownOtpGeneric": 202,
+        "knownOtpWorkerState": "ACCEPTED_BY_SMTP",
+        "logout": 204,
+        "revokedTokenOverview": 401
+      },
+      "privateFileRoot": "LOCAL_TEMPORARY_DIRECTORY",
+      "transport": "LOOPBACK_FAKE_SMTP_NO_EXTERNAL_EMAIL",
+      "helperProcessesStopped": true,
+      "disposableContainerRetained": true,
+      "result": "PASS_BACKEND_STARTUP_AND_HTTP_SMOKE"
+    }
+  },
+  "builtWebEdgeFollowup": {
+    "result": "PASS_PRODUCTION_BUNDLE_LOGIN_FORM_RENDERED",
+    "route": "/login",
+    "selector": "#login-email",
+    "domBytes": 7521,
+    "environment": "isolated local Edge profile and built Vite preview; no database or API process",
+    "scopeLimit": "Render only; no browser login or target-host interaction"
+  },
+  "journeys": [
+    {
+      "id": "A_MANAGER_ACCESS",
+      "actorScope": "synthetic Manager, TENANT",
+      "uiRouteOrApi": "/login, /select-tenant, /app/{tenant}/settings/members, /api/v1/tenants/{tenant}/access/navigation, /portal/overview",
+      "currentExecution": "BUILT_API_HTTP_PASS",
+      "browserExecution": "PREVIOUSLY_VERIFIED_R4_A19_EDGE",
+      "expectedActual": "Login, tenant selection, scoped navigation/dashboard, wrong-tenant denial and logout matched expected status in fresh HTTP smoke.",
+      "persistence": "Restricted PostgreSQL session and tenant-bound projections; revoked session denied after logout.",
+      "omission": "Built-Web login form rendered in a separate Edge check; authenticated built-Web browser journey and guided member mutation not verified."
+    },
+    {
+      "id": "B_ACADEMIC_SCHEDULING_ATTENDANCE",
+      "actorScope": "synthetic eligible Manager/Academic Staff and class-scoped subjects",
+      "uiRouteOrApi": "AC01–AC08, SC01–SC06, AT01–AT04 and corresponding tenant HTTP routes",
+      "currentExecution": "NOT_RERUN",
+      "browserExecution": "PREVIOUSLY_VERIFIED_R4_EDGE_AND_R8_STANDALONE",
+      "expectedActual": "Prior tests observed real class/session/attendance effects, read-only preview and backend conflict denial.",
+      "persistence": "Prior disposable PostgreSQL session and attendance rows verified; R8 standalone 1/1.",
+      "omission": "No independent Academic Staff login or guided target-host walkthrough."
+    },
+    {
+      "id": "C_TEACHING_LEARNING",
+      "actorScope": "synthetic Teacher, Student and verified-linked Parent",
+      "uiRouteOrApi": "AS01–AS07 and PO01–PO04",
+      "currentExecution": "NOT_RERUN",
+      "browserExecution": "PREVIOUSLY_VERIFIED_R4_EDGE_AND_R5_NATIVE",
+      "expectedActual": "Prior tests published assignment and grade, submitted version, hid draft grade and denied unrelated/private records.",
+      "persistence": "Prior R5 native 44/44 including private file reads, published grade and revocation.",
+      "omission": "No target-host named pilot actor fixture or guided session."
+    },
+    {
+      "id": "D_FINANCE",
+      "actorScope": "synthetic eligible Manager with TENANT finance scope",
+      "uiRouteOrApi": "BL03, BL05, BL07, BL09, BL10, OP05",
+      "currentExecution": "NOT_RERUN",
+      "browserExecution": "PREVIOUSLY_VERIFIED_R4_F_B01_B02_B03_EDGE_NO_BROWSER_SKIPS",
+      "expectedActual": "Top-up 800000 VND created zero invoice Payments; explicit wallet pay created one. APPROVED caused zero adjustments; EXECUTE created exactly one root receipt/adjustment, 100000 VND internal credit and 700000 VND final allocation.",
+      "persistence": "Prior PostgreSQL wallet, Payment, allocation, adjustment, receipt, audit and immutable ISSUED invoice checks passed.",
+      "omission": "Independent Accountant browser login, target-host finance walkthrough and mobile finance viewport not verified."
+    },
+    {
+      "id": "E_NOTIFICATIONS_OPERATIONS",
+      "actorScope": "synthetic authorized Manager; revoked initiating worker actor",
+      "uiRouteOrApi": "GL01, OP06, OP07 and job/notification/audit HTTP routes",
+      "currentExecution": "NOT_RERUN",
+      "browserExecution": "PREVIOUSLY_VERIFIED_R4_FOCUSED_AND_FULL_ALERT_CASE",
+      "expectedActual": "Exact ADMIN_ALERT event was delivered to current authorized recipient, no revoked-actor notification or successful business effect; JOB_FAILED audit persisted.",
+      "persistence": "Previous full R4 evidence educore-r4-evidence-HBfZiP required two dispatches and passed exact-event assertions.",
+      "omission": "Deployed worker/inbox operational walkthrough not verified."
+    }
+  ],
+  "otpResidualRisk": {
+    "officialTimingTest": "FAIL_UNRESOLVED",
+    "classification": "PILOT_SECURITY_RISK_ACCEPTANCE_REQUIRED",
+    "priorResponseShape": "EQUIVALENT_IN_NINE_SYNTHETIC_CONDITIONS",
+    "currentGenericEndpointAndLocalWorker": "PASS",
+    "rateLimit": "PREVIOUSLY_VERIFIED_R4_A08C_TEN_ALLOWED_ELEVENTH_DENIED",
+    "d1Diagnostic": "NOT_RUN_THIS_TASK",
+    "ownerAcceptance": "PENDING"
+  },
+  "recoveryReadiness": {
+    "priorR6LocalDbAndPrivateFilesRestore": "PREVIOUSLY_VERIFIED_SAME_IMAGE",
+    "freshPilotSmokeRestore": "NOT_RUN",
+    "targetPilotBackupScheduleAndRestore": "NOT_CONFIGURED_OR_VERIFIED",
+    "targetDeployment": "NOT_RUN"
+  },
+  "finalClosureFollowup": {
+    "sourceRevision": "c12f7325a268261d5b4986571aa145e56325ee53",
+    "date": "2026-10-27",
+    "runnerStatusAssertion": "PASS_MEASURED_ALL_NINE_EXPECTED_HTTP_CODES",
+    "mismatchProbe": "PASS_500_REJECTED_AS_CROSS_TENANT_STATUS",
+    "freshSmokeRunId": "a4b6aa891eb44812b869d655ff70f8b4",
+    "freshPg16": "PASS_50_MIGRATIONS_RESTRICTED_ROLES",
+    "http": {
+      "login": 200,
+      "selectTenant": 200,
+      "navigation": 200,
+      "dashboard": 200,
+      "wrongTenant": 403,
+      "unknownOtp": 202,
+      "knownOtp": 202,
+      "logout": 204,
+      "revokedToken": 401
+    },
+    "edgeBuiltWeb": {
+      "result": "PASS_REAL_REACT_BUILT_ASSETS_AND_NEST_POSTGRES",
+      "actor": "SYNTHETIC_MANAGER",
+      "login": 200,
+      "tenantSelection": 200,
+      "dashboardKpis": 3,
+      "bl09AuthorizedApi": 200,
+      "manualTopUpUiAndApi": 200,
+      "topUpWalletTransactions": 1,
+      "invoicePaymentsAfterTopUp": 0,
+      "walletBalanceVndAfterTopUp": "1000",
+      "logout": 204,
+      "protectedAfterLogout": "DENIED",
+      "browserProfileInReviewZip": false
+    },
+    "isolatedRestore": {
+      "test": "R6-06",
+      "result": "PASS_1_OF_1_TARGETED",
+      "freshSourceRunId": "b889c68925394055aa9f29f1ee078d96",
+      "restoredDatabaseRunId": "245d4b3ac69b47679d731355afb7f0e9",
+      "differentRestoredDatabase": true,
+      "pairedPrivateFileSnapshot": true,
+      "recoveryPointUtc": "2026-10-27T00:20:25.845Z",
+      "postgresMajor": 16,
+      "migrations": 50,
+      "migrationRevision": "202610260005_r9_conservative_finance_scope",
+      "dumpSha256": "53c16053d8dc9a08f8535e379f5ff49f0d688cfc0d1a9b8ab909cefd08d17c63",
+      "privateFileSha256": "6f71714ba1d09b1fc838e8661ee4d0170fd38f6913426432ad289af8ecc52510",
+      "submissionLinks": 1,
+      "publishedGradeAndWalletAndAuthorizedPrivateDownload": "PASS_VIA_RESTRICTED_SERVICES",
+      "unauthorizedFileAccess": "DENIED",
+      "builtApiProcessAgainstRestoredDatabase": "PASS_AUTHORIZED_MANAGER_OVERVIEW_200",
+      "targetPilotHostRestore": "TARGET_PILOT_RESTORE_NOT_RUN"
+    },
+    "productionOtpWorker": "BLOCKED_PENDING_SEPARATE_SECURITY_IMPLEMENTATION",
+    "otpTimingOfficial": "FAIL_UNRESOLVED",
+    "d1Diagnostic": "NOT_RUN_THIS_TASK",
+    "hostedGithubActions": "NOT_RUN",
+    "technicalVerdict": "R9_04_MVP_PILOT_READY_FOR_OWNER_REVIEW",
+    "closureRecommendation": "R9_CLOSURE_CONDITIONAL",
+    "r9Complete": false
+  },
+  "releaseStatus": {
+    "mvpPilot": "R9_04_MVP_PILOT_PARTIAL",
+    "r9ClosureRecommendation": "R9_CLOSURE_CONDITIONAL",
+    "r9Complete": false,
+    "regressionGate": "R9_04_REGRESSION_GATE_PARTIAL",
+    "rc": "R9_04_RC_PARTIAL"
+  },
+  "statusScopeClarification": {
+    "releaseStatus": "HISTORICAL_PILOT_CHECKPOINT_AT_6d274fd",
+    "finalClosureFollowup": "LATER_LOCAL_SYNTHETIC_PILOT_REVIEW_AT_c12f732_NOT_REAL_USER_GO",
+    "localMvpCurrent": "R9_04_MVP_LOCAL_READY_FOR_OWNER_REVIEW_IN_R9_04_LOCAL_MVP_EVIDENCE.json",
+    "historicalAutomatedRegression": "FAIL_OTP_TIMING_REMAINS_UNCHANGED",
+    "realUserPilot": "UNRESOLVED",
+    "production": "NOT_APPROVED"
+  }
+}
