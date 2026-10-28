@@ -27,6 +27,8 @@ import { ProductionManagement } from './screens/Management & Operations/Producti
 import { OperationsProduction } from './screens/Management & Operations/OperationsProduction.tsx'
 import { managementIds } from './screens/Management & Operations/ManagementTypes.ts'
 import type { ManagementId } from './screens/Management & Operations/ManagementTypes.ts'
+import { AssetIcon } from './assets/AssetIcon.tsx'
+import type { AssetIconName } from './assets/AssetIcon.tsx'
 
 const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
 const sessions = new SessionController(api, createNavigationReader(api))
@@ -87,18 +89,23 @@ export function AppShell({ route, tenant, navigate, onLogout, children, preview 
 }) {
   const profile = tenantPath(tenant.id, '/me')
   const business = navigation.filter((item) => !item.selfService)
+  const icon = (id: string): AssetIconName => id === 'GL01' ? 'notifications' : /^BL/.test(id) ? 'finance' : /^AS|^PO/.test(id) ? 'teaching'
+    : /^SC|^AT/.test(id) ? 'classes' : /^AC/.test(id) ? 'people' : /^OP|^GL|^AU/.test(id) ? 'settings' : 'overview'
+  const navLabels: Record<string, string> = { G01: 'Tổng quan', AC01: 'Học viên', AC03: 'Giáo viên', AC05: 'Môn & trình độ', AC06: 'Khóa học', AC07: 'Lớp học', SC01: 'Lịch trung tâm', SC02: 'Phòng & tài nguyên', SC03: 'Tạo lịch', SC06: 'Lịch cá nhân', AT01: 'Điểm danh', AT03: 'Gửi đơn nghỉ', AT04: 'Xử lý đơn nghỉ', AS01: 'Bài tập', AS02: 'Tạo bài tập', AS04: 'Chấm bài', BL01: 'Đơn giá học phí', BL02: 'Ưu đãi anh/chị/em', BL03: 'Kỳ học phí & lần tính', BL04: 'Hóa đơn dự thảo', BL06: 'Hóa đơn đã phát hành', BL09: 'Công nợ & ví', GL01: 'Thông báo', OP03: 'Liên kết phụ huynh', OP04: 'Phê duyệt', OP06: 'Nhật ký vận hành', OP07: 'Tác vụ hệ thống' }
   const groups = [
-    { label: 'Tổng quan & vận hành', ids: /^(G|OP|GL)/ },
+    { label: 'Tổng quan', ids: /^(G01|PO)/ },
     { label: 'Học vụ', ids: /^(AC|SC|AT)/ },
+    { label: 'Giảng dạy & học tập', ids: /^AS/ },
     { label: 'Học phí', ids: /^BL/ },
-    { label: 'Học tập', ids: /^(AS|PO)/ },
+    { label: 'Quản trị & vận hành', ids: /^(OP|GL)/ },
   ]
   const links = <>{groups.map((group) => {
     const items = business.filter((item) => group.ids.test(item.id))
-    return items.length ? <div className="navigation-group" key={group.label}><span className="sidebar-caption">{group.label}</span>
-      {items.map((item) => <Link key={item.id} to={item.path.replace(':tenantId', encodeURIComponent(tenant.id))} navigate={navigate} active={item.id === route.id}>{item.name}</Link>)}</div> : null
-  })}<Link to={profile} navigate={navigate} active={route.id === 'AU05'}>Tài khoản</Link></>
+    return items.length ? <details className="navigation-group" key={group.label} open={group.ids.test(route.id)}><summary className="sidebar-caption">{group.label}</summary>
+      {items.map((item) => <Link key={item.id} to={item.path.replace(':tenantId', encodeURIComponent(tenant.id))} navigate={navigate} active={item.id === route.id}><span className="nav-icon"><AssetIcon name={icon(item.id)} /></span><span>{navLabels[item.id] ?? item.name}</span></Link>)}</details> : null
+  })}<div className="navigation-group account-navigation"><Link to={profile} navigate={navigate} active={route.id === 'AU05'}><span className="nav-icon"><AssetIcon name="settings" /></span><span>Tài khoản</span></Link></div></>
   return <div className="app-shell">
+    <a className="skip-link" href="#main-content">Đến nội dung chính</a>
     <aside className="sidebar"><div className="wordmark">EduCore</div>
       <div className="sidebar-caption">Không gian trung tâm</div>
       <nav aria-label="Điều hướng chính">{preview ? previewNavigation : links}</nav>
@@ -107,10 +114,13 @@ export function AppShell({ route, tenant, navigate, onLogout, children, preview 
     <div className="shell-body">
       <header className="topbar"><span className="mobile-brand wordmark">EduCore</span>
         <div className="tenant-context"><span className="eyebrow">Trung tâm đang chọn</span><strong>{tenant.name}</strong></div>
-        {!preview && <div className="top-actions"><Link to="/select-tenant" navigate={navigate}>Đổi trung tâm</Link><button onClick={onLogout}>Đăng xuất</button></div>}
+        {!preview && <div className="top-actions"><details className="account-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
+          <summary><span className="nav-icon"><AssetIcon name="settings" /></span>Tài khoản<AssetIcon name="chevron-down" /></summary>
+          <div className="account-menu-items"><Link to={profile} navigate={navigate}>Thông tin tài khoản</Link><Link to="/select-tenant" navigate={navigate}>Đổi trung tâm</Link><button onClick={onLogout}>Đăng xuất</button></div>
+        </details></div>}
       </header>
-      <main className="content"><p className="breadcrumb">{tenant.name} / {route.name}</p>{children}</main>
-      <nav className="mobile-nav" aria-label="Điều hướng di động">{preview ? previewNavigation : <details><summary>Menu điều hướng</summary>{links}</details>}</nav>
+      <main id="main-content" tabIndex={-1} className="content"><p className="breadcrumb">{tenant.name} / {route.name}</p>{children}</main>
+      <nav className="mobile-nav" aria-label="Điều hướng di động">{preview ? previewNavigation : <details onClick={event => { if ((event.target as HTMLElement).closest('a')) event.currentTarget.open = false }}><summary>Menu điều hướng</summary>{links}</details>}</nav>
     </div>
   </div>
 }
@@ -171,7 +181,7 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       : (['AS01', 'AS02', 'AS03', 'AS04', 'AS05', 'AS06', 'AS07'] as string[]).includes(result.route.id)
         ? <AssignmentsProduction key={`${tenant.id}:${result.route.id}:${result.params.assignmentId ?? result.params.submissionId ?? ''}`}
           id={result.route.id as 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'} tenantId={tenant.id}
-          token={session!.accessToken} selectedId={result.params.assignmentId ?? result.params.submissionId} navigate={navigate} />
+          token={session!.accessToken} selectedId={result.params.assignmentId ?? result.params.submissionId} allowed={session!.navigation?.screenIds ?? []} navigate={navigate} />
       : result.route.id === 'G01' ? <DashboardProduction key={`${tenant.id}:${session!.accessToken}`} tenantId={tenant.id} token={session!.accessToken} />
       : (['PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as string[]).includes(result.route.id)
         ? <PortalProduction key={`${tenant.id}:${session!.accessToken}:${result.route.id}:${result.params.studentId ?? ''}`}

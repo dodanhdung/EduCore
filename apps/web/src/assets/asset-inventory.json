@@ -1,0 +1,575 @@
+{
+  "version": "R12 Asset Pack V1",
+  "reviewStatus": "PROPOSED",
+  "date": "2026-10-28",
+  "base": {
+    "branch": "test/r10-local-demo-data",
+    "head": "ed421080323c42abb5bbb4dd4c1c560f62dfd949"
+  },
+  "figmaFile": "xEdI4S3TJU0mKqQYUSPZhp",
+  "scope": "Shared P0 assets, G01 canonical anchor; AU01, GL01 and OP01 consumers. No backend/business/RBAC changes.",
+  "assets": [
+    {
+      "id": "starter/favicon",
+      "path": "apps/web/public/favicon.svg",
+      "category": "starter",
+      "status": "REPLACE_PROPOSED",
+      "figmaNode": null,
+      "consumers": [
+        "index.html current favicon (unchanged)"
+      ],
+      "notes": "Current starter favicon retained. Candidate is brand symbol alias; replacement requires owner approval.",
+      "native": {
+        "width": "48",
+        "height": "46",
+        "viewBox": "0 0 48 46"
+      }
+    },
+    {
+      "id": "starter/icons",
+      "path": "apps/web/public/icons.svg",
+      "category": "starter",
+      "status": "NOT_NEEDED",
+      "figmaNode": null,
+      "consumers": [],
+      "notes": "Unused starter/social/demo icon set; not part of P0 Asset Pack V1. No deletion.",
+      "native": {
+        "width": null,
+        "height": null,
+        "viewBox": null
+      }
+    },
+    {
+      "id": "actions/check",
+      "path": "apps/web/src/assets/actions/check.svg",
+      "category": "actions",
+      "status": "CREATE",
+      "figmaNode": "37:322",
+      "consumers": [
+        "GL01 NotificationProduction markRead button"
+      ],
+      "notes": "Missing local asset downloaded from exact Figma export; native geometry unchanged.",
+      "native": {
+        "width": "12.225",
+        "height": "9.01875",
+        "viewBox": "0 0 12.225 9.01875"
+      }
+    },
+    {
+      "id": "actions/chevron-down",
+      "path": "apps/web/src/assets/actions/chevron-down.svg",
+      "category": "actions",
+      "status": "CREATE",
+      "figmaNode": "43:407",
+      "consumers": [
+        "AppShell account menu"
+      ],
+      "notes": "Missing local asset downloaded from exact Figma export; native geometry unchanged.",
+      "native": {
+        "width": "8",
+        "height": "4.93333",
+        "viewBox": "0 0 8 4.93333"
+      }
+    },
+    {
+      "id": "actions/notifications",
+      "path": "apps/web/src/assets/actions/notifications.svg",
+      "category": "actions",
+      "status": "CREATE",
+      "figmaNode": "43:410",
+      "consumers": [
+        "GL01 AppShell navigation"
+      ],
+      "notes": "Missing local asset downloaded from exact Figma export; native geometry unchanged.",
+      "native": {
+        "width": "13.3333",
+        "height": "16.6667",
+        "viewBox": "0 0 13.3333 16.6667"
+      }
+    },
+    {
+      "id": "actions/refresh",
+      "path": "apps/web/src/assets/actions/refresh.svg",
+      "category": "actions",
+      "status": "CREATE",
+      "figmaNode": "43:106",
+      "consumers": [
+        "GL01 NotificationProduction retry button"
+      ],
+      "notes": "Missing local asset downloaded from exact Figma export; native geometry unchanged.",
+      "native": {
+        "width": "12",
+        "height": "12",
+        "viewBox": "0 0 12 12"
+      }
+    },
+    {
+      "id": "actions/search",
+      "path": "apps/web/src/assets/actions/search.svg",
+      "category": "actions",
+      "status": "CREATE",
+      "figmaNode": "43:400",
+      "consumers": [
+        "OP01 Filters / ManagementPrimitives"
+      ],
+      "notes": "Missing local asset downloaded from exact Figma export; native geometry unchanged.",
+      "native": {
+        "width": "15",
+        "height": "15",
+        "viewBox": "0 0 15 15"
+      }
+    },
+    {
+      "id": "brand/educore-horizontal-candidate",
+      "path": "apps/web/src/assets/brand/educore-horizontal-candidate.svg",
+      "category": "brand",
+      "status": "CREATE",
+      "figmaNode": "43:424",
+      "consumers": [
+        "BrandLogo / owner review contact sheet"
+      ],
+      "notes": "PROPOSED: crop empty row padding only; native paths and outlined wordmark unchanged.",
+      "native": {
+        "width": "108",
+        "height": "32",
+        "viewBox": "24 16 108 32"
+      }
+    },
+    {
+      "id": "brand/educore-symbol-candidate",
+      "path": "apps/web/src/assets/brand/educore-symbol-candidate.svg",
+      "category": "brand",
+      "status": "CREATE",
+      "figmaNode": "43:425",
+      "consumers": [
+        "BrandLogo / owner review contact sheet"
+      ],
+      "notes": "PROPOSED: exact symbol export; compact + favicon candidates alias this file; not installed.",
+      "native": {
+        "width": "32",
+        "height": "32",
+        "viewBox": "0 0 32 32"
+      }
+    },
+    {
+      "id": "navigation/classes",
+      "path": "apps/web/src/assets/navigation/classes.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:446",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "15",
+        "height": "16.6667",
+        "viewBox": "0 0 15 16.6667"
+      }
+    },
+    {
+      "id": "navigation/finance",
+      "path": "apps/web/src/assets/navigation/finance.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:451",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "15.8333",
+        "height": "15",
+        "viewBox": "0 0 15.8333 15"
+      }
+    },
+    {
+      "id": "navigation/overview",
+      "path": "apps/web/src/assets/navigation/overview.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:436",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "15",
+        "height": "15",
+        "viewBox": "0 0 15 15"
+      }
+    },
+    {
+      "id": "navigation/people",
+      "path": "apps/web/src/assets/navigation/people.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:441",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "18.3333",
+        "height": "15",
+        "viewBox": "0 0 18.3333 15"
+      }
+    },
+    {
+      "id": "navigation/settings",
+      "path": "apps/web/src/assets/navigation/settings.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:466",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "16.75",
+        "height": "16.6667",
+        "viewBox": "0 0 16.75 16.6667"
+      }
+    },
+    {
+      "id": "navigation/teaching",
+      "path": "apps/web/src/assets/navigation/teaching.svg",
+      "category": "navigation",
+      "status": "REUSE",
+      "figmaNode": "43:456",
+      "consumers": [
+        "G01 AppShell / all permitted P0 navigation"
+      ],
+      "notes": "Exact SHA256 match to R10 ZIP before R12; source unchanged. 20px currentColor mask slot.",
+      "native": {
+        "width": "16.6667",
+        "height": "16.6667",
+        "viewBox": "0 0 16.6667 16.6667"
+      }
+    },
+    {
+      "id": "starter/react",
+      "path": "apps/web/src/assets/react.svg",
+      "category": "starter",
+      "status": "NOT_NEEDED",
+      "figmaNode": null,
+      "consumers": [],
+      "notes": "Unused starter/social/demo icon set; not part of P0 Asset Pack V1. No deletion.",
+      "native": {
+        "width": "35.93",
+        "height": "32",
+        "viewBox": "0 0 256 228"
+      }
+    },
+    {
+      "id": "starter/vite",
+      "path": "apps/web/src/assets/vite.svg",
+      "category": "starter",
+      "status": "NOT_NEEDED",
+      "figmaNode": null,
+      "consumers": [],
+      "notes": "Unused starter/social/demo icon set; not part of P0 Asset Pack V1. No deletion.",
+      "native": {
+        "width": "77",
+        "height": "47",
+        "viewBox": "0 0 77 47"
+      }
+    },
+    {
+      "id": "auth/au01-arrow",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-arrow.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "16",
+        "height": "16",
+        "viewBox": "0 0 16 16"
+      }
+    },
+    {
+      "id": "auth/au01-badge",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-badge.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "24",
+        "height": "24",
+        "viewBox": "0 0 24 24"
+      }
+    },
+    {
+      "id": "auth/au01-brand-mobile",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-brand-mobile.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "18",
+        "height": "18",
+        "viewBox": "0 0 18 18"
+      }
+    },
+    {
+      "id": "auth/au01-brand",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-brand.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "24",
+        "height": "24",
+        "viewBox": "0 0 24 24"
+      }
+    },
+    {
+      "id": "auth/au01-email",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-email.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "20",
+        "height": "20",
+        "viewBox": "0 0 20 20"
+      }
+    },
+    {
+      "id": "auth/au01-eye",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-eye.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "20",
+        "height": "20",
+        "viewBox": "0 0 20 20"
+      }
+    },
+    {
+      "id": "auth/au01-password",
+      "path": "apps/web/src/screens/Authentication & Shared/AU01/assets/au01-password.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:61",
+      "consumers": [
+        "AU01 login / AuthComponents"
+      ],
+      "notes": "REUSE existing login asset; screen-level Figma reference, not a newly verified per-glyph node.",
+      "native": {
+        "width": "20",
+        "height": "20",
+        "viewBox": "0 0 20 20"
+      }
+    },
+    {
+      "id": "auth/recovery",
+      "path": "apps/web/src/screens/Authentication & Shared/AU03/assets/recovery.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:27",
+      "consumers": [
+        "AU03 recovery"
+      ],
+      "notes": "Byte-for-byte existing asset; no new duplicate.",
+      "native": {
+        "width": "23.3333",
+        "height": "23.3333",
+        "viewBox": "0 0 23.3333 23.3333"
+      }
+    },
+    {
+      "id": "auth/reset-key",
+      "path": "apps/web/src/screens/Authentication & Shared/AU04/assets/reset-key.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:2238",
+      "consumers": [
+        "AU04 password reset"
+      ],
+      "notes": "REUSE existing asset; screen-level Figma reference.",
+      "native": {
+        "width": "25.6667",
+        "height": "14",
+        "viewBox": "0 0 25.6667 14"
+      }
+    },
+    {
+      "id": "auth/permission",
+      "path": "apps/web/src/screens/Authentication & Shared/GL02/assets/permission.svg",
+      "category": "auth",
+      "status": "REUSE",
+      "figmaNode": "1:1752",
+      "consumers": [
+        "GL02 ErrorScreen"
+      ],
+      "notes": "REUSE existing asset; screen-level Figma reference.",
+      "native": {
+        "width": "12",
+        "height": "12",
+        "viewBox": "0 0 12 12"
+      }
+    },
+    {
+      "id": "kpi/active-classes",
+      "path": "apps/web/src/screens/Management & Operations/assets/active-classes.svg",
+      "category": "kpi",
+      "status": "REUSE",
+      "figmaNode": "43:64",
+      "consumers": [
+        "G01 ManagerDashboardScreen metric cards"
+      ],
+      "notes": "Byte-for-byte existing asset; no new duplicate.",
+      "native": {
+        "width": "22",
+        "height": "16",
+        "viewBox": "0 0 22 16"
+      }
+    },
+    {
+      "id": "kpi/active-students",
+      "path": "apps/web/src/screens/Management & Operations/assets/active-students.svg",
+      "category": "kpi",
+      "status": "REUSE",
+      "figmaNode": "43:45",
+      "consumers": [
+        "G01 ManagerDashboardScreen metric cards"
+      ],
+      "notes": "Byte-for-byte existing asset; no new duplicate.",
+      "native": {
+        "width": "24",
+        "height": "12",
+        "viewBox": "0 0 24 12"
+      }
+    },
+    {
+      "id": "kpi/receivables",
+      "path": "apps/web/src/screens/Management & Operations/assets/receivables.svg",
+      "category": "kpi",
+      "status": "REUSE",
+      "figmaNode": "43:82",
+      "consumers": [
+        "G01 ManagerDashboardScreen metric cards"
+      ],
+      "notes": "Byte-for-byte existing asset; no new duplicate.",
+      "native": {
+        "width": "19",
+        "height": "18",
+        "viewBox": "0 0 19 18"
+      }
+    },
+    {
+      "id": "brand/compact",
+      "category": "brand",
+      "status": "REUSE",
+      "aliasOf": "brand/educore-symbol-candidate",
+      "figmaNode": "43:425",
+      "consumers": [
+        "BrandLogo variant=compact proposal"
+      ],
+      "notes": "No duplicate SVG."
+    },
+    {
+      "id": "brand/favicon-candidate",
+      "category": "brand",
+      "status": "REUSE",
+      "aliasOf": "brand/educore-symbol-candidate",
+      "figmaNode": "43:425",
+      "consumers": [
+        "Contact sheet 16/24/32px only"
+      ],
+      "notes": "No duplicate SVG and no favicon link change."
+    },
+    {
+      "id": "actions/filter",
+      "category": "actions",
+      "status": "NOT_NEEDED",
+      "figmaNode": "47:499",
+      "consumers": [
+        "OP01 native Filters"
+      ],
+      "notes": "Figma filter panel uses labeled controls without a filter glyph; reuse native labels/selects."
+    },
+    {
+      "id": "status/business-badges",
+      "category": "status",
+      "status": "REUSE",
+      "figmaNode": "84:10",
+      "consumers": [
+        "Badge / StateBadge / BillingBadge"
+      ],
+      "notes": "Existing text+CSS badges, domain labels retained; APPROVED differs from COMPLETED. No generic success/check family."
+    },
+    {
+      "id": "empty/inbox",
+      "category": "empty",
+      "status": "NOT_NEEDED",
+      "figmaNode": "37:597",
+      "consumers": [
+        "GL01 empty inbox / EmptyState"
+      ],
+      "notes": "Direct screenshot confirms text only; no illustration."
+    },
+    {
+      "id": "empty/lists",
+      "category": "empty",
+      "status": "REUSE",
+      "figmaNode": "85:2",
+      "consumers": [
+        "G01 Empty / shared EmptyState"
+      ],
+      "notes": "Keep current text and permission scope; do not create decorative illustrations."
+    },
+    {
+      "id": "people/avatar-portraits",
+      "category": "excluded",
+      "status": "NOT_NEEDED",
+      "consumers": [],
+      "notes": "Explicitly excluded by owner. No avatar downloads, exports or generation."
+    },
+    {
+      "id": "brand/official-approval",
+      "category": "brand",
+      "status": "BLOCKED",
+      "figmaNode": "43:424",
+      "consumers": [
+        "Owner approval"
+      ],
+      "notes": "No official trademark/final brand or favicon adoption approval yet; creation of review candidates is complete."
+    },
+    {
+      "id": "starter/hero",
+      "path": "apps/web/src/assets/hero.png",
+      "category": "starter",
+      "status": "NOT_NEEDED",
+      "figmaNode": null,
+      "consumers": [],
+      "notes": "Existing starter raster; no new raster asset required."
+    }
+  ]
+}

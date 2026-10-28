@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import './Assignments.css'
+import { EmptyState, Skeleton } from '../Authentication & Shared/BatchPrimitives.tsx'
 
 export function Page({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: ReactNode; children: ReactNode }) {
   return <div className="as-page"><header className="as-heading"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{action}</header>{children}</div>
@@ -11,6 +12,8 @@ export function Card({ title, subtitle, children }: { title?: string; subtitle?:
 export function Badge({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'success' | 'warning' | 'muted' }) { return <span className={`as-badge as-${tone}`}>{children}</span> }
 export function Notice({ children }: { children: ReactNode }) { return <p className="as-notice">{children}</p> }
 export function State({ kind, children }: { kind: 'loading' | 'empty' | 'error' | 'not-found'; children?: ReactNode }) {
+  if (kind === 'loading') return <Skeleton />
+  if (kind === 'empty') return <EmptyState title="Chưa có dữ liệu" detail={typeof children === 'string' ? children : 'Dữ liệu sẽ hiển thị khi có bản ghi trong phạm vi được cấp.'} />
   return <Card title={{ loading: 'Đang tải', empty: 'Chưa có dữ liệu', error: 'Không thể tải dữ liệu', 'not-found': 'Không tìm thấy' }[kind]}><p>{children ?? 'Dữ liệu sẽ xuất hiện khi dịch vụ nghiệp vụ được kết nối.'}</p></Card>
 }
 export function Button({ children, onClick, secondary = false, disabled = false }: { children: ReactNode; onClick?: () => void; secondary?: boolean; disabled?: boolean }) { return <button type="button" className={`as-button${secondary ? ' as-secondary' : ''}`} onClick={onClick} disabled={disabled}>{children}</button> }

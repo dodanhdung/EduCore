@@ -16,6 +16,28 @@ const { BillingProduction } = await vite.ssrLoadModule('/src/screens/Billing & R
 const root = createRoot(dom.window.document.getElementById('root'))
 after(async () => { await act(async () => root.unmount()); await vite.close(); dom.window.close() })
 
+test('R10 BL03 renders missing-source history without automatically opening a period or generating drafts', async () => {
+  const calls = []
+  const container = document.createElement('div')
+  document.body.append(container)
+  const fixtureRoot = createRoot(container)
+  const api = new ApiClient('', async (url, options) => {
+    calls.push({ url: String(url), method: options.method })
+    const items = String(url).includes('/billing/students') ? [] : [{ id: 'period-a', monthStart: '2026-09-01', timezone: 'Asia/Ho_Chi_Minh', status: 'OPEN', draftCount: 0, issuedCount: 0,
+      generations: [{ id: 'generation-a', studentId: 'student-a', status: 'NEEDS_INFORMATION', createdAt: '2026-10-01T00:00:00Z', missing: ['Chưa xác nhận điểm danh'], reason: 'Review', invoiceId: null, current: true }] }]
+    return Response.json({ items, page: 1, pageSize: 20, total: items.length })
+  })
+  try {
+    await act(async () => fixtureRoot.render(React.createElement(BillingProduction, { id: 'BL03', tenantId: 'tenant-a', token: 'token-a', api, navigate() {} })))
+    assert.match(container.textContent, /NEEDS_INFORMATION/)
+    assert.match(container.textContent, /Chưa xác nhận điểm danh/)
+    assert.match(container.textContent, /Chưa có dự thảo/)
+    assert.ok(!container.querySelector('.billing-open-period').open)
+    assert.equal(calls.filter(c => c.method !== 'GET').length, 0)
+    assert.ok([...container.querySelectorAll('button')].find(b => b.textContent === 'Tạo dự thảo').disabled)
+  } finally { await act(async () => fixtureRoot.unmount()); container.remove() }
+})
+
 const detail = {
   id: 'invoice-a', studentId: 'student-a', studentName: 'Lan', periodId: 'period-a', period: '2025-09-01',
   status: 'DRAFT', number: null, issuedAt: null, dueAt: null, grossVnd: '800000', discountVnd: '0',

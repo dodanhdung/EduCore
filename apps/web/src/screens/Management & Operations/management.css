@@ -26,6 +26,13 @@
 .mo-metric-top > div { min-width: 0; }
 .mo-metric-icon { background: var(--ec-primary-soft); display: flex; align-items: center; justify-content: center; border-radius: 12px; width: 48px; height: 48px; flex: 0 0 48px; }
 .mo-metric-icon img { display: block; }
+.mo-dashboard .mo-metric { min-height: 192px; box-shadow: 0 1px 2px #0f172a08; }
+.mo-dashboard .mo-metric:last-child .mo-metric-icon { background: var(--ec-warning-soft); }
+.mo-dashboard .mo-metric:last-child strong { font-size: clamp(22px, 2vw, 28px); line-height: 1.8; }
+.management .mo-danger { color: var(--ec-danger); }
+.mo-table td .mo-actions { gap: 4px; }.mo-table td .mo-actions button { padding: 6px 8px; font-size: 12px; }
+.mo-card > .mo-actions:last-child { align-items: center; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--ec-border); }
+.management .mo-status-pending_activation { color: var(--ec-warning); background: var(--ec-warning-soft); }
 .management .mo-link { border: none; background: transparent; padding: 8px 0; justify-content: flex-start; }
 .mo-split { display: grid; grid-template-columns: minmax(0,1.85fr) minmax(0,1fr); gap: 24px; align-items: start; }
 .mo-stack { display: grid; gap: 16px; }
@@ -65,6 +72,7 @@
 .ui-preview-management .ui-preview-banner nav a, .ui-preview-management .ui-preview-variants a { flex: 0 0 auto; }
 @media (max-width: 1100px) { .mo-split { grid-template-columns: minmax(0,1fr); } .mo-metrics { gap: 12px; } .mo-metric { padding: 16px; } }
 @media (max-width: 768px) {
+  .mo-dashboard .mo-metric { min-height: 144px; }
   .mo-metrics { grid-template-columns: minmax(0,1fr); }
   .mo-heading { flex-direction: column; }
   .mo-card { padding: 20px; }

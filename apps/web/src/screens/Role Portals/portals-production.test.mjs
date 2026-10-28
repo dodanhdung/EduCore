@@ -145,6 +145,25 @@ test('PO01 keeps sessions when grading is forbidden and attendance has a network
   await act(async () => root.render(null))
 })
 
+test('R10 PO01 never presents a paginated fragment as complete KPI totals', async () => {
+  handler = async url => {
+    if (url.endsWith('/portal/context')) return respond({ ...context, teacher: { id: 'teacher', name: 'Teacher One' }, children: [] })
+    if (url.endsWith('/portal/teacher-sessions')) return respond({ ...page([session()]), total: 101 })
+    if (url.includes('/attendance/due')) return respond(page([]))
+    if (url.endsWith('/teaching/assignments')) return respond([])
+    if (url.endsWith('/teaching/assignment-classes')) return respond({ classes: [] })
+    if (url.endsWith('/grading/queue')) return respond({ ...page([]), total: 200 })
+    throw Error(`Unexpected ${url}`)
+  }
+  const root = createRoot(document.getElementById('root'))
+  try {
+    await act(async () => root.render(React.createElement(PortalProduction, props('PO01'))))
+    assert.deepEqual([...document.querySelectorAll('.portal-kpi strong')].map(n => n.textContent), ['Chưa đủ dữ liệu', 'Chưa đủ dữ liệu', 'Chưa đủ dữ liệu'])
+    assert.match(document.body.textContent, /Danh sách đang giới hạn/)
+    assert.doesNotMatch(document.body.textContent, /Không có bài nộp đang chờ chấm/)
+  } finally { await act(async () => root.unmount()) }
+})
+
 test('PO01 teaching summary denial does not hide authorized grading work', async () => {
   handler = async (url) => {
     if (url.endsWith('/portal/context')) return respond({ ...context, teacher: { id: 'teacher', name: 'Teacher One' }, children: [] })

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../../api.ts'
+import { AssetIcon } from '../../../assets/AssetIcon.tsx'
 
 type Notice = { id: string; kind: string; title: string; body: string; readAt: string | null; createdAt: string }
 type Page = { items: Notice[]; page: number; pageSize: number; total: number; timezone: string }
@@ -48,13 +49,13 @@ export function NotificationProduction({ tenantId, token }: { tenantId: string; 
     {state === 'loading' && <p role="status">Đang tải thông báo…</p>}
     {state === 'unauthenticated' && <p role="alert">Phiên đã hết hạn. Vui lòng đăng nhập lại.</p>}
     {state === 'forbidden' && <p role="alert">Bạn không có quyền xem thông báo.</p>}
-    {state === 'error' && <p role="alert">Không tải được thông báo. <button onClick={() => setRevision((value) => value + 1)}>Thử lại</button></p>}
+    {state === 'error' && <p role="alert">Không tải được thông báo. <button className="ec-icon-label" onClick={() => setRevision((value) => value + 1)}><AssetIcon name="refresh" />Thử lại</button></p>}
     {message && <p role="status">{message}</p>}
     {state === 'ready' && data && <>
       {data.items.length ? <div className="ec-notice-list">{data.items.map((item) => <article key={item.id} className="ec-notice-card">
         <h2>{item.title}</h2><p>{item.body}</p><p>{item.kind} · {item.readAt ? 'Đã đọc' : 'Chưa đọc'}</p>
         <time dateTime={item.createdAt}>{format(item.createdAt)} · {data.timezone}</time>
-        {!item.readAt && <button disabled={busy !== null} onClick={() => void markRead(item.id)}>{busy === item.id ? 'Đang lưu…' : 'Đánh dấu đã đọc'}</button>}
+        {!item.readAt && <button className="ec-icon-label" disabled={busy !== null} onClick={() => void markRead(item.id)}><AssetIcon name="check" />{busy === item.id ? 'Đang lưu…' : 'Đánh dấu đã đọc'}</button>}
       </article>)}</div> : <p role="status">Chưa có thông báo trong phạm vi này.</p>}
       <nav className="mo-actions" aria-label="Trang thông báo"><button disabled={page <= 1 || busy !== null} onClick={() => setPage(page - 1)}>Trước</button>
         <span>Trang {page} · {data.total} thông báo</span><button disabled={page * data.pageSize >= data.total || busy !== null} onClick={() => setPage(page + 1)}>Sau</button></nav>

@@ -3,6 +3,7 @@ import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { tenantPath } from '../../routes.ts'
 import { BillingBadge, BillingCard, BillingHeading, BillingState } from './BillingPrimitives.tsx'
 import './BillingScreens.css'
+import { Skeleton } from '../Authentication & Shared/BatchPrimitives.tsx'
 
 type Id = 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07'
 type Page<T> = { items: T[]; page: number; pageSize: number; total: number; asOf: string }
@@ -149,9 +150,9 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
   const detail = data as Detail | undefined
   const go = (suffix: string) => navigate(tenantPath(tenantId, suffix))
   return <div className="billing-page" data-screen-id={id}>
-    <BillingHeading title={names[id]} subtitle="Dữ liệu và quyền được kiểm tra trên máy chủ" />
-    {loading && <BillingState title="Đang tải">Đang lấy dữ liệu học phí.</BillingState>}
-    {error && <BillingState title="Không thể hoàn tất" alert>{error}</BillingState>}
+    <BillingHeading title={names[id]} subtitle={id === 'BL03' ? 'Kỳ theo ngày bắt đầu buổi · Dự thảo nội bộ, phát hành riêng' : 'Dữ liệu và quyền được kiểm tra trên máy chủ'} />
+    {loading && (id === 'BL03' ? <Skeleton label="Đang lấy dữ liệu học phí" /> : <BillingState title="Đang tải">Đang lấy dữ liệu học phí.</BillingState>)}
+    {error && <BillingState title="Không thể hoàn tất" alert>{error}{id === 'BL03' && !data && !loading && <button className="billing-button billing-button-secondary" onClick={() => setRevision(n => n + 1)}>Thử tải lại</button>}</BillingState>}
     {!loading && !error && !data && <BillingState title="Chưa có dữ liệu">Không nhận được dữ liệu từ máy chủ.</BillingState>}
     {!loading && pageData && id === 'BL01' && <BillingCard title="Quy tắc giá" hint="Ưu tiên buổi → lớp → khóa; cửa sổ hiệu lực [từ, đến).">
       {pageData.items.length ? <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Phạm vi</th><th>Đối tượng</th><th>Đơn giá</th><th>Hiệu lực</th><th>Policy</th></tr></thead><tbody>{pageData.items.map((rule) =>
@@ -176,8 +177,8 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
     </BillingCard>}
     {!loading && pageData && id === 'BL03' && <><BillingCard title="Kỳ học phí" hint="Tháng tính theo ngày bắt đầu buổi trong timezone tenant đã đóng băng.">
       {pageData.items.length ? <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Kỳ</th><th>Trạng thái</th><th>Timezone</th><th>Dự thảo</th><th>Đã phát hành</th></tr></thead><tbody>{pageData.items.map((entry) =>
-        <tr key={entry.id}><td>{entry.monthStart}</td><td>{entry.status}</td><td>{entry.timezone}</td><td>{entry.draftCount}</td><td>{entry.issuedCount}</td></tr>)}</tbody></table></div> : <BillingState title="Chưa có kỳ">Kỳ cần được tạo theo quy trình nguồn đã duyệt.</BillingState>}{pageControls(pageData)}</BillingCard>
-      <BillingCard title="Tính dự thảo G1" hint="Máy chủ xác minh điểm danh, giá và nguồn; thiếu dữ liệu trả NEEDS_INFORMATION."><div className="billing-form-grid">
+        <tr key={entry.id}><td data-label="Kỳ">{entry.monthStart}</td><td data-label="Trạng thái"><BillingBadge>{entry.status}</BillingBadge></td><td data-label="Timezone">{entry.timezone}</td><td data-label="Dự thảo">{entry.draftCount}</td><td data-label="Đã phát hành">{entry.issuedCount}</td></tr>)}</tbody></table></div> : <BillingState title="Chưa có kỳ">Mở kỳ tháng ở cuối trang khi nguồn và múi giờ trung tâm đã sẵn sàng.</BillingState>}{pageControls(pageData)}</BillingCard>
+      <BillingCard title="Tạo lần tính dự thảo" hint="Máy chủ xác minh điểm danh, giá và nguồn; thiếu dữ liệu trả NEEDS_INFORMATION."><div className="billing-generation-form"><div className="billing-form-grid">
         <label>Kỳ<select value={selectedPeriod} onChange={(e) => setSelectedPeriod(e.target.value)}><option value="">Chọn kỳ</option>{pageData.items.map((entry) => <option key={entry.id} value={entry.id}>{entry.monthStart}</option>)}</select></label>
         <label>Học sinh<select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)}><option value="">Chọn học sinh</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name} · {student.code}</option>)}</select></label></div>
         <label>Lý do tính<textarea value={reason} onChange={(e) => { setReason(e.target.value); pendingKey.current = null }} /></label>
@@ -185,19 +186,19 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
           const generation = value as GenerationResult; setResult(generation)
           if (generation.status === 'DRAFT' && generation.invoiceId) go(`/finance/drafts/${generation.invoiceId}`)
         })}>Tạo dự thảo</button>
-        {result?.status === 'NEEDS_INFORMATION' && <BillingState title="NEEDS_INFORMATION" alert>{result.source.missing.join(', ')}</BillingState>}
+        {result?.status === 'NEEDS_INFORMATION' && <BillingState title="NEEDS_INFORMATION" alert>{result.source.missing.join(', ')}</BillingState>}</div>
       </BillingCard><BillingCard title="Lịch sử generation" hint="NEEDS_INFORMATION giữ lý do thiếu nguồn; generation cũ không bị xóa.">
         {pageData.items.flatMap((period) => period.generations.map((generation) => ({ period, generation }))).length ?
           <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Kỳ / học sinh</th><th>Generation</th><th>Trạng thái</th><th>Thời điểm</th><th>Lý do / thiếu nguồn</th><th>Dự thảo</th></tr></thead><tbody>
             {pageData.items.flatMap((period) => period.generations.map((generation) => ({ period, generation }))).map(({ period, generation }) => <tr key={generation.id}>
-              <td>{period.monthStart}<small className="billing-cell-sub">{generation.studentId}</small></td><td>{generation.id}{generation.current ? ' · hiện tại' : ''}</td><td>{generation.status}</td><td>{date(generation.createdAt)}</td><td>{generation.missing?.length ? generation.missing.join(', ') : generation.reason}</td><td>{generation.invoiceId && <button className="billing-link" onClick={() => go(`/finance/drafts/${generation.invoiceId}`)}>Xem</button>}</td>
+              <td data-label="Kỳ / học sinh">{period.monthStart}<small className="billing-cell-sub">{generation.studentId}</small></td><td data-label="Generation">{generation.id}{generation.current ? <small className="billing-cell-sub">Lần tính hiện tại</small> : ''}</td><td data-label="Trạng thái"><BillingBadge tone={generation.status === 'NEEDS_INFORMATION' ? 'warning' : generation.status === 'FAILED' ? 'danger' : generation.status === 'ISSUED' ? 'success' : 'info'}>{generation.status}</BillingBadge></td><td data-label="Thời điểm">{new Intl.DateTimeFormat('vi-VN', { timeZone: period.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(generation.createdAt))}<small className="billing-cell-sub">{period.timezone}</small></td><td data-label="Lý do / thiếu nguồn">{generation.missing?.length ? generation.missing.join(', ') : generation.reason}</td><td data-label="Dự thảo">{generation.invoiceId ? <button className="billing-link" onClick={() => go(`/finance/drafts/${generation.invoiceId}`)}>Xem</button> : 'Chưa có dự thảo'}</td>
             </tr>)}</tbody></table></div> : <BillingState title="Chưa có generation">Nguồn chưa được tính cho các kỳ trong trang này.</BillingState>}
-      </BillingCard><BillingCard title="Mở kỳ tháng" hint="Chỉ mở sau khi timezone tenant đã được đóng băng bởi nguồn hợp lệ.">
+      </BillingCard><details className="billing-open-period"><summary>Mở kỳ tháng</summary><BillingCard title="Mở kỳ tháng" hint="Chỉ mở sau khi timezone tenant đã được đóng băng bởi nguồn hợp lệ."><div className="billing-generation-form">
         <label>Tháng<input type="month" value={newMonth} onChange={(e) => setNewMonth(e.target.value)} /></label>
         <label>Lý do<textarea value={reason} onChange={(e) => { setReason(e.target.value); pendingKey.current = null }} /></label>
         <button className="billing-button billing-button-secondary" disabled={working || !/^\d{4}-\d{2}$/.test(newMonth) || !reason.trim()}
           onClick={() => act('/billing/periods', { monthStart: `${newMonth}-01`, reason }, (value) => setSelectedPeriod(value.id))}>Mở kỳ</button>
-      </BillingCard><button className="billing-button billing-button-secondary" onClick={() => go('/finance/drafts')}>Xem dự thảo và tính lại G2</button></>}
+      </div></BillingCard></details><BillingCard title="Quy tắc lần tính" hint="Hoàn tất lần tính tạo dự thảo; hóa đơn chỉ được phát hành sau bước rà soát và xác nhận riêng."><p className="billing-muted">Thiếu điểm danh hoặc đơn giá cần bổ sung nguồn. Tính lại DRAFT có lý do tạo generation mới và giữ lịch sử; ISSUED không được tính lại.</p><button className="billing-button billing-button-secondary" onClick={() => go('/finance/drafts')}>Xem dự thảo và tính lại G2</button></BillingCard></>}
     {!loading && pageData && (id === 'BL04' || id === 'BL06') && <BillingCard title={names[id]}>
       {pageData.items.length ? <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Hóa đơn</th><th>Học sinh</th><th>Kỳ</th><th>{id === 'BL04' ? 'Dự kiến' : 'Nghĩa vụ hiện tại'}</th>{id === 'BL06' && <><th>Đã phân bổ</th><th>Còn phải thu</th><th>Hạn</th></>}<th>Trạng thái</th><th>Chi tiết</th></tr></thead><tbody>{pageData.items.map((entry) =>
         <tr key={entry.id}><td>{entry.number ?? entry.id}</td><td>{entry.studentName}</td><td>{entry.period}</td><td>{money(id === 'BL04' ? entry.totalVnd : entry.netObligationVnd ?? entry.totalVnd)}</td>{id === 'BL06' && <><td>{entry.allocatedVnd === null ? '—' : money(entry.allocatedVnd)}</td><td>{entry.outstandingVnd === null ? '—' : money(entry.outstandingVnd)}</td><td>{date(entry.dueAt)}</td></>}<td><BillingBadge tone={entry.overdue ? 'warning' : entry.generationId === entry.currentGenerationId && entry.currentGenerationId === entry.latestGenerationId ? 'info' : 'warning'}>{id === 'BL06' ? `${entry.status} · ${entry.settlement ?? '—'}${entry.overdue ? ' · quá hạn' : ''}` : entry.status}</BillingBadge></td><td><button className="billing-link" onClick={() => go(id === 'BL04' ? `/finance/drafts/${entry.id}` : `/finance/invoices/${entry.id}`)}>Xem</button></td></tr>)}</tbody></table></div> : <BillingState title="Chưa có hóa đơn">Danh sách hiện trống.</BillingState>}{pageControls(pageData)}

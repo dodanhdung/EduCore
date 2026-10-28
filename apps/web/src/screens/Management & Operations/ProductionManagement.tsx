@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import type { Session } from '../../auth.ts'
+import { ConfirmDialog } from '../Authentication & Shared/BatchPrimitives.tsx'
 import { Badge, Card, Empty, Heading, StateMessage, Table } from './ManagementPrimitives.tsx'
 import type { ManagementId, ViewState } from './ManagementTypes.ts'
 
@@ -73,13 +74,14 @@ export function ProductionManagement({ id, tenantId, selectedId, session, open }
     try {
       await api.management(tenantId, action.path, token, { method: action.method ?? 'POST', body: action.body })
       setMessage(action.done); setRevision((n) => n + 1)
-    } catch (error) { setMessage(safeErrorMessage(error)) }
+      return true
+    } catch (error) { setMessage(safeErrorMessage(error)); return false }
     finally { setBusy(false) }
   }
   if (state !== 'ready') return <div className="management"><StateMessage state={state} /></div>
   return <div className="management" data-screen-id={id}>
     {message && <p role="status" className="mo-warning">{message}</p>}
-    {id === 'OP01' && <MemberList data={data as Page<Member>} page={page} setPage={setPage} busy={busy} submit={submit}
+    {id === 'OP01' && <MemberList data={data as Page<Member>} page={page} setPage={setPage} busy={busy} submit={submit} message={message}
       open={session.navigation?.screenIds.includes('OP02') ? open : undefined} />}
     {id === 'OP02' && <MemberDetail data={data as Member} roles={roles} busy={busy} submit={submit} open={open} />}
     {id === 'OP03' && <RelationshipList data={data as Page<Link>} page={page} setPage={setPage} parents={parents}
@@ -92,30 +94,42 @@ function Pager({ page, total, size, setPage }: { page: number; total: number; si
     <span>Trang {page} · {total} bản ghi</span><button disabled={page * size >= total} onClick={() => setPage(page + 1)}>Sau</button></div>
 }
 
-function MemberList({ data, page, setPage, busy, submit, open }: { data: Page<Member>; page: number; setPage: (n: number) => void; busy: boolean; submit: (action: Action) => Promise<void>; open?: (screen: string, id?: string) => void }) {
+function MemberList({ data, page, setPage, busy, submit, open, message }: { data: Page<Member>; page: number; setPage: (n: number) => void; busy: boolean; submit: (action: Action) => Promise<boolean | undefined>; open?: (screen: string, id?: string) => void; message: string }) {
   const [query, setQuery] = useState(''), [status, setStatus] = useState('')
+  const [creating, setCreating] = useState(false), [disabling, setDisabling] = useState<Member | null>(null)
   const rows = data.items.filter((m) => (!status || m.status === status) && `${m.displayName} ${m.email} ${m.id}`.toLowerCase().includes(query.toLowerCase()))
-  return <><Heading title="Tài khoản người dùng" detail="Thành viên trong trung tâm hiện tại" />
-    <Card title="Tạo thành viên"><form onSubmit={(e) => {
-      e.preventDefault(); const f = new FormData(e.currentTarget)
-      const email = String(f.get('email') ?? '').trim().toLowerCase(), displayName = String(f.get('displayName') ?? '').trim(), reason = String(f.get('reason') ?? '').trim()
-      if (!email || !displayName || !reason) return
-      void submit({ path: '/members', body: { email, displayName, reason }, done: 'Đã tạo thành viên. Người dùng tự kích hoạt qua AU06.' })
-    }}><label>Email<input name="email" type="email" required /></label><label>Họ và tên<input name="displayName" required /></label>
-      <label>Lý do<textarea name="reason" required /></label><button disabled={busy}>Tạo thành viên</button></form>
-      <p>Thành viên chưa kích hoạt có thể dùng <a href="/activate-account">AU06</a> để yêu cầu OTP. Không gửi mật khẩu tạm.</p></Card>
-    <Card title="Danh sách thành viên"><div className="mo-filters"><label>Tìm kiếm trong trang<input type="search" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-      <label>Trạng thái<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Tất cả</option>{['ACTIVE', 'PENDING_ACTIVATION', 'DISABLED'].map((s) => <option key={s}>{s}</option>)}</select></label></div>
+  return <><Heading title="Tài khoản người dùng" detail="Quản lý thành viên trong trung tâm hiện tại"><button onClick={() => setCreating(true)}>Tạo thành viên</button></Heading>
+    <Card title="Lọc và tìm kiếm" detail="Bộ lọc áp dụng cho các thành viên trong trang hiện tại."><div className="mo-filters"><label>Tìm kiếm trong trang<input type="search" placeholder="Tên, email hoặc mã thành viên…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
+      <label>Trạng thái<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang hoạt động</option><option value="PENDING_ACTIVATION">Chờ kích hoạt</option><option value="DISABLED">Đã vô hiệu hóa</option></select></label>
+      {(query || status) && <button onClick={() => { setQuery(''); setStatus('') }}>Xóa bộ lọc</button>}</div></Card>
+    <Card title="Danh sách thành viên" detail={`${data.total} thành viên · Trang ${page}`}>
       {rows.length ? <Table caption="Danh sách thành viên" columns={['Tên', 'Email', 'Vai trò hiện hành', 'Trạng thái', 'Thao tác']} rows={rows.map((m) => ({ id: m.id, cells: [m.displayName, m.email,
         m.assignments.map((a) => `${a.roleCode} · ${a.scopeKind}`).join(', ') || 'Chưa gán', <Badge key="status" value={m.status} />,
         <div key="actions" className="mo-actions">{open ? <button onClick={() => open('OP02', m.id)}>Xem</button> : <span>Chi tiết chờ duyệt điều hướng</span>}
-          {m.status !== 'DISABLED' && <form onSubmit={(e) => { e.preventDefault(); const reason = String(new FormData(e.currentTarget).get('reason') ?? '').trim()
-            if (reason && window.confirm(`Vô hiệu hóa ${m.displayName}?`)) void submit({ path: `/members/${m.id}`, method: 'PATCH', body: { status: 'DISABLED', reason }, done: 'Đã vô hiệu hóa thành viên.' })
-          }}><label>Lý do<textarea name="reason" required /></label><button disabled={busy}>Vô hiệu hóa</button></form>}</div>] }))} /> : <Empty filtered={!!(query || status)} />}
-      <Pager page={page} total={data.total} size={data.pageSize} setPage={setPage} /></Card></>
+          {m.status !== 'DISABLED' && <button className="mo-danger" disabled={busy} onClick={() => setDisabling(m)}>Vô hiệu hóa</button>}</div>] }))} /> : <Empty filtered={!!(query || status)} />}
+      <Pager page={page} total={data.total} size={data.pageSize} setPage={setPage} /></Card>
+    <Card title="Kích hoạt tài khoản" detail="Thành viên mới bắt đầu ở trạng thái chờ kích hoạt."><p>Người dùng yêu cầu OTP tại <a href="/activate-account">Kích hoạt tài khoản</a> để đặt mật khẩu.</p></Card>
+    {creating && <ConfirmDialog title="Tạo thành viên" detail="Thành viên được tạo trong trung tâm hiện tại và tự kích hoạt qua OTP email." busy={busy} onClose={() => setCreating(false)}>
+      <form onSubmit={async e => {
+        e.preventDefault(); const f = new FormData(e.currentTarget)
+        const email = String(f.get('email') ?? '').trim().toLowerCase(), displayName = String(f.get('displayName') ?? '').trim(), reason = String(f.get('reason') ?? '').trim()
+        if (!email || !displayName || !reason) return
+        if (await submit({ path: '/members', body: { email, displayName, reason }, done: 'Đã tạo thành viên. Người dùng tự kích hoạt qua AU06.' })) setCreating(false)
+      }}><label>Email<input name="email" type="email" autoComplete="off" required disabled={busy} /></label><label>Họ và tên<input name="displayName" required disabled={busy} /></label>
+        <label>Lý do tạo thành viên<textarea name="reason" required disabled={busy} /></label>{message && <p role="status">{message}</p>}
+        <div className="mo-actions"><button type="button" disabled={busy} onClick={() => setCreating(false)}>Hủy</button><button type="submit" disabled={busy}>{busy ? 'Đang tạo…' : 'Tạo thành viên'}</button></div></form>
+    </ConfirmDialog>}
+    {disabling && <ConfirmDialog title="Xác nhận vô hiệu hóa" detail={`${disabling.displayName} · ${disabling.email}. Thành viên sẽ không thể tiếp tục truy cập trung tâm này.`} busy={busy} onClose={() => setDisabling(null)}>
+      <form onSubmit={async e => {
+        e.preventDefault(); const reason = String(new FormData(e.currentTarget).get('reason') ?? '').trim()
+        if (reason && await submit({ path: `/members/${disabling.id}`, method: 'PATCH', body: { status: 'DISABLED', reason }, done: 'Đã vô hiệu hóa thành viên.' })) setDisabling(null)
+      }}><label>Lý do vô hiệu hóa<textarea name="reason" required disabled={busy} /></label>{message && <p role="status">{message}</p>}
+        <div className="mo-actions"><button type="button" disabled={busy} onClick={() => setDisabling(null)}>Hủy</button><button type="submit" disabled={busy}>{busy ? 'Đang xử lý…' : 'Xác nhận vô hiệu hóa'}</button></div></form>
+    </ConfirmDialog>}
+  </>
 }
 
-function MemberDetail({ data: member, roles, busy, submit, open }: { data: Member; roles: Role[]; busy: boolean; submit: (action: Action) => Promise<void>; open: (screen: string) => void }) {
+function MemberDetail({ data: member, roles, busy, submit, open }: { data: Member; roles: Role[]; busy: boolean; submit: (action: Action) => Promise<unknown>; open: (screen: string) => void }) {
   const [roleId, setRoleId] = useState(''), [scope, setScope] = useState<Scope>('TENANT'), [scopeId, setScopeId] = useState(''), [reason, setReason] = useState('')
   const assign = () => {
     if (!roleId || !reason.trim() || (scope !== 'TENANT' && !uuid.test(scopeId))) return
@@ -140,7 +154,7 @@ function MemberDetail({ data: member, roles, busy, submit, open }: { data: Membe
 }
 
 function RelationshipList({ data, page, setPage, parents, students, selectorsReady, busy, submit }: {
-  data: Page<Link>; page: number; setPage: (n: number) => void; parents: Choice[]; students: Choice[]; selectorsReady: boolean; busy: boolean; submit: (action: Action) => Promise<void>
+  data: Page<Link>; page: number; setPage: (n: number) => void; parents: Choice[]; students: Choice[]; selectorsReady: boolean; busy: boolean; submit: (action: Action) => Promise<unknown>
 }) {
   const [query, setQuery] = useState(''), [status, setStatus] = useState('')
   const rows = data.items.filter((l) => (!status || l.status === status) && `${l.parentName} ${l.studentName} ${l.id}`.toLowerCase().includes(query.toLowerCase()))

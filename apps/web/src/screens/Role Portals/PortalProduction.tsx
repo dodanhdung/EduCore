@@ -9,6 +9,7 @@ import { ParentHomeScreen } from './PO03/ParentHomeScreen.tsx'
 import { ChildLearningScreen } from './PO04/ChildLearningScreen.tsx'
 import { MyBillingScreen, type LiveBilling } from './PO05/MyBillingScreen.tsx'
 import { portalPath } from './PortalNavigation.ts'
+import { Skeleton } from '../Authentication & Shared/BatchPrimitives.tsx'
 
 type Id = 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'
 type Person = { id: string; name: string }
@@ -93,6 +94,7 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
   const [payload, setPayload] = useState<Payload | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
+  const [revision, setRevision] = useState(0)
   const chosen = id === 'PO04' ? selectedId : childId
   const key = `${tenantId}:${token}:${viewerId}:${id}:${chosen ?? ''}`
   const path = (screen: string, recordId?: string) => allowed.includes(screen) ? portalPath(tenantId, screen, recordId) : ''
@@ -127,7 +129,7 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
           const teachingState = assignments.state === 'ready' && classes.state === 'ready' ? 'ready'
             : assignments.state === 'forbidden' || classes.state === 'forbidden' ? 'forbidden' : 'error'
           data.sectionStates = { attendance: attendance.state, teaching: teachingState, grading: grading.state }
-          truncated = calendar.total > 100
+          truncated = calendar.total > calendar.items.length
             || attendance.state === 'ready' && attendance.value.total > attendance.value.items.length
             || grading.state === 'ready' && grading.value.total > grading.value.items.length
           data.sessions = sessionRows(calendar.items.filter(row => row.teacherId === context.teacher!.id), '',
@@ -191,18 +193,18 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
       } catch (cause) { if (!abort.signal.aborted) { setError(cause); setLoading(false) } }
     })()
     return () => abort.abort()
-  }, [key])
+  }, [key, revision])
 
   const current = payload?.key === key ? payload : null
-  if (loading || !current && !error) return <PortalState title="Đang tải dữ liệu">Đang kiểm tra quyền và phạm vi hiện hành.</PortalState>
-  if (error) return <PortalState title={error instanceof ApiError && error.status === 403 ? 'Không có quyền xem' : 'Không thể tải dữ liệu'}>{safeErrorMessage(error)}</PortalState>
+  if (loading || !current && !error) return id === 'PO01' ? <Skeleton label="Đang kiểm tra quyền và tải dữ liệu giảng dạy" metrics /> : <PortalState title="Đang tải dữ liệu">Đang kiểm tra quyền và phạm vi hiện hành.</PortalState>
+  if (error) return <><PortalState title={error instanceof ApiError && error.status === 403 ? 'Không có quyền xem' : 'Không thể tải dữ liệu'}>{safeErrorMessage(error)}</PortalState>{id === 'PO01' && !(error instanceof ApiError && [401, 403].includes(error.status)) && <button className="portal-retry" onClick={() => setRevision(n => n + 1)}>Thử lại</button>}</>
   if (!current) return <PortalState title="Dữ liệu không khả dụng">Vui lòng tải lại trang.</PortalState>
   const { context, data, billing } = current
   const chosenId = chosen ?? context.children[0]?.id ?? context.student?.id
   const changeChild = (next: string) => { setPayload(null); setChildId(next); onChooseChild?.(next) }
   const debt = billing?.totals?.outstandingVnd ?? null
   const notice = current.truncated && <p role="status" className="portal-notice">Danh sách đang giới hạn ở các mục đầu tiên. Mở trang nguồn để xem thêm.</p>
-  if (id === 'PO01') return <>{notice}<TeacherHomeScreen data={data} teacherId={context.teacher?.id} navigate={navigate} path={path} production /></>
+  if (id === 'PO01') return <>{notice}{Object.values(data.sectionStates ?? {}).includes('error') && <button className="portal-retry" onClick={() => setRevision(n => n + 1)}>Thử tải lại các mục lỗi</button>}<TeacherHomeScreen data={data} teacherId={context.teacher?.id} navigate={navigate} path={path} incomplete={current.truncated} production /></>
   if (id === 'PO02') return <>{notice}<StudentHomeScreen data={data} studentId={context.student?.id} navigate={navigate} path={path} /></>
   if (id === 'PO03') return context.children.length ? <ParentHomeScreen data={data} viewerId={viewerId} tenantId={tenantId}
     initialChildId={chosenId} onSelectChild={changeChild} billingAvailable={billing?.status === 'PARTIAL'}

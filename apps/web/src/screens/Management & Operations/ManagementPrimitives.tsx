@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { labels, useManagementPreview } from './ManagementTypes.ts'
 import type { ViewState } from './ManagementTypes.ts'
+import { EmptyState, Skeleton } from '../Authentication & Shared/BatchPrimitives.tsx'
+import { AssetIcon } from '../../assets/AssetIcon.tsx'
 
 
 export function Heading({ title, detail, children }: { title: string; detail: string; children?: ReactNode }) {
@@ -10,11 +12,12 @@ export function Heading({ title, detail, children }: { title: string; detail: st
 export function Card({ title, detail, children }: { title: string; detail?: string; children: ReactNode }) {
   return <section className="mo-card"><h2>{title}</h2>{detail && <p className="mo-muted">{detail}</p>}{children}</section>
 }
-export function Badge({ value }: { value: string }) { return <span className={`mo-badge mo-status-${value.toLowerCase()}`}>{labels[value] ?? value}</span> }
+export function Badge({ value }: { value: string }) { return <span className={`mo-badge mo-status-${value.toLowerCase()}`}><span aria-hidden="true">● </span>{labels[value] ?? value}</span> }
 export function Metrics({ items }: { items: { label: string; value: ReactNode; detail: string; icon?: string; open?: () => void }[] }) {
   return <div className="mo-metrics">{items.map((item) => <section className="mo-metric" key={item.label}><div className="mo-metric-top"><div><p>{item.label}</p><strong>{item.value}</strong></div>{item.icon && <span className="mo-metric-icon"><img src={item.icon} alt="" /></span>}</div><small>{item.detail}</small>{item.open && <button className="mo-link" onClick={item.open}>Xem chi tiết →</button>}</section>)}</div>
 }
 export function StateMessage({ state }: { state: Exclude<ViewState, 'ready'> | 'pending' }) {
+  if (state === 'loading') return <Skeleton />
   const copy = {
     loading: ['Đang tải dữ liệu', 'Vui lòng chờ trong giây lát.'], empty: ['Chưa có dữ liệu', 'Chưa có bản ghi trong phạm vi được cấp.'],
     unauthenticated: ['Cần đăng nhập · 401', 'Phiên đã hết hạn. Đăng nhập lại để tiếp tục.'], forbidden: ['Không có quyền · 403', 'Không thể xem dữ liệu trong phạm vi này.'],
@@ -22,14 +25,14 @@ export function StateMessage({ state }: { state: Exclude<ViewState, 'ready'> | '
     invalid: ['Dữ liệu chưa hợp lệ · 422', 'Kiểm tra thông tin và điều kiện nghiệp vụ. Chưa thực hiện thay đổi.'], error: ['Không tải được dữ liệu', 'Lỗi kết nối hoặc máy chủ. Không thể xác nhận kết quả; vui lòng tải lại.'],
     pending: ['Chờ kết nối quyền truy cập', 'Chưa có bằng chứng quyền từ máy chủ cho màn hình này. Dữ liệu và thao tác nghiệp vụ chưa khả dụng.'],
   }[state]
-  return <section className="mo-card mo-state" role={state === 'loading' ? 'status' : 'alert'} aria-busy={state === 'loading'}><h2>{copy[0]}</h2><p>{copy[1]}</p>{state === 'unauthenticated' && <a href="/login">Đăng nhập</a>}{['error', 'conflict'].includes(state) && <button onClick={() => window.location.reload()}>Tải lại</button>}</section>
+  return <section className="mo-card mo-state" role="alert"><h2>{copy[0]}</h2><p>{copy[1]}</p>{state === 'unauthenticated' && <a href="/login">Đăng nhập</a>}{['error', 'conflict'].includes(state) && <button onClick={() => window.location.reload()}>Tải lại</button>}</section>
 }
-export function Empty({ filtered = false }: { filtered?: boolean }) { return <p className="mo-empty" role="status">{filtered ? 'Không có kết quả phù hợp. Thử đổi bộ lọc.' : 'Chưa có bản ghi trong phạm vi được cấp.'}</p> }
+export function Empty({ filtered = false }: { filtered?: boolean }) { return <EmptyState title={filtered ? 'Không có kết quả phù hợp' : 'Chưa có bản ghi'} detail={filtered ? 'Thử đổi hoặc xóa bộ lọc để tìm lại.' : 'Bản ghi sẽ hiển thị khi có dữ liệu trong phạm vi được cấp.'} /> }
 export function Table({ caption, columns, rows }: { caption: string; columns: string[]; rows: { id: string; cells: ReactNode[] }[] }) {
   return <table className="mo-table"><caption className="mo-sr-only">{caption}</caption><thead><tr>{columns.map((col) => <th key={col} scope="col">{col}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}>{row.cells.map((cell, i) => <td key={i} data-label={columns[i]}>{cell}</td>)}</tr>)}</tbody></table>
 }
 export function Filters({ query, setQuery, status, setStatus, statuses, children }: { query: string; setQuery: (value: string) => void; status: string; setStatus: (value: string) => void; statuses: string[]; children?: ReactNode }) {
-  return <Card title="Lọc và tìm kiếm" detail="Kết quả chỉ gồm dữ liệu trong phạm vi được cấp."><div className="mo-filters"><label>Tìm kiếm<input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tên, mã hoặc email…" /></label><label>Trạng thái<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option>{statuses.map((s) => <option key={s} value={s}>{labels[s] ?? s}</option>)}</select></label>{children}<button onClick={() => { setQuery(''); setStatus('') }}>Xóa bộ lọc</button></div></Card>
+  return <Card title="Lọc và tìm kiếm" detail="Kết quả chỉ gồm dữ liệu trong phạm vi được cấp."><div className="mo-filters"><label><span className="ec-icon-label"><AssetIcon name="search" />Tìm kiếm</span><input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tên, mã hoặc email…" /></label><label>Trạng thái<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option>{statuses.map((s) => <option key={s} value={s}>{labels[s] ?? s}</option>)}</select></label>{children}<button onClick={() => { setQuery(''); setStatus('') }}>Xóa bộ lọc</button></div></Card>
 }
 export function Timeline({ items }: { items: string[] }) { return <ol className="mo-timeline">{items.map((item, i) => <li key={i}>{item}</li>)}</ol> }
 export type Field = { name: string; label: string; type?: 'email' | 'textarea'; options?: string[]; optional?: boolean }

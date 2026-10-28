@@ -10,6 +10,8 @@ globalThis.document = dom.window.document
 globalThis.FormData = dom.window.FormData
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 window.confirm = () => true
+dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true }
+dom.window.HTMLDialogElement.prototype.close = function () { this.open = false }
 const tenant = '00000000-0000-4000-8000-000000000001'
 const member = '00000000-0000-4000-8000-000000000002'
 const calls = []
@@ -45,7 +47,9 @@ test('OP01 production reads the selected tenant and submits a real create reques
     assert.doesNotMatch(document.body.textContent, /Preview|yen.le@educore.vn/)
     assert.equal(calls[0].url, `/api/v1/tenants/${tenant}/members?page=1`)
     assert.equal(calls[0].auth, 'Bearer live-token')
-    const form = document.querySelector('form')
+    assert.equal(document.querySelector('textarea'), null)
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Tạo thành viên').click())
+    const form = document.querySelector('dialog form')
     form.querySelector('[name=email]').value = 'new@example.test'
     form.querySelector('[name=displayName]').value = 'New Member'
     form.querySelector('[name=reason]').value = 'Onboarding'
@@ -76,6 +80,31 @@ test('OP01 opens the selected membership through the approved OP02 route', async
     assert.ok(calls.some((c) => c.url === `/api/v1/tenants/${tenant}/members/${member}`))
   } finally { await act(async () => root.unmount()) }
 })
+
+test('R10 OP01 disable asks for a reason only in its modal, cancels safely and submits the selected membership', async () => {
+  calls.length = 0
+  const root = createRoot(document.getElementById('root'))
+  try {
+    await act(async () => { root.render(React.createElement(ProductionManagement, { id: 'OP01', tenantId: tenant, session: { accessToken: 'live-token' }, open() {} })); await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.equal(document.querySelectorAll('textarea').length, 0)
+    const trigger = [...document.querySelectorAll('button')].find(b => b.textContent === 'Vô hiệu hóa')
+    trigger.focus()
+    await act(async () => trigger.click())
+    assert.match(document.querySelector('dialog').textContent, /Real Member/)
+    assert.ok(document.querySelector('textarea').required)
+    await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
+    assert.equal(calls.filter(c => c.method === 'PATCH').length, 0)
+    await act(async () => document.querySelector('dialog').dispatchEvent(new window.Event('cancel', { cancelable: true })))
+    assert.equal(document.querySelector('dialog'), null)
+    assert.equal(document.activeElement, trigger)
+    await act(async () => trigger.click())
+    document.querySelector('textarea').value = '  Quyết định ngừng truy cập  '
+    await act(async () => { document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await new Promise(resolve => setTimeout(resolve, 20)) })
+    const request = calls.find(c => c.method === 'PATCH')
+    assert.equal(request.url, `/api/v1/tenants/${tenant}/members/${member}`)
+    assert.deepEqual(JSON.parse(request.body), { status: 'DISABLED', reason: 'Quyết định ngừng truy cập' })
+  } finally { await act(async () => root.unmount()) }
+})
 test('OP03 selector denial disables create, and denied mutation never reports success', async () => {
   calls.length = 0
   denySelectors = true
@@ -90,13 +119,15 @@ test('OP03 selector denial disables create, and denied mutation never reports su
   denyMutations = true
   try {
     await act(async () => { secondRoot.render(React.createElement(ProductionManagement, { id: 'OP01', tenantId: tenant, session, open() {} })); await new Promise((resolve) => setTimeout(resolve, 20)) })
-    const form = document.querySelector('form')
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Tạo thành viên').click())
+    const form = document.querySelector('dialog form')
     form.querySelector('[name=email]').value = 'new@example.test'
     form.querySelector('[name=displayName]').value = 'New Member'
     form.querySelector('[name=reason]').value = 'Onboarding'
     await act(async () => { form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await new Promise((resolve) => setTimeout(resolve, 20)) })
     assert.doesNotMatch(document.body.textContent, /Đã tạo thành viên/)
     assert.match(document.body.textContent, /không có quyền/)
+    assert.ok(document.querySelector('dialog[open]'), 'Denied create keeps the entered form open')
   } finally { await act(async () => secondRoot.unmount()); denyMutations = false }
 })
 test('OP03 uses authorized Parent and Student selector responses', async () => {

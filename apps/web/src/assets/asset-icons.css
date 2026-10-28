@@ -1,0 +1,15 @@
+.ec-asset-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  background-color: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-mode: alpha;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+}
+.ec-icon-label { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+@media (forced-colors: active) {
+  .ec-asset-icon { forced-color-adjust: none; }
+}

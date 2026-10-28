@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
 import './portals.css'
 
-export function PortalPage({ title, detail, children }: { title: string; detail?: string; children: ReactNode }) {
-  return <div className="portal-page"><header className="portal-heading"><h1>{title}</h1>{detail && <p>{detail}</p>}</header>{children}</div>
+export function PortalPage({ title, detail, children, screenId, action }: { title: string; detail?: string; children: ReactNode; screenId?: string; action?: ReactNode }) {
+  return <div className="portal-page" data-screen-id={screenId}><header className="portal-heading"><div><h1>{title}</h1>{detail && <p>{detail}</p>}</div>{action && <div className="portal-heading-actions">{action}</div>}</header>{children}</div>
 }
 export function PortalCard({ title, children, hint }: { title: string; children: ReactNode; hint?: string }) {
   return <section className="portal-card"><h2>{title}</h2>{hint && <p className="portal-muted">{hint}</p>}{children}</section>

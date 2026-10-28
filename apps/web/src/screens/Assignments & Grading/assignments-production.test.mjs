@@ -16,6 +16,11 @@ const assignment = { id: 'a1', title: 'Bài tập thật', description: 'Trả l
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), init })
   const path = String(url)
+  if (path.endsWith('/teaching/assignment-classes')) return Response.json({ timezone: 'Asia/Ho_Chi_Minh', classes: [{ id: 'class-a', name: 'Lớp A' }, { id: 'class-b', name: 'Lớp B' }] })
+  if (path.endsWith('/teaching/assignments')) return Response.json([
+    { id: 'a1', title: 'Đại số', class_id: 'class-a', deadline_at: '2099-01-01T00:00:00Z', priority: 3, status: 'PUBLISHED' },
+    { id: 'a2', title: 'Hình học', class_id: 'class-b', deadline_at: '2099-01-02T00:00:00Z', priority: 5, status: 'DRAFT' },
+  ])
   const value = path.endsWith('/my/assignments') ? { items: [{ ...assignment, status: assignmentStatus, canSubmit: assignmentStatus === 'PUBLISHED', score: assignmentStatus === 'ARCHIVED' ? '8.5' : null }], timezone: 'Asia/Ho_Chi_Minh' }
     : path.endsWith('/grading/queue') ? { items: [{ submissionId: 's1', versionId: 'v1', versionNo: 1, submittedAt: '2026-10-25T00:00:00Z', isLate: false, assignmentId: 'a1', assignmentTitle: 'Bài tập thật', studentName: 'Học sinh A', gradeStatus: gradeState?.status ?? null }], timezone: 'Asia/Ho_Chi_Minh' }
       : path.endsWith('/submissions/s1/grading-context') ? { submissionId: 's1', recipientId: 'r1', assignmentTitle: 'Bài tập thật', studentName: 'Học sinh A', currentVersionId: 'v1', timezone: 'Asia/Ho_Chi_Minh', versions: [{ id: 'v1', version_no: 1, submitted_at: '2026-10-25T00:00:00Z', answer_text: 'Bài giải', is_late: false, fileIds: [] }], grade: gradeState }
@@ -30,6 +35,31 @@ const vite = await createServer({ server: { middlewareMode: true, hmr: false }, 
 const { AssignmentsProduction } = await vite.ssrLoadModule('/src/screens/Assignments & Grading/AssignmentsProduction.tsx')
 const { createRoot } = await import('react-dom/client')
 after(async () => { await vite.close(); view.window.close() })
+
+test('R10 AS01 class filter changes actual rows and empty reset; links require navigation evidence', async () => {
+  const root = createRoot(document.getElementById('root'))
+  const navigated = []
+  try {
+    const props = { id: 'AS01', tenantId: 'tenant1', token: 'session-token', allowed: ['AS02', 'AS03'], navigate: p => navigated.push(p) }
+    await act(async () => root.render(React.createElement(AssignmentsProduction, props)))
+    assert.equal(document.querySelectorAll('tbody tr').length, 2)
+    assert.match(document.querySelector('tbody').textContent, /Đã giao/)
+    assert.ok(document.querySelector('[aria-label="Ưu tiên 5 trên 5"]'))
+    const selects = document.querySelectorAll('select')
+    await act(async () => { selects[1].value = 'class-b'; selects[1].dispatchEvent(new window.Event('change', { bubbles: true })) })
+    assert.equal(document.querySelectorAll('tbody tr').length, 1)
+    assert.match(document.querySelector('tbody').textContent, /Hình học/)
+    await act(async () => [...document.querySelectorAll('tbody button')][0].click())
+    assert.equal(navigated.at(-1), '/app/tenant1/teaching/assignments/a2')
+    await act(async () => { selects[0].value = 'PUBLISHED'; selects[0].dispatchEvent(new window.Event('change', { bubbles: true })) })
+    assert.match(document.body.textContent, /Không có bài tập phù hợp/)
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Xóa bộ lọc').click())
+    assert.equal(document.querySelectorAll('tbody tr').length, 2)
+    await act(async () => root.render(React.createElement(AssignmentsProduction, { ...props, allowed: [] })))
+    assert.equal(document.querySelector('tbody button'), null)
+    assert.ok(![...document.querySelectorAll('button')].some(b => b.textContent === 'Tạo bài tập'))
+  } finally { await act(async () => root.unmount()) }
+})
 
 test('AS07 resolves the authenticated assignment to its server supplied recipient before submitting', async () => {
   const root = createRoot(document.getElementById('root'))
