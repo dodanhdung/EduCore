@@ -7,6 +7,7 @@ import { AcademicTeacherAssignment } from './AcademicTeacherAssignment.tsx'
 import { StudentListView, TeacherListView } from './AcademicPersonListView.tsx'
 import { StudentDetailView, TeacherDetailView } from './AcademicPersonDetailView.tsx'
 import { fromPersonPage, fromStudentDetail, fromTeacherDetail } from './AcademicPersonViewModel.ts'
+import { AcademicCatalogProduction } from './AcademicCatalogProduction.tsx'
 import './AcademicScreens.css'
 
 const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
@@ -51,6 +52,8 @@ type AcademicProductionProps = { id: AcademicId; tenantId: string; token: string
   navigate: (next: string) => void; allowed?: readonly string[] }
 
 export function AcademicProduction(props: AcademicProductionProps) {
+  if (props.id === 'AC05' || props.id === 'AC06' || props.id === 'AC07' || props.id === 'AC08')
+    return <AcademicCatalogProduction key={[props.tenantId, props.token, props.id, props.selectedId].join('\u0000')} {...props} id={props.id} />
   return <AcademicScope key={[props.tenantId, props.token, props.id, props.selectedId].join('\u0000')} {...props} />
 }
 

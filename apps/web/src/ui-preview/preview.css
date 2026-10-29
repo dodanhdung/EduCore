@@ -33,6 +33,9 @@
 .ui-preview-person .ui-preview-banner nav a { flex: 0 0 auto; }
 .ui-preview-person .ui-preview-variants { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
 .ui-preview-person .ui-preview-variants a { flex: 0 0 auto; }
+.ui-preview-catalog .ui-preview-banner { position: static; }
+.ui-preview-catalog .ui-preview-banner nav { max-width: 100%; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+.ui-preview-catalog .ui-preview-banner nav a { flex: 0 0 auto; }
 .ui-preview-variants { background: #fffdf2; border-bottom: 1px solid #ead58a; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
 .ui-preview-variants a { color: #473b13; font-size: 12px; padding: 5px 8px; }
 .ui-preview-attendance .ui-preview-banner { position: static; }

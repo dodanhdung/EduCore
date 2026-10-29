@@ -94,7 +94,7 @@ test('AC05 catalog tabs, no-results and form validation work locally', async () 
     assert.equal(view.document.querySelectorAll('tbody tr').length, 3)
     await act(async () => view.document.querySelector('.academic-heading button').click())
     await act(async () => view.document.querySelector('.academic-form-actions button:nth-child(2)').click())
-    assert.match(view.document.body.textContent, /Vui lòng nhập mã, tên/)
+    assert.match(view.document.body.textContent, /Nhập tên, mã \(khi tạo\) và lý do/)
     assert.doesNotMatch(view.document.body.textContent, /đã lưu thành công/i)
   } finally { await view.close() }
 })
@@ -105,7 +105,7 @@ test('AC06 course form and AC07 class navigation remain preview-only', async () 
     await course.render()
     await act(async () => course.document.querySelector('.academic-heading button').click())
     await act(async () => course.document.querySelector('.academic-form-actions button:nth-child(2)').click())
-    assert.match(course.document.body.textContent, /Vui lòng nhập mã và tên khóa/)
+    assert.match(course.document.body.textContent, /Nhập tên, mã \(khi tạo\) và lý do/)
   } finally { await course.close() }
   let path = ''
   const classes = mountMore('AC07', { navigate: (next) => { path = next }, pathForDetail: () => '/__ui-preview/AC08' })
@@ -180,7 +180,7 @@ test('AC01 defers class filtering until a server scoped filter exists', async ()
   } finally { await view.close() }
 })
 
-test('immediate filters have no Apply button and pending saves stay disabled', async () => {
+test('immediate filters have no Apply button and preview never offers server save', async () => {
   for (const id of ['AC05', 'AC06', 'AC07']) {
     const view = mountMore(id)
     try {
@@ -188,7 +188,7 @@ test('immediate filters have no Apply button and pending saves stay disabled', a
       assert.equal([...view.document.querySelectorAll('button')].some((button) => button.textContent === 'Áp dụng'), false)
       await act(async () => view.document.querySelector('.academic-heading button').click())
       assert.ok([...view.document.querySelectorAll('button')].some((button) => button.textContent === 'Kiểm tra biểu mẫu'))
-      assert.equal(view.document.querySelector('.academic-primary[disabled]')?.disabled, true)
+      assert.equal([...view.document.querySelectorAll('[role="dialog"] button')].some((button) => button.textContent === 'Lưu'), false)
     } finally { await view.close() }
   }
 })
@@ -235,7 +235,7 @@ test('AC09 requires all fields before advancing and never enables confirmation',
     const next = view.document.querySelector('.academic-sheet-actions button:last-child')
     await act(async () => next.click())
     assert.equal(view.document.querySelector('.academic-steps button:nth-child(2)').disabled, true)
-    assert.match(view.document.querySelector('[role="alert"]').textContent, /Vui lòng nhập học sinh/)
+    assert.match(view.document.querySelector('[role="dialog"] [role="alert"]').textContent, /Vui lòng nhập học sinh/)
     assert.equal(view.document.querySelector('input[aria-invalid="true"]').getAttribute('aria-describedby'), 'enrollment-error')
     assert.equal(view.document.querySelector('.academic-sheet-actions button:last-child').disabled, false)
   } finally { await view.close() }
