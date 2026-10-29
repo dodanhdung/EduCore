@@ -20,6 +20,9 @@ export function ManagementScreen({ id, tenantId, data, preview = false, state = 
 }) {
   if (!preview || !data) return <div className="management"><StateMessage state="pending" /></div>
   if (data.tenantId !== tenantId) return <div className="management"><StateMessage state="forbidden" /></div>
+  if (id === 'G01') return <ManagementPreviewContext.Provider value={preview}><div className="management" data-screen-id="G01">
+    <ManagerDashboardScreen data={data} canReview={canReview} open={open} viewState={state} />
+  </div></ManagementPreviewContext.Provider>
   if (state !== 'ready' && state !== 'empty') return <div className="management"><StateMessage state={state} /></div>
   // Defense in depth for fixture injection. Real scope checks remain server-side.
   const scoped = { ...data, members: data.members.filter((r) => r.tenantId === tenantId), relationships: data.relationships.filter((r) => r.tenantId === tenantId), approvals: data.approvals.filter((r) => r.tenantId === tenantId), audit: data.audit.filter((r) => r.tenantId === tenantId), jobs: data.jobs.filter((r) => r.tenantId === tenantId) }

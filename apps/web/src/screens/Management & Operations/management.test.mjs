@@ -84,12 +84,12 @@ test('loading/401/403/404/409/422/network states never show underlying records',
   }
 })
 test('G01 has exactly three KPIs; zero versus unavailable and BigInt money remain distinct', () => {
-  assert.equal(doc(html('G01')).querySelectorAll('.mo-metric').length, 3)
+  assert.equal(doc(html('G01')).querySelectorAll('section[aria-label="Ba chỉ số tổng quan"] > section').length, 3)
   assert.match(html('G01'), /1\.248/); assert.match(html('G01'), /84\.500\.000 ₫/)
   assert.match(html('G01', managementScenario('empty')), /0 ₫/)
   assert.match(html('G01', managementScenario('partial')), /Chưa có quyền xem/)
   assert.equal(money('9007199254740993'), '9.007.199.254.740.993 ₫')
-  assert.equal(doc(html('G01')).querySelectorAll('.mo-metric button').length, 0)
+  assert.equal(doc(html('G01')).querySelectorAll('section[aria-label="Ba chỉ số tổng quan"] button').length, 0)
 })
 test('OP01 filters pending activation, handles empty search and opens exact membership', async () => {
   const opened = []

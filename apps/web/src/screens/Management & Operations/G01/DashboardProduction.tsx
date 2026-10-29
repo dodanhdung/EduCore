@@ -1,34 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../../api.ts'
-import type { ManagementData } from '../ManagementTypes.ts'
-import { ManagerDashboardScreen } from './ManagerDashboardScreen.tsx'
-import { Skeleton } from '../../Authentication & Shared/BatchPrimitives.tsx'
-import { Heading } from '../ManagementPrimitives.tsx'
+import { G01DashboardView } from './DashboardView.tsx'
+import type { DashboardPresentation } from './DashboardView.tsx'
+import { fromOverviewResponse, overviewPath } from './DashboardViewModel.ts'
 
-type Overview = { tenantId: string; tenantName: string; timeZone: string; asOf: string; scope: string;
-  students: number | null; classes: number | null; outstandingVnd: string | null }
+export type OverviewReader = (tenantId: string, token: string, signal: AbortSignal) => Promise<unknown>
 const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
+const readOverview: OverviewReader = (tenantId, token, signal) => api.request<unknown>(overviewPath(tenantId),
+  { accessToken: token, cache: 'no-store', signal })
 
-export function DashboardProduction({ tenantId, token }: { tenantId: string; token: string }) {
-  const [state, setState] = useState<{ key: string; data: Overview } | null>(null)
-  const [error, setError] = useState<{ message: string; forbidden: boolean } | null>(null)
+function failure(cause: unknown): DashboardPresentation {
+  const kind = cause instanceof ApiError ? cause.status === 401 ? 'unauthenticated' : cause.status === 403 ? 'forbidden'
+    : cause.status === 404 ? 'not-found' : cause.status === 409 ? 'conflict'
+      : cause.status >= 500 ? 'error' : 'unavailable' : 'error'
+  return { kind, detail: safeErrorMessage(cause) }
+}
+
+/** AppView owns route/session authorization; this container owns only the scoped GET. */
+export function DashboardProduction({ tenantId, token, onUnauthorized, loadOverview = readOverview }: {
+  tenantId: string; token: string; onUnauthorized?: () => void; loadOverview?: OverviewReader
+}) {
   const [revision, setRevision] = useState(0)
-  const key = `${tenantId}:${token}`
+  const [result, setResult] = useState<{ key: string; presentation: DashboardPresentation } | null>(null)
+  const requestSequence = useRef(0)
+  const unauthorized = useRef(onUnauthorized)
+  useEffect(() => { unauthorized.current = onUnauthorized }, [onUnauthorized])
+  const key = `${tenantId}\u0000${token}\u0000${revision}`
   useEffect(() => {
+    const sequence = ++requestSequence.current
     const abort = new AbortController()
-    setState(null); setError(null)
-    void api.request<Overview>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/portal/overview`,
-      { accessToken: token, cache: 'no-store', signal: abort.signal })
-      .then(data => { if (abort.signal.aborted) return; if (data.tenantId !== tenantId) throw new ApiError(502, 'INVALID_CONTEXT'); setState({ key, data }) })
-      .catch(cause => { if (!abort.signal.aborted) setError({ message: safeErrorMessage(cause), forbidden: cause instanceof ApiError && cause.status === 403 }) })
-    return () => abort.abort()
-  }, [key, tenantId, token, revision])
-  if (error) return <div className="management"><Heading title="Tổng quan quản lý" detail="Số liệu trong phạm vi trung tâm hiện tại" /><section className="mo-card" role="alert"><h2>{error.forbidden ? 'Không có quyền xem tổng quan' : 'Không thể tải tổng quan'}</h2><p>{error.message}</p>{!error.forbidden && <button onClick={() => setRevision(n => n + 1)}>Thử lại</button>}</section></div>
-  if (state?.key !== key) return <div className="management"><Heading title="Tổng quan quản lý" detail="Đang tải tổng quan theo quyền hiện hành…" /><Skeleton metrics /></div>
-  const row = state.data
-  const data: ManagementData = { tenantId, tenantName: row.tenantName, timezone: row.timeZone,
-    asOf: row.asOf, scope: row.scope, dashboard: { students: row.students,
-      classes: row.classes, outstandingVnd: row.outstandingVnd },
-    members: [], relationships: [], approvals: [], audit: [], jobs: [], sessions: [], receivables: [] }
-  return <div className="management mo-dashboard" data-screen-id="G01"><ManagerDashboardScreen data={data} canReview={false} production /></div>
+    void loadOverview(tenantId, token, abort.signal)
+      .then(value => {
+        if (abort.signal.aborted || sequence !== requestSequence.current) return
+        const model = fromOverviewResponse(value, tenantId)
+        setResult({ key, presentation: { kind: 'ready', model } })
+      })
+      .catch(cause => {
+        if (abort.signal.aborted || sequence !== requestSequence.current) return
+        const presentation = failure(cause)
+        if (presentation.kind === 'unauthenticated') unauthorized.current?.()
+        setResult({ key, presentation })
+      })
+    return () => { abort.abort() }
+  }, [key, tenantId, token, loadOverview])
+  const presentation: DashboardPresentation = result?.key === key ? result.presentation : { kind: 'loading' }
+  return <div className="management" data-screen-id="G01"><G01DashboardView presentation={presentation.kind === 'error'
+    ? { ...presentation, onRetry: () => setRevision(value => value + 1) } : presentation} /></div>
 }

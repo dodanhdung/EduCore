@@ -4,10 +4,11 @@ import { labels, useManagementPreview } from './ManagementTypes.ts'
 import type { ViewState } from './ManagementTypes.ts'
 import { EmptyState, Skeleton } from '../Authentication & Shared/BatchPrimitives.tsx'
 import { AssetIcon } from '../../assets/AssetIcon.tsx'
+import { PageHeader } from '../../shared/ui/SharedUI.tsx'
 
 
 export function Heading({ title, detail, children }: { title: string; detail: string; children?: ReactNode }) {
-  return <header className="mo-heading"><div><h1>{title}</h1><p>{detail}</p></div>{children}</header>
+  return <PageHeader className="mo-heading" title={title} description={detail} action={children} />
 }
 export function Card({ title, detail, children }: { title: string; detail?: string; children: ReactNode }) {
   return <section className="mo-card"><h2>{title}</h2>{detail && <p className="mo-muted">{detail}</p>}{children}</section>

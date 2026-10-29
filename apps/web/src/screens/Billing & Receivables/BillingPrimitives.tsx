@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { PageHeader } from '../../shared/ui/SharedUI.tsx'
 
 export function MoneyVnd({ value }: { value: string }) {
   if (!/^-?\d+$/.test(value)) return <span>Giá trị không hợp lệ</span>
@@ -9,7 +10,7 @@ export function MoneyVnd({ value }: { value: string }) {
 }
 
 export function BillingHeading({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
-  return <header className="billing-heading"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</header>
+  return <PageHeader className="billing-heading" title={title} description={subtitle} action={action} />
 }
 
 export function BillingCard({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {

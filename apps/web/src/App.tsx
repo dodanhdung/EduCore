@@ -141,7 +141,8 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
         ? <AssignmentsProduction key={`${tenant.id}:${result.route.id}:${result.params.assignmentId ?? result.params.submissionId ?? ''}`}
           id={result.route.id as 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'} tenantId={tenant.id}
           token={session!.accessToken} selectedId={result.params.assignmentId ?? result.params.submissionId} allowed={session!.navigation?.screenIds ?? []} navigate={navigate} />
-      : result.route.id === 'G01' ? <DashboardProduction key={`${tenant.id}:${session!.accessToken}`} tenantId={tenant.id} token={session!.accessToken} />
+      : result.route.id === 'G01' ? <DashboardProduction key={`${tenant.id}:${session!.accessToken}`} tenantId={tenant.id} token={session!.accessToken}
+          onUnauthorized={() => controller.expire('access-revoked')} />
       : (['PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as string[]).includes(result.route.id)
         ? <PortalProduction key={`${tenant.id}:${session!.accessToken}:${result.route.id}:${result.params.studentId ?? ''}`}
             id={result.route.id as 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'} tenantId={tenant.id}
