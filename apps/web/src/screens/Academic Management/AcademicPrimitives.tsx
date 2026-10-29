@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 import type { AcademicId } from './AcademicTypes.ts'
 
 const titles: Record<AcademicId, string> = {
@@ -22,8 +23,19 @@ export function DetailField({ label, value }: { label: string; value: string }) 
 export function EditDialog({ title, onClose }: { title: string; onClose: () => void }) {
   const [name, setName] = useState('')
   const [attempted, setAttempted] = useState(false)
+  const dialog = useRef<HTMLDivElement | null>(null)
+  const previous = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  useEffect(() => () => { if (previous.current?.isConnected) previous.current.focus() }, [])
+  function onKeys(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+    if (event.key !== 'Tab') return
+    const items = [...(dialog.current?.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)') ?? [])]
+    if (!items.length) return
+    if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items[items.length - 1].focus() }
+    else if (!event.shiftKey && document.activeElement === items[items.length - 1]) { event.preventDefault(); items[0].focus() }
+  }
   return <div className="academic-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <div className="academic-dialog" role="dialog" aria-modal="true" aria-labelledby="academic-dialog-title" onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}>
+    <div className="academic-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="academic-dialog-title" onKeyDown={onKeys}>
       <div className="academic-dialog-head"><h2 id="academic-dialog-title">{title}</h2><button onClick={onClose} aria-label="Đóng hộp thoại">×</button></div>
       <p className="academic-hint">Biểu mẫu xem trước. Thao tác lưu đang chờ API và quyền hiệu lực.</p>
       <label className="academic-field"><span>Họ và tên</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-invalid={attempted && !name.trim()} aria-describedby={attempted && !name.trim() ? 'academic-name-error' : undefined} /></label>

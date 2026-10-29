@@ -142,7 +142,7 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
   const assignmentData = previewState === 'empty' ? { ...assignmentFixtures, assignments: [], submissions: [] } : previewState === 'overdue' ? { ...assignmentFixtures, sampleNow: '2026-10-22T12:00:00+07:00' } : assignmentFixtures
   const studentId = query.get('studentId') ?? assignmentFixtures.studentId!
   const portalPath = (target: string, recordId?: string) => target === 'SC06' ? `/__ui-preview/SC06?source=portal&role=${id === 'PO01' ? 'teacher' : 'student'}` : target === 'AT03' ? `/__ui-preview/AT03?source=portal&role=${id === 'PO03' ? 'parent' : 'student'}${recordId ? `&studentId=${encodeURIComponent(recordId)}` : ''}` : target === 'AT02' ? `${portalPreviewPath(target, recordId)}&source=portal` : target === 'SC05' ? `${portalPreviewPath(target, recordId)}&source=portal` : portalPreviewPath(target, recordId)
-  return <main className={`ui-preview${(managementIds as readonly string[]).includes(id) || id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') || id.startsWith('AS') || id.startsWith('PO') ? ' ui-preview-academic' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}${id.startsWith('AS') ? ' ui-preview-assignments' : ''}${(managementIds as readonly string[]).includes(id) ? ' ui-preview-management' : ''}`}>
+  return <main className={`ui-preview${(managementIds as readonly string[]).includes(id) || id.startsWith('AC') || id.startsWith('SC') || id.startsWith('AT') || id.startsWith('BL') || id.startsWith('AS') || id.startsWith('PO') ? ' ui-preview-academic' : ''}${['AC01', 'AC02', 'AC03', 'AC04'].includes(id) ? ' ui-preview-person' : ''}${id.startsWith('AT') ? ' ui-preview-attendance' : ''}${id.startsWith('BL') ? ' ui-preview-billing' : ''}${id.startsWith('AS') ? ' ui-preview-assignments' : ''}${(managementIds as readonly string[]).includes(id) ? ' ui-preview-management' : ''}`}>
     <header className="ui-preview-banner">
       <div>
         <strong>Dữ liệu mẫu — UI Preview</strong>
@@ -158,6 +158,12 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
       {id === 'SC03' && <><a href="/__ui-preview/SC03?state=single">Một buổi</a><a href="/__ui-preview/SC03?state=zero">Không xung đột</a><a href="/__ui-preview/SC03?state=one">Một xung đột</a><a href="/__ui-preview/SC03?state=conflict">Nhiều xung đột</a><a href="/__ui-preview/SC03?state=race">Xung đột lúc xác nhận</a></>}
       {id === 'SC05' && <><a href="/__ui-preview/SC05?state=cancelled">Buổi đã hủy</a><a href="/__ui-preview/SC05?state=read-only">Chỉ xem</a></>}
       {id === 'SC06' && <><a href="/__ui-preview/SC06?role=teacher">Giáo viên</a><a href="/__ui-preview/SC06?role=student">Học viên</a><a href="/__ui-preview/SC06?role=parent">Phụ huynh</a><a href="/__ui-preview/SC06?state=empty">Lịch trống</a></>}
+    </nav>}
+    {['AC01', 'AC02', 'AC03', 'AC04'].includes(id) && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của hồ sơ học vụ">
+      <a href="/__ui-preview/AC02?studentId=HS-1035">Học sinh chưa ghi danh</a>
+      <a href="/__ui-preview/AC04?teacherId=GV-023">Giáo viên chưa phân công</a>
+      <a href="/__ui-preview/AC02?studentId=HS-1028&amp;state=read-only">Hồ sơ học sinh chỉ xem</a>
+      <a href="/__ui-preview/AC04?teacherId=GV-018&amp;state=read-only">Hồ sơ giáo viên chỉ xem</a>
     </nav>}
     {id.startsWith('AT') && <nav className="ui-preview-variants" aria-label="Trạng thái mẫu của điểm danh và nghỉ học">
       <a href="/__ui-preview/AT01?state=empty">Danh sách rỗng</a><a href="/__ui-preview/AT01?state=loading">Đang tải</a><a href="/__ui-preview/AT01?state=forbidden">Không có quyền</a>
@@ -183,7 +189,7 @@ export function PreviewApp({ screenId, navigation }: { screenId: string; navigat
       {id === 'GL01' && <NotificationScreen items={sampleNotifications} />}
       {id.startsWith('AC') && <AppShell route={routes.find((route) => route.id === (id === 'AC09' ? 'AC08' : id))!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={(['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08', 'AC09'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{item}</a>)}>
         {(['AC01', 'AC02', 'AC03', 'AC04'] as string[]).includes(id)
-          ? <AcademicScreen id={id as AcademicId} data={academicFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} pathForDetail={(detailId, personId) => `/__ui-preview/${detailId}?${detailId === 'AC02' ? 'studentId' : 'teacherId'}=${encodeURIComponent(personId)}`} />
+          ? <AcademicScreen id={id as AcademicId} data={academicFixtures} preview={previewState !== 'read-only'} tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} pathForDetail={(detailId, personId) => `/__ui-preview/${detailId}?${detailId === 'AC02' ? 'studentId' : 'teacherId'}=${encodeURIComponent(personId)}`} />
           : <AcademicMoreScreen id={(id === 'AC09' ? 'AC08' : id) as MoreId} data={academicMoreFixtures} preview tenantId={selectedTenant.id} navigate={navigate} selectedId={selectedId} initialSheet={id === 'AC09'} pathForDetail={(detailId, classId) => `/__ui-preview/${detailId}?classId=${encodeURIComponent(classId)}`} pathForStudent={(studentId) => `/__ui-preview/AC02?studentId=${encodeURIComponent(studentId)}`} />}
       </AppShell>}
       {id.startsWith('SC') && <AppShell route={routes.find((route) => route.id === id)!} tenant={selectedTenant} navigate={navigate} onLogout={() => undefined} preview previewNavigation={<>{(['SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as const).map((item) => <a key={item} href={`/__ui-preview/${item}`} aria-current={id === item ? 'page' : undefined}>{({ SC01: 'Lịch học', SC02: 'Phòng & tài nguyên', SC03: 'Tạo lịch', SC05: 'Chi tiết buổi', SC06: 'Lịch cá nhân' })[item]}</a>)}<a href="/__ui-preview/SC03?state=conflict">Xung đột mẫu</a></>}>

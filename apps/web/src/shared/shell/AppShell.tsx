@@ -41,7 +41,7 @@ function icon(id: string): AssetIconName {
 }
 
 function contentMeasure(id: string) {
-  if (['G01', 'OP01', 'AS01', 'PO01'].includes(id) || id.startsWith('BL')) return 'compact'
+  if (['G01', 'OP01', 'AS01', 'PO01', 'AC01', 'AC02', 'AC03', 'AC04'].includes(id) || id.startsWith('BL')) return 'compact'
   if (id.startsWith('AS')) return 'teaching'
   if (id.startsWith('PO')) return 'portal'
   if (id.startsWith('AU') || id.startsWith('GL')) return 'account'

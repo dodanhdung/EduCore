@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { Card, Header } from './AcademicMorePrimitives.tsx'
 import type { AcademicId, Assignment, Capabilities, ClassDetail, ClassRow, Course, Enrollment, Level, Page, Person, Student, Subject, Teacher } from './AcademicApi.ts'
 import { AcademicAdmission } from './AcademicAdmission.tsx'
 import { AcademicTeacherAssignment } from './AcademicTeacherAssignment.tsx'
+import { StudentListView, TeacherListView } from './AcademicPersonListView.tsx'
+import { StudentDetailView, TeacherDetailView } from './AcademicPersonDetailView.tsx'
+import { fromPersonPage, fromStudentDetail, fromTeacherDetail } from './AcademicPersonViewModel.ts'
 import './AcademicScreens.css'
 
 const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
@@ -44,10 +47,16 @@ function phaseFor(error: unknown): Phase {
 function date(value: string | null | undefined) { return value ? value.slice(0, 10) : '—' }
 function path(tenant: string, suffix: string) { return `/app/${encodeURIComponent(tenant)}/${suffix}` }
 
-export function AcademicProduction({ id, tenantId, token, selectedId, navigate }: {
-  id: AcademicId; tenantId: string; token: string; selectedId?: string; navigate: (next: string) => void
-}) {
+type AcademicProductionProps = { id: AcademicId; tenantId: string; token: string; selectedId?: string;
+  navigate: (next: string) => void; allowed?: readonly string[] }
+
+export function AcademicProduction(props: AcademicProductionProps) {
+  return <AcademicScope key={[props.tenantId, props.token, props.id, props.selectedId].join('\u0000')} {...props} />
+}
+
+function AcademicScope({ id, tenantId, token, selectedId, navigate, allowed }: AcademicProductionProps) {
   const [phase, setPhase] = useState<Phase>('loading')
+  const [loadedScope, setLoadedScope] = useState('')
   const [data, setData] = useState<Loaded | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities>(emptyCapabilities)
   const [query, setQuery] = useState('')
@@ -57,6 +66,31 @@ export function AcademicProduction({ id, tenantId, token, selectedId, navigate }
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [catalogTab, setCatalogTab] = useState<'subjects' | 'levels'>('subjects')
+  const requestScope = JSON.stringify([id, tenantId, token, selectedId, query, page, revision])
+  const formOpen = Boolean(form)
+  const formTrigger = useRef<HTMLElement | null>(null)
+  const profileDialog = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (formOpen && (id === 'AC01' || id === 'AC02' || id === 'AC03' || id === 'AC04')) {
+      profileDialog.current?.querySelector<HTMLElement>('input, select, button')?.focus()
+    }
+  }, [formOpen, id])
+
+  function closeForm() {
+    setForm(null)
+    queueMicrotask(() => { if (formTrigger.current?.isConnected) formTrigger.current.focus() })
+  }
+
+  function dialogKeys(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') { event.preventDefault(); if (!busy) closeForm(); return }
+    if (event.key !== 'Tab') return
+    const items = [...(profileDialog.current?.querySelectorAll<HTMLElement>('input:not(:disabled), select:not(:disabled), button:not(:disabled), [href]') ?? [])]
+    if (!items.length) return
+    const first = items[0], last = items[items.length - 1]
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }
 
   useEffect(() => {
     const abort = new AbortController()
@@ -65,7 +99,7 @@ export function AcademicProduction({ id, tenantId, token, selectedId, navigate }
     queueMicrotask(() => { if (!abort.signal.aborted) setPhase('loading') })
     void (async () => {
       try {
-        if ((id === 'AC02' || id === 'AC04' || id === 'AC08') && !selectedId) { setPhase('not-found'); return }
+        if ((id === 'AC02' || id === 'AC04' || id === 'AC08') && !selectedId) { setLoadedScope(requestScope); setPhase('not-found'); return }
         let next: Loaded
         if (id === 'AC05') {
           const [subjects, levels] = await Promise.all([
@@ -93,13 +127,13 @@ export function AcademicProduction({ id, tenantId, token, selectedId, navigate }
         if (id === 'AC02') scope.set('studentId', selectedId!)
         if (id === 'AC08') scope.set('classId', selectedId!)
         const caps = await request<Capabilities>(`/permissions/capabilities/current?${scope}`)
-        if (!abort.signal.aborted) { setData(next); setCapabilities(caps); setPhase('ready') }
+        if (!abort.signal.aborted) { setData(next); setCapabilities(caps); setLoadedScope(requestScope); setPhase('ready') }
       } catch (error) {
-        if (!abort.signal.aborted) { setData(null); setCapabilities(emptyCapabilities); setPhase(phaseFor(error)) }
+        if (!abort.signal.aborted) { setData(null); setCapabilities(emptyCapabilities); setLoadedScope(requestScope); setPhase(phaseFor(error)) }
       }
     })()
     return () => abort.abort()
-  }, [id, tenantId, token, selectedId, query, page, revision])
+  }, [id, tenantId, token, selectedId, query, page, revision, requestScope])
 
   function open(kind: FormKind, item?: Record<string, unknown>) {
     const values: Record<string, string> = {}
@@ -140,18 +174,19 @@ export function AcademicProduction({ id, tenantId, token, selectedId, navigate }
     setBusy(true); setMessage('')
     try {
       await api.academic(tenantId, suffix, token, { method: create ? 'POST' : 'PATCH', body })
-      setForm(null); setMessage('Đã lưu theo xác nhận của máy chủ.'); setRevision((value) => value + 1)
+      closeForm(); setMessage('Đã lưu theo xác nhận của máy chủ.'); setRevision((value) => value + 1)
     } catch (error) { setMessage(safeErrorMessage(error)) }
     finally { setBusy(false) }
   }
 
-  if (phase !== 'ready' || !data) return <section className="academic-page" data-screen-id={id}>
+  const visiblePhase = loadedScope === requestScope ? phase : 'loading'
+  if (visiblePhase !== 'ready' || !data) return <section className="academic-page" data-screen-id={id}>
     <Header title={titles[id]} subtitle="Dữ liệu học vụ" />
-    <Card title="Trạng thái"><p role={phase === 'loading' ? 'status' : 'alert'}>{phase === 'loading' ? 'Đang tải…'
-      : phase === 'forbidden' ? 'Bạn không có quyền xem dữ liệu này.'
-        : phase === 'not-found' ? 'Không tìm thấy hồ sơ trong phạm vi được cấp.'
-          : phase === 'unauthenticated' ? 'Phiên đăng nhập đã hết hạn.' : 'Không thể tải dữ liệu.'}</p>
-      {phase === 'error' && <button onClick={() => setRevision((value) => value + 1)}>Thử lại</button>}</Card>
+    <Card title="Trạng thái"><p role={visiblePhase === 'loading' ? 'status' : 'alert'}>{visiblePhase === 'loading' ? 'Đang tải…'
+      : visiblePhase === 'forbidden' ? 'Bạn không có quyền xem dữ liệu này.'
+        : visiblePhase === 'not-found' ? 'Không tìm thấy hồ sơ trong phạm vi được cấp.'
+          : visiblePhase === 'unauthenticated' ? 'Phiên đăng nhập đã hết hạn.' : 'Không thể tải dữ liệu.'}</p>
+      {visiblePhase === 'error' && <button onClick={() => setRevision((value) => value + 1)}>Thử lại</button>}</Card>
   </section>
 
   const main = data.main
@@ -166,6 +201,49 @@ export function AcademicProduction({ id, tenantId, token, selectedId, navigate }
     : id === 'AC08' ? capabilities.classUpdate : false
   const pageKind = id === 'AC01' || id === 'AC02' ? 'student' : id === 'AC03' || id === 'AC04' ? 'teacher'
     : id === 'AC07' || id === 'AC08' ? 'class' : id === 'AC06' ? 'course' : catalogTab === 'subjects' ? 'subject' : 'level'
+  const canGo = (screen: string) => allowed === undefined || allowed.includes(screen)
+  const formPanel = form && <div className="academic-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) closeForm() }}>
+    <div className="academic-profile-dialog" ref={profileDialog} role="dialog" aria-modal="true" aria-label={form.target ? 'Chỉnh sửa hồ sơ' : 'Tạo hồ sơ'} onKeyDown={dialogKeys}>
+    <Card title={form.target ? 'Chỉnh sửa' : 'Tạo mới'}><div className="academic-form">
+    {message && <p role="alert" className="academic-error">{message}</p>}
+    {formFields(form, data).map(({ key, options }) => <label className="academic-field" key={key}><span>{fieldNames[key]}</span>
+      {key === 'active' ? <select value={form.values[key]} onChange={(event) => setForm({ ...form, values: { ...form.values, active: event.target.value } })}>
+        <option value="true">Hoạt động</option><option value="false">Đã ẩn</option></select>
+        : options ? <select value={form.values[key]} onChange={(event) => setForm({ ...form, values: { ...form.values, [key]: event.target.value } })}>
+        <option value="">Chọn</option>{options.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select>
+        : <input type={key.endsWith('Date') || key === 'dateOfBirth' ? 'date' : key === 'capacity' || key === 'sortOrder' ? 'number' : 'text'}
+          value={form.values[key]} onChange={(event) => setForm({ ...form, values: { ...form.values, [key]: event.target.value } })} />}</label>)}
+    <div className="academic-dialog-actions"><button disabled={busy} onClick={closeForm}>Hủy</button>
+      <button className="academic-primary" disabled={busy} onClick={() => { void submit() }}>Lưu</button></div></div></Card></div></div>
+
+  if (id === 'AC01' && listPage) return <section data-screen-id={id}>
+    <StudentListView model={fromPersonPage('student', listPage as Page<Person>, query)}
+      onQueryChange={(next) => { setQuery(next); setPage(1) }} onPageChange={setPage}
+      onCreate={canCreate ? () => { formTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; open('student') } : undefined}
+      onOpen={canGo('AC02') ? (recordId) => navigate(path(tenantId, `students/${encodeURIComponent(recordId)}`)) : undefined} />
+    {message && !form && <p role="status" className="academic-hint">{message}</p>}{formPanel}</section>
+  if (id === 'AC03' && listPage) return <section data-screen-id={id}>
+    <TeacherListView model={fromPersonPage('teacher', listPage as Page<Person>, query)}
+      onQueryChange={(next) => { setQuery(next); setPage(1) }} onPageChange={setPage}
+      onCreate={canCreate ? () => { formTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; open('teacher') } : undefined}
+      onOpen={canGo('AC04') ? (recordId) => navigate(path(tenantId, `teachers/${encodeURIComponent(recordId)}`)) : undefined} />
+    {message && !form && <p role="status" className="academic-hint">{message}</p>}{formPanel}</section>
+  if (id === 'AC02' && person) return <section data-screen-id={id}>
+    <StudentDetailView model={fromStudentDetail(person as Student, capabilities.tenantTimezone || 'Asia/Ho_Chi_Minh')}
+      onEdit={canEdit ? () => { formTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; open('student', person as Record<string, unknown>) } : undefined}
+      onBack={canGo('AC01') ? () => navigate(path(tenantId, 'students')) : undefined}
+      onOpenClass={canGo('AC08') ? (classId) => navigate(path(tenantId, `classes/${encodeURIComponent(classId)}`)) : undefined}
+      operation={<AcademicAdmission tenantId={tenantId} token={token} studentId={person.id}
+        enrollments={(person as Student).enrollments} onChanged={() => setRevision((value) => value + 1)} />} />
+    {message && !form && <p role="status" className="academic-hint">{message}</p>}{formPanel}</section>
+  if (id === 'AC04' && person) return <section data-screen-id={id}>
+    <TeacherDetailView model={fromTeacherDetail(person as Teacher, capabilities.tenantTimezone || 'Asia/Ho_Chi_Minh')}
+      onEdit={canEdit ? () => { formTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; open('teacher', person as Record<string, unknown>) } : undefined}
+      onBack={canGo('AC03') ? () => navigate(path(tenantId, 'teachers')) : undefined}
+      onOpenClass={canGo('AC08') ? (classId) => navigate(path(tenantId, `classes/${encodeURIComponent(classId)}`)) : undefined}
+      operation={<AcademicTeacherAssignment tenantId={tenantId} token={token} teacherId={person.id}
+        onChanged={() => setRevision((value) => value + 1)} />} />
+    {message && !form && <p role="status" className="academic-hint">{message}</p>}{formPanel}</section>
   return <section className="academic-page" data-screen-id={id}>
     <Header title={titles[id]} subtitle="Dữ liệu hiện hành trong phạm vi được cấp"
       action={canCreate ? 'Tạo mới' : canEdit ? 'Chỉnh sửa' : undefined}

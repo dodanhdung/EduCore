@@ -122,6 +122,7 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
     : result.route.id === 'GL01' ? <NotificationProduction key={tenant.id} tenantId={tenant.id} token={session!.accessToken} /> : (['AC01', 'AC02', 'AC03', 'AC04', 'AC05', 'AC06', 'AC07', 'AC08'] as string[]).includes(result.route.id)
       ? <AcademicProduction key={`${tenant.id}:${result.route.id}:${result.params.studentId ?? result.params.teacherId ?? result.params.classId ?? ''}`}
           id={result.route.id as AcademicId} tenantId={tenant.id} token={session!.accessToken} navigate={navigate}
+          allowed={session!.navigation?.screenIds ?? []}
           selectedId={result.params.studentId ?? result.params.teacherId ?? result.params.classId} />
       : (['SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04'] as string[]).includes(result.route.id)
         ? <SchedulingAttendanceProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
