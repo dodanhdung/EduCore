@@ -1,0 +1,30 @@
+.root { max-width: 960px; min-width: 0; }
+.primaryAction a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 18px; border-radius: 8px; color: white; background: var(--ec-primary); font-weight: 700; text-decoration: none; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.metrics > div { min-width: 0; }
+.metrics > div > section { min-height: 84px; padding: 16px; }
+.metrics h2 { font-size: 12px; line-height: 16px; font-weight: 500; }
+.metrics strong { font-size: 28px; }
+.metrics strong:not([data-availability="available"]) { font-size: 14px; line-height: 1.4; }
+.metrics > div:first-child > section { background: var(--ec-primary-soft); }
+.metrics > div:nth-child(2) > section { background: var(--ec-warning-soft); }
+.panel { min-width: 0; padding: 20px; margin-bottom: 20px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); }
+.panel h2 { margin: 0 0 10px; font-size: 18px; }
+.panel p { margin: 0 0 10px; color: var(--ec-secondary); overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.actions a, .mobileRows a { display: inline-flex; align-items: center; min-height: 44px; }
+.notice { padding: 10px 12px; border-radius: 8px; color: var(--ec-primary-hover); background: var(--ec-primary-soft); font-size: 12px; }
+.secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.secondary li { margin-bottom: 10px; overflow-wrap: anywhere; }
+.secondary li a { margin-left: 10px; }
+.mobileRows { display: none; }
+@media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .metrics, .secondary { grid-template-columns: 1fr; }
+  .panel { padding: 16px; }
+  .panel > div:has(table) { display: none; }
+  .mobileRows { display: grid; gap: 12px; }
+  .mobileRows article { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--ec-border); border-radius: 12px; }
+  .mobileRows h3, .mobileRows p { margin: 0; overflow-wrap: anywhere; }
+  .mobileRows a { justify-self: start; }
+}

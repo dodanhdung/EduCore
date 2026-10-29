@@ -1,0 +1,25 @@
+.root { width: 100%; max-width: 960px; min-width: 0; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.metrics > section { min-height: 104px; padding: 16px; }
+.metrics > section h2 { font-size: 12px; line-height: 16px; font-weight: 500; }
+.metrics > section strong { font-size: 28px; }
+.metrics > section strong:not([data-availability="available"]) { font-size: 14px; line-height: 1.4; }
+.panel { min-width: 0; padding: 20px; margin-bottom: 20px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); }
+.panel h2 { margin: 0 0 4px; font-size: 18px; }
+.panel p { margin: 0 0 12px; color: var(--ec-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.panel > section { padding: 12px 0 0; border: 0; }
+.panel > section p { margin-top: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions button { min-height: 44px; }
+.mobileRows { display: none; }
+@media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .metrics { grid-template-columns: 1fr; }
+  .panel { padding: 16px; }
+  .panel > div:has(table) > div[role="region"] { display: none; }
+  .mobileRows { display: grid; gap: 12px; }
+  .mobileRows article { padding: 16px; border: 1px solid var(--ec-border); border-radius: 12px; }
+  .mobileRows h3 { margin: 0 0 8px; overflow-wrap: anywhere; }
+  .mobileRows p { margin: 0 0 8px; }
+  .actions { margin-top: 12px; }
+}

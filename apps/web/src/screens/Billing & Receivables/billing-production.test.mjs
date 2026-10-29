@@ -126,6 +126,68 @@ async function billingFixture(run) {
   try { await run({ container, render }) }
   finally { await act(async () => fixtureRoot.unmount()); container.remove() }
 }
+test('BL03 page change keeps the visible period and generation write target in sync', async () => {
+  await billingFixture(async ({ container, render }) => {
+    const calls = []
+    const period = (id, monthStart) => ({ id, monthStart, timezone: 'Asia/Ho_Chi_Minh', status: 'OPEN',
+      draftCount: 0, issuedCount: 0, generations: [] })
+    const api = new GateApiClient('', async (url, options) => {
+      const address = String(url)
+      if (options.method === 'POST') { calls.push(address); return Response.json({ id: 'generation-b', invoiceId: null, status: 'NEEDS_INFORMATION', source: { missing: [] } }) }
+      if (address.includes('/billing/students')) return Response.json(gatePage([{ id: 'student-a', name: 'Lan', code: 'ST-01' }]))
+      const next = address.includes('page=2')
+      return Response.json(gatePage([period(next ? 'period-b' : 'period-a', next ? '2026-10-01' : '2026-09-01')], next ? 2 : 1, 21))
+    })
+    await render({ id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} })
+    const selected = () => container.querySelector('label select')
+    assert.equal(selected().value, 'period-a')
+    await act(async () => {
+      container.querySelector('nav[aria-label="Phân trang Các kỳ học phí trong trang"] button:last-child').click()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    assert.equal(selected().value, 'period-b')
+    assert.match(container.textContent, /2026-10-01/)
+    assert.doesNotMatch(container.textContent, /2026-09-01/)
+    const student = [...container.querySelectorAll('select')].find(node => [...node.options].some(option => option.value === 'student-a'))
+    await act(async () => {
+      student.value = 'student-a'; student.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+      setInput(container.querySelector('textarea'), 'Tính kỳ đã chọn')
+    })
+    const create = [...container.querySelectorAll('button')].find(node => node.textContent === 'Tạo dự thảo')
+    assert.equal(create.disabled, false)
+    await act(async () => create.click())
+    assert.equal(calls.length, 1)
+    assert.match(calls[0], /\/billing\/periods\/period-b\/students\/student-a\/generations$/)
+  })
+})
+test('BL03 refreshes an opened period before allowing it as a generation target', async () => {
+  await billingFixture(async ({ container, render }) => {
+    let opened = false
+    const calls = []
+    const period = id => ({ id, monthStart: id === 'period-new' ? '2026-10-01' : '2026-09-01',
+      timezone: 'Asia/Ho_Chi_Minh', status: 'OPEN', draftCount: 0, issuedCount: 0, generations: [] })
+    const api = new GateApiClient('', async (url, options) => {
+      const address = String(url)
+      if (options.method === 'POST') { calls.push(address); opened = true; return Response.json({ id: 'period-new' }) }
+      if (address.includes('/billing/students')) return Response.json(gatePage([]))
+      return Response.json(gatePage(opened ? [period('period-new'), period('period-old')] : [period('period-old')]))
+    })
+    await render({ id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} })
+    const panel = container.querySelector('.billing-open-period')
+    panel.open = true
+    const month = panel.querySelector('input[type="month"]')
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+    await act(async () => {
+      setter.call(month, '2026-10'); month.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+      setInput(panel.querySelector('textarea'), 'Mở kỳ tháng mới')
+    })
+    const open = [...panel.querySelectorAll('button')].find(node => node.textContent === 'Mở kỳ')
+    assert.equal(open.disabled, false)
+    await act(async () => { open.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.deepEqual(calls, ['/api/v1/tenants/gate-a/billing/periods'])
+    assert.equal(container.querySelector('label select').value, 'period-new')
+  })
+})
 for (const status of [401, 403]) test('Gate0 BL03 loaded content and controls are cleared on ' + status, async () => {
   await billingFixture(async ({ container, render }) => {
     let denied = false

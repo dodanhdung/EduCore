@@ -30,7 +30,11 @@
 .accountMenuItems a, .accountMenuItems button { display: flex; align-items: center; min-height: 44px; width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ec-foreground); font-size: 13px; text-align: left; text-decoration: none; }
 .accountMenuItems a:hover, .accountMenuItems button:hover { background: var(--ec-surface-muted); }
 .accountMenuItems button { color: var(--ec-danger); }
-.content { min-width: 0; width: 100%; max-width: 1600px; margin: 0 auto; padding: 24px 32px 64px; }
+.content { --page-content-width: 1200px; min-width: 0; width: 100%; max-width: calc(var(--page-content-width) + 64px); margin: 0 auto; padding: 24px 32px 64px; }
+.content[data-content-measure="compact"] { --page-content-width: 960px; }
+.content[data-content-measure="teaching"] { --page-content-width: 1100px; }
+.content[data-content-measure="portal"] { --page-content-width: 1120px; }
+.content[data-content-measure="account"] { --page-content-width: 1080px; }
 .breadcrumb { margin: 0 0 24px; color: var(--ec-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .skipLink { position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%); padding: 12px; border: 1px solid var(--ec-primary); border-radius: 8px; background: var(--ec-surface); }
 .skipLink:focus { transform: none; }

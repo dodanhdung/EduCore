@@ -1,0 +1,18 @@
+.root { width: 100%; max-width: 960px; min-width: 0; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.metrics > section { min-height: 106px; padding: 16px; }
+.metrics > section h2 { font-size: 12px; line-height: 16px; font-weight: 500; }
+.metrics > section strong { font-size: 26px; }
+.metrics > section strong:not([data-availability="available"]) { font-size: 14px; line-height: 1.4; }
+.panel { min-width: 0; padding: 20px; margin-bottom: 20px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); }
+.panel h2 { margin: 0 0 4px; font-size: 18px; }
+.panel p { margin: 0 0 12px; color: var(--ec-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.panel small { display: block; color: var(--ec-muted); font-size: 11px; overflow-wrap: anywhere; }
+.periodSelect { display: grid; gap: 6px; max-width: 320px; margin: 16px 0; }
+.periodSelect select { min-height: 44px; padding: 8px; border: 1px solid var(--ec-border); border-radius: 8px; }
+.selected { padding: 12px; margin-bottom: 16px; border-radius: 8px; background: var(--ec-surface-muted); overflow-wrap: anywhere; }
+.selected p { margin: 8px 0 0; }
+.panel button { min-height: 44px; }
+.root .panel table { min-width: 600px; }
+@media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .metrics { grid-template-columns: 1fr; }.panel { padding: 16px; } }

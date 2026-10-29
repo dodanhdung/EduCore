@@ -59,7 +59,7 @@ function sessionRows(rows: Session[], studentId: string, due: Due[] = []): Porta
   return rows.filter(row => row.status === 'CONFIRMED' || row.status === 'CANCELLED').map(row => ({
     id: row.id, classId: row.classId, className: row.className, teacherId: row.teacherId,
     studentIds: studentId ? [studentId] : [], startsAt: row.startsAt, endsAt: row.endsAt,
-    room: row.roomId ?? (row.deliveryMode === 'ONLINE' ? 'Trực tuyến' : '—'),
+    room: row.deliveryMode === 'ONLINE' ? 'Trực tuyến' : 'Phòng chưa cập nhật',
     status: row.status as 'CONFIRMED' | 'CANCELLED',
     attendance: dueById.has(row.id) ? dueById.get(row.id) ? 'CONFIRMED' : 'PENDING' : 'NOT_DUE',
   }))
@@ -129,6 +129,11 @@ export function PortalProduction({ id, tenantId, token, viewerId, selectedId, in
           const teachingState = assignments.state === 'ready' && classes.state === 'ready' ? 'ready'
             : assignments.state === 'forbidden' || classes.state === 'forbidden' ? 'forbidden' : 'error'
           data.sectionStates = { attendance: attendance.state, teaching: teachingState, grading: grading.state }
+          data.completeness = {
+            calendar: calendar.total <= calendar.items.length,
+            attendance: attendance.state === 'ready' && attendance.value.total <= attendance.value.items.length,
+            grading: grading.state === 'ready' && grading.value.total <= grading.value.items.length,
+          }
           truncated = calendar.total > calendar.items.length
             || attendance.state === 'ready' && attendance.value.total > attendance.value.items.length
             || grading.state === 'ready' && grading.value.total > grading.value.items.length

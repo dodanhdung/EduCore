@@ -40,7 +40,7 @@ test('AS01–AS07 dùng đúng bảy route có guard', () => {
   for (let i = 0; i < 7; i++) { const id = `AS0${i + 1}`; const path = `/app/demo${expected[i]}`; assert.equal(matchRoute(path)?.route.id, id); assert.equal(resolveRoute(path, { status: 'unauthenticated' }).kind, 'unauthenticated'); assert.equal(routes.filter((r) => r.id === id).length, 1) }
 })
 test('màn hình production không nhập dữ liệu mẫu', () => { for (const Screen of [TeacherAssignmentListScreen, AssignmentDetailScreen, GradingQueueScreen, GradeSubmissionScreen, MyAssignmentsScreen, MyAssignmentDetailScreen]) assert.doesNotMatch(renderToStaticMarkup(React.createElement(Screen)), /Trần Minh Anh|Bài tập chương 3/) })
-test('AS01 chọn bản ghi không đầu tiên', async () => { let id; const v = mount(TeacherAssignmentListScreen, { data, onOpen: (value) => { id = value } }); try { await v.render(); const links = [...v.document.querySelectorAll('.as-table .as-link')]; await v.click(links[1]); assert.equal(id, 'assignment-hinh-hoc') } finally { await v.close() } })
+test('AS01 chọn bản ghi không đầu tiên', async () => { let id; const v = mount(TeacherAssignmentListScreen, { data, onOpen: (value) => { id = value } }); try { await v.render(); const links = [...v.document.querySelectorAll('table .as-link')]; await v.click(links[1]); assert.equal(id, 'assignment-hinh-hoc') } finally { await v.close() } })
 test('AS03 và AS05 không thay ID sai bằng bản ghi đầu tiên', () => { for (const [Screen, key] of [[AssignmentDetailScreen, 'assignmentId'], [GradeSubmissionScreen, 'submissionId']]) { const html = renderToStaticMarkup(React.createElement(Screen, { data, selectedId: `invalid-${key}` })); assert.match(html, /Không tìm thấy/); assert.doesNotMatch(html, /Trần Minh Anh|Bài tập chương 3/) } })
 test('AS03 trình bày học sinh chưa nộp trong phạm vi người nhận', () => { const html = renderToStaticMarkup(React.createElement(AssignmentDetailScreen, { data, selectedId: 'assignment-chuong-3' })); assert.match(html, /Trần Bảo Ngọc/); assert.match(html, /Chưa nộp/); assert.doesNotMatch(html, /student-other/) })
 test('AS02 phân biệt bước xem lại và không tuyên bố xuất bản', async () => { const v = mount(AssignmentEditorScreen, { data, selectedId: 'assignment-draft' }); try { await v.render(); await v.click(v.document.querySelector('.as-heading button')); assert.ok(v.document.querySelector('[role="dialog"]')); assert.match(v.document.querySelector('[role="dialog"]').textContent, /PENDING_API/); assert.doesNotMatch(v.document.body.textContent, /Đã giao bài|Đã gửi thông báo/) } finally { await v.close() } })
@@ -121,7 +121,8 @@ test('AS01 đếm hạn trong 72 giờ theo instant và không đoán khi thiế
   assert.equal(upcomingDeadlineCount(cases), undefined)
   assert.equal(upcomingDeadlineCount(cases, 'invalid'), undefined)
   const html = renderToStaticMarkup(React.createElement(TeacherAssignmentListScreen, { data }))
-  assert.match(html, /SẮP ĐẾN HẠN \(72 GIỜ\)<\/span><strong>—<\/strong>/)
+  assert.match(html, /Sắp đến hạn \(72 giờ\)/)
+  assert.match(html, /Chưa có dữ liệu từ API/)
 })
 
 test('AS01/AS06 chỉ hiện nhãn mẫu khi preview được bật', () => {

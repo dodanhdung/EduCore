@@ -40,6 +40,14 @@ function icon(id: string): AssetIconName {
     : /^SC|^AT/.test(id) ? 'classes' : /^AC/.test(id) ? 'people' : /^OP|^GL|^AU/.test(id) ? 'settings' : 'overview'
 }
 
+function contentMeasure(id: string) {
+  if (['G01', 'OP01', 'AS01', 'PO01'].includes(id) || id.startsWith('BL')) return 'compact'
+  if (id.startsWith('AS')) return 'teaching'
+  if (id.startsWith('PO')) return 'portal'
+  if (id.startsWith('AU') || id.startsWith('GL')) return 'account'
+  return 'standard'
+}
+
 function ShellLink({ to, navigate, children, active, onFollow }: {
   to: string; navigate: (path: string) => void; children: ReactNode; active?: boolean; onFollow?: () => void
 }) {
@@ -132,7 +140,7 @@ export function AppShell({ route, tenant, navigate, onLogout, children, preview 
           </details>
         </div>}
       </header>
-      <main id="main-content" tabIndex={-1} className={`content ${styles.content}`}>
+      <main id="main-content" tabIndex={-1} className={`content ${styles.content}`} data-content-measure={contentMeasure(route.id)}>
         <p className={`breadcrumb ${styles.breadcrumb}`}>{tenant.name} / {route.name}</p>{children}
       </main>
       <nav className={`mobile-nav ${styles.mobileNav}`} aria-label="Điều hướng di động">

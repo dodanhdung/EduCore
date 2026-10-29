@@ -30,15 +30,15 @@ export function StatusBadge({ label, tone = 'neutral', domain, className }: {
 
 export type MetricAvailability =
   | { kind: 'available'; display: string }
-  | { kind: 'unavailable' | 'forbidden' | 'pending-api'; display?: never }
+  | { kind: 'unavailable' | 'forbidden' | 'pending-api' | 'partial'; display?: never }
 
 export function MetricCard({ label, value, detail, icon, action }: {
   label: string; value: MetricAvailability; detail?: ReactNode;
   icon?: AssetIconName | { src: string; alt?: string }; action?: ReactNode
 }) {
-  const fallback = { unavailable: 'Chưa có dữ liệu', forbidden: 'Chưa có quyền xem', 'pending-api': 'Chưa có dữ liệu từ API' }
+  const fallback = { unavailable: 'Chưa có dữ liệu', forbidden: 'Chưa có quyền xem', 'pending-api': 'Chưa có dữ liệu từ API', partial: 'Chưa đủ dữ liệu' }
   return <section className={styles.metric}><div className={styles.metricTop}><div className={styles.metricText}>
-    <h2>{label}</h2><strong>{value.kind === 'available' ? value.display : fallback[value.kind]}</strong></div>
+    <h2>{label}</h2><strong data-availability={value.kind}>{value.kind === 'available' ? value.display : fallback[value.kind]}</strong></div>
     {icon && <span className={styles.metricIcon} aria-hidden="true">{typeof icon === 'string'
       ? <AssetIcon name={icon} /> : <img src={icon.src} alt={icon.alt ?? ''} />}</span>}</div>
     {detail && <div className={styles.metricDetail}>{detail}</div>}{action && <div className={styles.metricAction}>{action}</div>}

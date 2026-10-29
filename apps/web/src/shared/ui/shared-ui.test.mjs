@@ -36,7 +36,7 @@ test('StatusBadge requires label and domain; long text remains in DOM', () => {
 test('MetricCard distinguishes real zero, unavailable, forbidden and large VND string', () => {
   const zero = doc(e(ui.MetricCard, { label: 'Số lượng', value: { kind: 'available', display: '0' } }))
   assert.equal(zero.querySelector('strong')?.textContent, '0')
-  for (const kind of ['unavailable', 'forbidden', 'pending-api']) {
+  for (const kind of ['unavailable', 'forbidden', 'pending-api', 'partial']) {
     const d = doc(e(ui.MetricCard, { label: 'Số lượng', value: { kind } }))
     assert.notEqual(d.querySelector('strong')?.textContent, '0')
   }

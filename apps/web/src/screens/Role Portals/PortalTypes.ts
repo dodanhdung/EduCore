@@ -12,6 +12,7 @@ export function sectionMessage(state: PortalSectionState | undefined, label: str
 }
 export type PortalData = {
   availability?: { schedule: boolean; assignments: boolean; grades: boolean; leave: boolean };
+  completeness?: { calendar: boolean; attendance: boolean; grading: boolean };
   sectionStates?: Partial<Record<PortalSection, PortalSectionState>>;
   scope?: { viewerId: string; tenantId: string };
   sampleNow: string; timeZone: string; teacherId: string; teacherName: string; studentId: string; studentName: string;

@@ -4,6 +4,8 @@ import type { Session } from '../../auth.ts'
 import { ConfirmDialog } from '../Authentication & Shared/BatchPrimitives.tsx'
 import { Badge, Card, Empty, Heading, StateMessage, Table } from './ManagementPrimitives.tsx'
 import type { ManagementId, ViewState } from './ManagementTypes.ts'
+import { MembersView } from './OP01/MembersView.tsx'
+import { fromMemberPage } from './OP01/MembersViewModel.ts'
 
 type Scope = 'TENANT' | 'CLASS' | 'STUDENT'
 type Assignment = { id: string; roleId: string; roleCode: string; scopeKind: Scope; classId: string | null; studentId: string | null; assignedAt: string }
@@ -27,9 +29,13 @@ function errorState(error: unknown): ViewState {
   return 'error'
 }
 
-export function ProductionManagement({ id, tenantId, selectedId, session, open }: {
+type ProductionProps = {
   id: ManagementId; tenantId: string; selectedId?: string; session: Session; open: (screen: string, recordId?: string) => void
-}) {
+}
+export function ProductionManagement(props: ProductionProps) {
+  return <ProductionManagementScope key={props.id === 'OP01' ? JSON.stringify([props.tenantId, props.session.accessToken]) : 'legacy'} {...props} />
+}
+function ProductionManagementScope({ id, tenantId, selectedId, session, open }: ProductionProps) {
   const [page, setPage] = useState(1)
   const [data, setData] = useState<Page<Member> | Page<Link> | Member | null>(null)
   const [state, setState] = useState<ViewState>('loading')
@@ -81,7 +87,7 @@ export function ProductionManagement({ id, tenantId, selectedId, session, open }
   if (state !== 'ready') return <div className="management"><StateMessage state={state} /></div>
   return <div className="management" data-screen-id={id}>
     {message && <p role="status" className="mo-warning">{message}</p>}
-    {id === 'OP01' && <MemberList data={data as Page<Member>} page={page} setPage={setPage} busy={busy} submit={submit} message={message}
+    {id === 'OP01' && <MemberList data={data as Page<Member>} setPage={setPage} busy={busy} submit={submit} message={message}
       open={session.navigation?.screenIds.includes('OP02') ? open : undefined} />}
     {id === 'OP02' && <MemberDetail data={data as Member} roles={roles} busy={busy} submit={submit} open={open} />}
     {id === 'OP03' && <RelationshipList data={data as Page<Link>} page={page} setPage={setPage} parents={parents}
@@ -94,21 +100,12 @@ function Pager({ page, total, size, setPage }: { page: number; total: number; si
     <span>Trang {page} · {total} bản ghi</span><button disabled={page * size >= total} onClick={() => setPage(page + 1)}>Sau</button></div>
 }
 
-function MemberList({ data, page, setPage, busy, submit, open, message }: { data: Page<Member>; page: number; setPage: (n: number) => void; busy: boolean; submit: (action: Action) => Promise<boolean | undefined>; open?: (screen: string, id?: string) => void; message: string }) {
-  const [query, setQuery] = useState(''), [status, setStatus] = useState('')
+function MemberList({ data, setPage, busy, submit, open, message }: { data: Page<Member>; setPage: (n: number) => void; busy: boolean; submit: (action: Action) => Promise<boolean | undefined>; open?: (screen: string, id?: string) => void; message: string }) {
   const [creating, setCreating] = useState(false), [disabling, setDisabling] = useState<Member | null>(null)
-  const rows = data.items.filter((m) => (!status || m.status === status) && `${m.displayName} ${m.email} ${m.id}`.toLowerCase().includes(query.toLowerCase()))
-  return <><Heading title="Tài khoản người dùng" detail="Quản lý thành viên trong trung tâm hiện tại"><button onClick={() => setCreating(true)}>Tạo thành viên</button></Heading>
-    <Card title="Lọc và tìm kiếm" detail="Bộ lọc áp dụng cho các thành viên trong trang hiện tại."><div className="mo-filters"><label>Tìm kiếm trong trang<input type="search" placeholder="Tên, email hoặc mã thành viên…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-      <label>Trạng thái<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang hoạt động</option><option value="PENDING_ACTIVATION">Chờ kích hoạt</option><option value="DISABLED">Đã vô hiệu hóa</option></select></label>
-      {(query || status) && <button onClick={() => { setQuery(''); setStatus('') }}>Xóa bộ lọc</button>}</div></Card>
-    <Card title="Danh sách thành viên" detail={`${data.total} thành viên · Trang ${page}`}>
-      {rows.length ? <Table caption="Danh sách thành viên" columns={['Tên', 'Email', 'Vai trò hiện hành', 'Trạng thái', 'Thao tác']} rows={rows.map((m) => ({ id: m.id, cells: [m.displayName, m.email,
-        m.assignments.map((a) => `${a.roleCode} · ${a.scopeKind}`).join(', ') || 'Chưa gán', <Badge key="status" value={m.status} />,
-        <div key="actions" className="mo-actions">{open ? <button onClick={() => open('OP02', m.id)}>Xem</button> : <span>Chi tiết chờ duyệt điều hướng</span>}
-          {m.status !== 'DISABLED' && <button className="mo-danger" disabled={busy} onClick={() => setDisabling(m)}>Vô hiệu hóa</button>}</div>] }))} /> : <Empty filtered={!!(query || status)} />}
-      <Pager page={page} total={data.total} size={data.pageSize} setPage={setPage} /></Card>
-    <Card title="Kích hoạt tài khoản" detail="Thành viên mới bắt đầu ở trạng thái chờ kích hoạt."><p>Người dùng yêu cầu OTP tại <a href="/activate-account">Kích hoạt tài khoản</a> để đặt mật khẩu.</p></Card>
+  return <><MembersView model={fromMemberPage(data)} action={<button type="button" onClick={() => setCreating(true)}>Tạo thành viên</button>}
+    onOpen={open ? id => open('OP02', id) : undefined}
+    onDisable={id => setDisabling(data.items.find(row => row.id === id) ?? null)}
+    onPageChange={setPage} />
     {creating && <ConfirmDialog title="Tạo thành viên" detail="Thành viên được tạo trong trung tâm hiện tại và tự kích hoạt qua OTP email." busy={busy} onClose={() => setCreating(false)}>
       <form onSubmit={async e => {
         e.preventDefault(); const f = new FormData(e.currentTarget)

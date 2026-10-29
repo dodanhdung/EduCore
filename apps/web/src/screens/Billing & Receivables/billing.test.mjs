@@ -149,7 +149,7 @@ test('BL03 clears recompute reason and review when generation or period changes'
     await view.click(button('Tính lại hóa đơn nháp'))
     assert.equal(view.document.querySelector('[role="dialog"] textarea').value, '')
     await view.input(view.document.querySelector('[role="dialog"] textarea'), 'Lý do cũ')
-    await view.click([...view.document.querySelectorAll('.billing-table tbody button')].find((item) => item.closest('tr').textContent.includes('G1')))
+    await view.click([...view.document.querySelectorAll('[role=region][aria-label="Lịch sử generation trong kỳ"] tbody button')].find((item) => item.closest('tr').textContent.includes('G1')))
     assert.equal(view.document.querySelector('[role="dialog"]'), null)
     assert.match(view.document.body.textContent, /Generation G1 · Lịch sử/)
     await view.input(view.document.querySelector('select'), '2026-08')

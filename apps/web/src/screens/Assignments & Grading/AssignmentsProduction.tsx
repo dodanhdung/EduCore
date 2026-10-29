@@ -3,8 +3,8 @@ import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { tenantPath } from '../../routes.ts'
 import { validScore, validateSelection } from './AssignmentTypes.ts'
 import { Badge, Button, Card, Notice, Page, State } from './AssignmentPrimitives.tsx'
-import { EmptyState } from '../Authentication & Shared/BatchPrimitives.tsx'
-import { Table } from '../Management & Operations/ManagementPrimitives.tsx'
+import { AssignmentListView } from './AS01/AssignmentListView.tsx'
+import { fromAssignmentRead } from './AS01/AssignmentListViewModel.ts'
 
 type Assignment = { id: string; title: string; description: string; class_id: string | null; deadline_at: string; priority: number; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; revision: number }
 type Recipient = { id: string; studentName: string; assignment_id: string; revoked_at: string | null; deadline_override_at: string | null; submission_status: string | null; current_version_id: string | null }
@@ -53,8 +53,7 @@ function AssignmentsScope(props: Props) {
   const [mine, setMine] = useState<Mine[]>([]), [queue, setQueue] = useState<Queue[]>([])
   const [recipients, setRecipients] = useState<Recipient[]>([]), [histories, setHistories] = useState<Record<string, History>>({})
   const [gradeItem, setGradeItem] = useState<GradeItem | null>(null)
-  const [search, setSearch] = useState(''), [status, setStatus] = useState('all')
-  const [classFilter, setClassFilter] = useState('')
+  const [status, setStatus] = useState('all')
   const [title, setTitle] = useState(''), [description, setDescription] = useState(''), [classId, setClassId] = useState(''), [deadline, setDeadline] = useState(''), [priority, setPriority] = useState('3')
   const [score, setScore] = useState(''), [feedback, setFeedback] = useState(''), [reason, setReason] = useState('')
   const [answer, setAnswer] = useState(''), [files, setFiles] = useState<File[]>([]), [busy, setBusy] = useState(false)
@@ -84,7 +83,7 @@ function AssignmentsScope(props: Props) {
     if (status === 401 || status === 403) {
       setTitle(''); setDescription(''); setClassId(''); setDeadline(''); setPriority('3')
       setScore(''); setFeedback(''); setReason(''); setAnswer(''); setFiles([]); setEditing(false)
-      setSearch(''); setStatus('all'); setClassFilter(''); setMessage('')
+      setStatus('all'); setMessage('')
       createdDraft.current = null; pendingSubmission.current = null
     }
   }
@@ -173,27 +172,11 @@ function AssignmentsScope(props: Props) {
     {readFailure.retryable && <Button onClick={() => void reload()}>Thử lại</Button>}</Page>
   const alerts = <>{error && <p role="alert" className="as-error">{error}</p>}{message && <Notice>{message}</Notice>}</>
 
-  if (props.id === 'AS01') {
-    const rows = assignments.filter(a => `${a.title} ${className(a.class_id)}`.toLocaleLowerCase('vi').includes(search.toLocaleLowerCase('vi')) && (status === 'all' || a.status === status) && (!classFilter || a.class_id === classFilter))
-    const create = props.allowed?.includes('AS02') ? <Button onClick={() => navigate(teacherPath('assignments/new'))}>Tạo bài tập</Button> : undefined
-    const filtered = Boolean(search || status !== 'all' || classFilter)
-    return <Page title="Danh sách bài tập" subtitle="Bài tập trong các lớp được phân công" action={create}>
-      {alerts}<Card title="Bài tập trong lớp phụ trách" subtitle="Tìm theo tiêu đề, lớp hoặc trạng thái."><div className="as-filters">
-        <label className="as-field">Tìm kiếm<input type="search" placeholder="Tìm bài tập…" value={search} onChange={e => setSearch(e.target.value)} /></label>
-        <label className="as-field">Trạng thái<select value={status} onChange={e => setStatus(e.target.value)}><option value="all">Tất cả trạng thái</option><option value="DRAFT">Bản nháp</option><option value="PUBLISHED">Đã giao</option><option value="ARCHIVED">Đã lưu trữ</option></select></label>
-        <label className="as-field">Lớp<select value={classFilter} onChange={e => setClassFilter(e.target.value)}><option value="">Tất cả lớp</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-      </div></Card>
-      <Card title="Danh sách bài tập">{rows.length ? <div className="management"><Table caption="Danh sách bài tập trong lớp phụ trách" columns={['Bài tập', 'Lớp', 'Hạn nộp', 'Ưu tiên', 'Trạng thái', 'Thao tác']} rows={rows.map(a => ({ id: a.id, cells: [
-        <strong key="title">{a.title}</strong>, className(a.class_id), <time key="deadline" dateTime={a.deadline_at}>{when(a.deadline_at)}</time>,
-        <span key="priority" className="as-priority" aria-label={`Ưu tiên ${a.priority} trên 5`}><span aria-hidden="true">{'★'.repeat(a.priority)}{'☆'.repeat(5 - a.priority)}</span></span>,
-        <Badge key="status" tone={a.status === 'PUBLISHED' ? 'success' : a.status === 'DRAFT' ? 'warning' : 'muted'}>{{ DRAFT: 'Bản nháp', PUBLISHED: 'Đã giao', ARCHIVED: 'Đã lưu trữ' }[a.status]}</Badge>,
-        props.allowed?.includes('AS03') ? <button key="open" onClick={() => navigate(teacherPath(`assignments/${a.id}`))}>Chi tiết</button> : '—',
-      ] }))} /></div> : <EmptyState title={filtered ? 'Không có bài tập phù hợp' : 'Chưa có bài tập'} detail={filtered ? 'Thử đổi bộ lọc để xem các bài tập khác.' : 'Tạo bài tập cho lớp phụ trách khi bạn sẵn sàng giao bài.'}>
-        {filtered ? <Button secondary onClick={() => { setSearch(''); setStatus('all'); setClassFilter('') }}>Xóa bộ lọc</Button> : create}
-      </EmptyState>}</Card>
-      <Notice>Bản nháp chưa được giao cho học sinh. Chỉ bài tập trong phạm vi được cấp mới hiển thị tại đây.</Notice>
-    </Page>
-  }
+  if (props.id === 'AS01') return <><AssignmentListView
+    model={fromAssignmentRead(assignments, classes, timeZone)}
+    onCreate={props.allowed?.includes('AS02') ? () => navigate(teacherPath('assignments/new')) : undefined}
+    onOpen={props.allowed?.includes('AS03') ? id => navigate(teacherPath('assignments/' + id)) : undefined} />
+    {alerts}</>
   if (props.id === 'AS02') {
     if (props.selectedId && !selected) return <Page title="Chỉnh sửa bài tập"><State kind="not-found" /></Page>
     if (selected && selected.status !== 'DRAFT') return <Page title="Chỉnh sửa bài tập"><Notice>Chỉ hỗ trợ chỉnh sửa bản nháp ở màn hình này.</Notice></Page>
