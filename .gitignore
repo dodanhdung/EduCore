@@ -33,3 +33,8 @@ artifacts/
 /\.local/
 .agents/
 /roadmap.md
+/demo-data
+/scripts/import-r10-role-test-accounts.ps1
+/scripts/import-r10-three-centers.ps1
+/scripts/r11
+

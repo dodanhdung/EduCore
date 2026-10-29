@@ -114,3 +114,148 @@ test('BL07 explicit wallet payment sends the reviewed amount and preserves invoi
   assert.deepEqual(JSON.parse(post.options.body), { amountVnd: '300000', reason: 'Explicit payment', confirmed: true })
   assert.ok(post.options.headers['Idempotency-Key'])
 })
+
+const { ApiClient: GateApiClient } = await vite.ssrLoadModule('/src/api.ts')
+const gatePeriod = { id: 'period-private', monthStart: '2026-09-01', timezone: 'Asia/Ho_Chi_Minh', status: 'OPEN', draftCount: 0, issuedCount: 0, generations: [] }
+const gatePage = (items = [gatePeriod], page = 1, total = items.length) => ({ items, page, pageSize: 20, total })
+async function billingFixture(run) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const fixtureRoot = createRoot(container)
+  const render = async props => act(async () => fixtureRoot.render(React.createElement(BillingProduction, props)))
+  try { await run({ container, render }) }
+  finally { await act(async () => fixtureRoot.unmount()); container.remove() }
+}
+for (const status of [401, 403]) test('Gate0 BL03 loaded content and controls are cleared on ' + status, async () => {
+  await billingFixture(async ({ container, render }) => {
+    let denied = false
+    const api = new GateApiClient('', async url => denied ? Response.json({ code: 'AUTH_FAILURE' }, { status })
+      : Response.json(gatePage(String(url).includes('/students') ? [] : [gatePeriod])))
+    const props = { id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} }
+    await render(props)
+    assert.match(container.textContent, /2026-09-01/)
+    denied = true
+    await render({ ...props, token: 'token-b' })
+    assert.doesNotMatch(container.textContent, /2026-09-01|Mở kỳ tháng|Tạo dự thảo/)
+    assert.equal(container.querySelector('table, select, textarea'), null)
+    assert.ok(![...container.querySelectorAll('button')].some(b => /Thử tải lại/.test(b.textContent)))
+    assert.match(container.textContent, status === 401 ? /đăng nhập lại/i : /không có quyền/i)
+  })
+})
+for (const failure of [503, 'network']) test('Gate0 BL03 explicit retry after ' + failure + ' performs reads only', async () => {
+  await billingFixture(async ({ container, render }) => {
+    let fail = true
+    const requests = []
+    const api = new GateApiClient('', async (url, options) => {
+      requests.push(options.method)
+      if (fail) { if (failure === 'network') throw new TypeError('network'); return Response.json({ code: 'UNAVAILABLE' }, { status: failure }) }
+      return Response.json(gatePage(String(url).includes('/students') ? [] : [gatePeriod]))
+    })
+    await render({ id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} })
+    const retry = [...container.querySelectorAll('button')].find(b => b.textContent === 'Thử tải lại')
+    assert.ok(retry)
+    assert.equal(container.querySelector('table'), null)
+    fail = false
+    await act(async () => retry.click())
+    assert.match(container.textContent, /2026-09-01/)
+    assert.ok(requests.every(method => method === 'GET'))
+  })
+})
+for (const status of [409, 422]) test('Gate0 BL03 domain error ' + status + ' is not a generic retryable failure', async () => {
+  await billingFixture(async ({ container, render }) => {
+    const api = new GateApiClient('', async () => Response.json({ code: 'DOMAIN_ERROR' }, { status }))
+    await render({ id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} })
+    assert.match(container.textContent, status === 409 ? /thay đổi|xung đột/i : /hợp lệ/i)
+    assert.ok(![...container.querySelectorAll('button')].some(b => /Thử tải lại/.test(b.textContent)))
+  })
+})
+
+test('Gate0 BL07 ambiguous payment retains original key across token refresh and receipt reconciliation without POST retry', async () => {
+  await billingFixture(async ({ container, render }) => {
+    const calls = []
+    let lookup = 0
+    const storageKey = 'educore:wallet-payment:gate-wallet:invoice-gate'
+    window.sessionStorage.removeItem(storageKey)
+    const api = new GateApiClient('', async (url, options) => {
+      calls.push({ url: String(url), options })
+      if (options.method === 'POST') throw new TypeError('ambiguous transport failure')
+      if (String(url).includes('/outcomes/PAY/')) return Response.json({ status: lookup++ ? 'COMMITTED' : 'PENDING_RECONCILIATION' })
+      if (String(url).endsWith('/receivable')) return Response.json({ originalTotalVnd: '800000', netObligationVnd: '800000', netAllocatedVnd: '100000', outstandingVnd: '700000', status: 'ISSUED' })
+      if (String(url).includes('/finance/students/')) return Response.json({ balanceVnd: '500000', canTopUp: true })
+      return Response.json({ ...detail, id: 'invoice-gate', status: 'ISSUED', number: 'INV-GATE', canIssue: false })
+    })
+    const props = { id: 'BL07', tenantId: 'gate-wallet', token: 'token-a', selectedId: 'invoice-gate', api, navigate() {} }
+    try {
+      await render(props)
+      for (const amount of ['800.000', '100.000', '700.000', '500.000']) assert.ok(container.textContent.includes(amount))
+      const fields = container.querySelectorAll('input')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      await act(async () => {
+        const amount = container.querySelector('input[inputmode="numeric"]')
+        const reason = [...fields].find(n => n.type !== 'checkbox' && n !== amount)
+        setter.call(amount, '300000'); amount.dispatchEvent(new window.Event('input', { bubbles: true }))
+        setter.call(reason, 'Reviewed payment'); reason.dispatchEvent(new window.Event('input', { bubbles: true }))
+        container.querySelector('input[type="checkbox"]').click()
+      })
+      await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Thanh toán từ ví').click())
+      const payment = calls.find(c => c.options.method === 'POST')
+      const originalKey = payment.options.headers['Idempotency-Key']
+      assert.ok(originalKey)
+      assert.equal(JSON.parse(window.sessionStorage.getItem(storageKey)).key, originalKey)
+      await render({ ...props, token: 'token-b' })
+      const receipt = () => [...container.querySelectorAll('button')].find(b => /biên nhận|receipt/i.test(b.textContent))
+      assert.ok(receipt())
+      await act(async () => receipt().click())
+      assert.equal(JSON.parse(window.sessionStorage.getItem(storageKey)).key, originalKey)
+      await act(async () => receipt().click())
+      const lookups = calls.filter(c => c.url.includes('/outcomes/PAY/'))
+      assert.equal(lookups.length, 2)
+      assert.ok(lookups.every(c => c.url.endsWith('/' + originalKey)))
+      assert.equal(calls.filter(c => c.options.method === 'POST').length, 1)
+      assert.equal(window.sessionStorage.getItem(storageKey), null)
+    } finally { window.sessionStorage.removeItem(storageKey) }
+  })
+})
+
+test('Gate0 BL03 paging is scope-local and late previous-page responses cannot restore data', async () => {
+  await billingFixture(async ({ container, render }) => {
+    let release
+    let delayed = false
+    const requests = []
+    const api = new GateApiClient('', async (url, options) => {
+      requests.push({ url: String(url), options })
+      if (String(url).includes('/students')) return Response.json(gatePage([]))
+      if (String(url).includes('page=2') && !delayed) {
+        delayed = true
+        return new Promise(resolve => { release = () => resolve(Response.json(gatePage([{ ...gatePeriod, monthStart: '1999-01-01' }], 2, 40))) })
+      }
+      return Response.json(gatePage([gatePeriod], 1, 40))
+    })
+    const props = { id: 'BL03', tenantId: 'gate-a', token: 'token-a', api, navigate() {} }
+    await render(props)
+    await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Sau').click())
+    assert.ok(release)
+    await render({ ...props, tenantId: 'gate-b' })
+    assert.match(container.textContent, /Trang 1/)
+    assert.ok(requests.filter(r => r.url.includes('/gate-b/billing/periods')).every(r => r.url.includes('page=1')))
+    assert.ok(requests.find(r => r.url.includes('page=2')).options.signal.aborted)
+    await act(async () => release())
+    assert.doesNotMatch(container.textContent, /1999-01-01/)
+    assert.match(container.textContent, /2026-09-01/)
+  })
+})
+
+test('Gate0 BL07 unavailable wallet never turns into zero balance or hides invoice receivable', async () => {
+  await billingFixture(async ({ container, render }) => {
+    const api = new GateApiClient('', async url => {
+      if (String(url).endsWith('/receivable')) return Response.json({ originalTotalVnd: '800000', netObligationVnd: '800000', netAllocatedVnd: '100000', outstandingVnd: '700000', status: 'ISSUED' })
+      if (String(url).includes('/finance/students/')) return Response.json({ code: 'FORBIDDEN' }, { status: 403 })
+      return Response.json({ ...detail, status: 'ISSUED', number: 'INV-NOWALLET', canIssue: false })
+    })
+    await render({ id: 'BL07', tenantId: 'gate-a', token: 'token-a', selectedId: 'invoice-a', api, navigate() {} })
+    assert.match(container.textContent, /800.000|800\u00a0000/)
+    assert.match(container.textContent, /700.000|700\u00a0000/)
+    assert.ok(![...container.querySelectorAll('button')].some(b => b.textContent === 'Thanh toán từ ví'))
+    assert.match(container.textContent, /Chưa tải|khả dụng|quyền/i)
+  })
+})

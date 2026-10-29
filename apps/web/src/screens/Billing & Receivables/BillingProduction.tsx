@@ -30,9 +30,15 @@ function rememberedPayment(key: string): { key: string; body: { amountVnd: strin
   } catch { return null }
 }
 
-export function BillingProduction({ id, tenantId, token, selectedId, api, navigate }: {
+type Props = {
   id: Id; tenantId: string; token: string; selectedId?: string; api: ApiClient; navigate: (path: string) => void
-}) {
+}
+export function BillingProduction(props: Props) {
+  // BL03 selections/drafts belong to this auth scope. Keep BL07's existing
+  // lifetime: refreshing a token must not reset a pending payment receipt key.
+  return <BillingScope key={props.id === 'BL03' ? JSON.stringify([props.tenantId, props.token, props.selectedId]) : 'legacy'} {...props} />
+}
+function BillingScope({ id, tenantId, token, selectedId, api, navigate }: Props) {
   const [page, setPage] = useState(1)
   const [data, setData] = useState<unknown>()
   const [students, setStudents] = useState<Student[]>([])
@@ -56,6 +62,8 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
+  const [readFailure, setReadFailure] = useState<{ status?: number; message: string; retryable: boolean } | null>(null)
+  const active = useRef(true)
   const [revision, setRevision] = useState(0)
   const paymentStorageKey = `educore:wallet-payment:${tenantId}:${selectedId ?? ''}`
   const initialPaymentPending = rememberedPayment(paymentStorageKey)
@@ -67,15 +75,20 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
       : id === 'BL05' ? `/billing/drafts/${encodeURIComponent(selectedId ?? '')}`
         : id === 'BL06' ? '/billing/invoices' : `/billing/invoices/${encodeURIComponent(selectedId ?? '')}`
   const list = id !== 'BL05' && id !== 'BL07'
-  const read = useCallback(<T,>(suffix: string) => api.learning<T>(tenantId, suffix, token), [api, tenantId, token])
+  const read = useCallback(<T,>(suffix: string, signal?: AbortSignal) => api.learning<T>(tenantId, suffix, token, { signal }), [api, tenantId, token])
   const write = <T,>(suffix: string, body: unknown, key: string) => api.learning<T>(tenantId, suffix, token,
     { method: 'POST', body, idempotencyKey: key })
   useEffect(() => {
+    active.current = true
+    return () => { active.current = false }
+  }, [])
+  useEffect(() => {
     const abort = new AbortController()
-    setLoading(true); setError(''); setData(undefined); setReceivable(null); setWallet(null)
+    setLoading(true); setError(''); setReadFailure(null); setData(undefined); setReceivable(null); setWallet(null)
+    if (id === 'BL03') { setStudents([]); setResult(null) }
     const query = list ? `?page=${page}&pageSize=20` : ''
-    Promise.all([read<unknown>(path + query),
-      id === 'BL03' ? read<Page<Student>>('/billing/students?pageSize=100') : Promise.resolve(null),
+    Promise.all([read<unknown>(path + query, abort.signal),
+      id === 'BL03' ? read<Page<Student>>('/billing/students?pageSize=100', abort.signal) : Promise.resolve(null),
       id === 'BL01' ? read<Page<PriceTarget>>('/billing/price-targets?pageSize=100') : Promise.resolve(null)])
       .then(async ([value, studentPage, targets]) => {
         if (abort.signal.aborted) return
@@ -93,12 +106,21 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
             if (!abort.signal.aborted) setWallet(account)
           } catch { if (!abort.signal.aborted) setWallet(null) }
         }
-      }).catch((cause) => { if (!abort.signal.aborted) setError(safeErrorMessage(cause)) })
+      }).catch((cause) => {
+        if (abort.signal.aborted) return
+        if (id === 'BL03') {
+          const status = cause instanceof ApiError ? cause.status : undefined
+          setData(undefined); setStudents([]); setResult(null)
+          if (status === 401 || status === 403) { setSelectedPeriod(''); setSelectedStudent(''); setReason(''); setNewMonth('') }
+          setReadFailure({ status, message: safeErrorMessage(cause), retryable: status === undefined || status >= 500 })
+        } else setError(safeErrorMessage(cause))
+      })
       .finally(() => { if (!abort.signal.aborted) setLoading(false) })
     return () => abort.abort()
   }, [id, selectedId, path, page, revision, read, list])
 
   async function act(suffix: string, body: unknown, next?: (value: GenerationResult | { id: string }) => void) {
+    if (id === 'BL03' && (!active.current || loading || readFailure || working)) return
     setWorking(true); setError('')
     const isPayment = suffix.endsWith('/wallet-payments')
     const prior = isPayment ? paymentPending.current : null
@@ -112,11 +134,20 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
     }
     try {
       const value = await write<GenerationResult | { id: string }>(suffix, payload, key)
+      if (id === 'BL03' && !active.current) return
       pendingKey.current = null
       if (isPayment) { paymentPending.current = null; setPaymentAwaiting(false); try { window.sessionStorage.removeItem(paymentStorageKey) } catch { /* no-op */ } }
       setReason(''); setConfirmed(false); setRevision((old) => old + 1)
       next?.(value)
     } catch (cause) {
+      if (id === 'BL03') {
+        if (!active.current) return
+        if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+          setData(undefined); setStudents([]); setResult(null); setSelectedPeriod(''); setSelectedStudent(''); setReason(''); setNewMonth('')
+          setReadFailure({ status: cause.status, message: safeErrorMessage(cause), retryable: false })
+          return
+        }
+      }
       if (isPayment && cause instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(cause.status)) {
         paymentPending.current = null; pendingKey.current = null; setPaymentAwaiting(false)
         try { window.sessionStorage.removeItem(paymentStorageKey) } catch { /* no-op */ }
@@ -149,10 +180,16 @@ export function BillingProduction({ id, tenantId, token, selectedId, api, naviga
   const pageData = data as Page<Rule & Sibling & Period & InvoiceRow> | undefined
   const detail = data as Detail | undefined
   const go = (suffix: string) => navigate(tenantPath(tenantId, suffix))
+  if (id === 'BL03' && readFailure) return <div className="billing-page" data-screen-id={id}>
+    <BillingHeading title={names[id]} subtitle="Dữ liệu và quyền được kiểm tra trên máy chủ" />
+    <BillingState title={readFailure.status === 401 ? 'Cần đăng nhập lại' : readFailure.status === 403 ? 'Không có quyền truy cập' : 'Không thể tải dữ liệu'} alert>
+      {readFailure.message}{readFailure.status === 401 && <a href="/login">Đăng nhập lại</a>}
+      {readFailure.retryable && <button className="billing-button billing-button-secondary" onClick={() => setRevision(n => n + 1)}>Thử tải lại</button>}
+    </BillingState></div>
   return <div className="billing-page" data-screen-id={id}>
     <BillingHeading title={names[id]} subtitle={id === 'BL03' ? 'Kỳ theo ngày bắt đầu buổi · Dự thảo nội bộ, phát hành riêng' : 'Dữ liệu và quyền được kiểm tra trên máy chủ'} />
     {loading && (id === 'BL03' ? <Skeleton label="Đang lấy dữ liệu học phí" /> : <BillingState title="Đang tải">Đang lấy dữ liệu học phí.</BillingState>)}
-    {error && <BillingState title="Không thể hoàn tất" alert>{error}{id === 'BL03' && !data && !loading && <button className="billing-button billing-button-secondary" onClick={() => setRevision(n => n + 1)}>Thử tải lại</button>}</BillingState>}
+    {error && <BillingState title="Không thể hoàn tất" alert>{error}</BillingState>}
     {!loading && !error && !data && <BillingState title="Chưa có dữ liệu">Không nhận được dữ liệu từ máy chủ.</BillingState>}
     {!loading && pageData && id === 'BL01' && <BillingCard title="Quy tắc giá" hint="Ưu tiên buổi → lớp → khóa; cửa sổ hiệu lực [từ, đến).">
       {pageData.items.length ? <div className="billing-table-wrap"><table className="billing-table"><thead><tr><th>Phạm vi</th><th>Đối tượng</th><th>Đơn giá</th><th>Hiệu lực</th><th>Policy</th></tr></thead><tbody>{pageData.items.map((rule) =>

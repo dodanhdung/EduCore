@@ -12,9 +12,11 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const calls = []
 let gradeState = null
 let assignmentStatus = 'PUBLISHED'
+let gateTransport
 const assignment = { id: 'a1', title: 'Bài tập thật', description: 'Trả lời câu hỏi', className: 'Lớp A', deadlineAt: '2099-01-01T00:00:00Z', priority: 3, recipientId: 'r1', submissionId: null, versionNo: null, isLate: null, canSubmit: true, score: null, feedback: null }
 globalThis.fetch = async (url, init = {}) => {
   calls.push({ url: String(url), init })
+  if (gateTransport) return gateTransport(String(url), init)
   const path = String(url)
   if (path.endsWith('/teaching/assignment-classes')) return Response.json({ timezone: 'Asia/Ho_Chi_Minh', classes: [{ id: 'class-a', name: 'Lớp A' }, { id: 'class-b', name: 'Lớp B' }] })
   if (path.endsWith('/teaching/assignments')) return Response.json([
@@ -156,4 +158,189 @@ test('authenticated download uses safe original filename from private metadata',
     URL.createObjectURL = originalCreate
     URL.revokeObjectURL = originalRevoke
   }
+})
+
+const gateProps = { id: 'AS01', tenantId: 'gate-a', token: 'token-a', allowed: ['AS02', 'AS03'], navigate() {} }
+const gateAssignment = (title = 'Protected assignment') => ({ id: 'a1', title, description: 'Protected description', class_id: 'c1', deadline_at: '2099-01-01T00:00:00Z', priority: 3, status: 'PUBLISHED', revision: 1 })
+const gateResponse = (url, title) => Response.json(url.endsWith('/teaching/assignment-classes')
+  ? { classes: [{ id: 'c1', name: 'Protected class' }], timezone: 'Asia/Ho_Chi_Minh' } : [gateAssignment(title)])
+const gateError = status => Response.json({ code: 'GATE_TEST_ERROR' }, { status })
+async function assignmentFixture(run) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const render = async props => act(async () => root.render(React.createElement(AssignmentsProduction, props)))
+  try { await run({ container, render }) }
+  finally { await act(async () => root.unmount()); container.remove(); gateTransport = undefined }
+}
+
+for (const status of [401, 403]) test('Gate0 AS01 loaded rows become safe terminal state on ' + status, async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    gateTransport = url => gateResponse(url)
+    await render(gateProps)
+    assert.match(container.textContent, /Protected assignment/)
+    gateTransport = () => gateError(status)
+    await render({ ...gateProps, token: 'token-revalidated' })
+    assert.doesNotMatch(container.textContent, /Protected assignment|Protected class|Tạo bài tập|Chi tiết/)
+    assert.equal(container.querySelector('table, input, select'), null)
+    assert.ok(![...container.querySelectorAll('button')].some(b => /Thử lại/.test(b.textContent)))
+    assert.match(container.textContent, status === 401 ? /đăng nhập lại/i : /không có quyền/i)
+    if (status === 401) assert.equal(container.querySelector('a')?.getAttribute('href'), '/login')
+  })
+})
+
+for (const boundary of ['tenantId', 'token', 'selectedId']) test('Gate0 AS01 discards late response across ' + boundary, async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    let release
+    let first = true
+    const signals = []
+    gateTransport = (url, init) => {
+      signals.push(init.signal)
+      if (url.endsWith('/teaching/assignments') && first) {
+        first = false
+        return new Promise(resolve => { release = () => resolve(gateResponse(url, 'OLD protected row')) })
+      }
+      return gateResponse(url, 'CURRENT protected row')
+    }
+    await render(gateProps)
+    await render({ ...gateProps, [boundary]: 'scope-b' })
+    assert.match(container.textContent, /CURRENT protected row/)
+    assert.equal(signals[0].aborted, true)
+    await act(async () => release())
+    assert.doesNotMatch(container.textContent, /OLD protected row/)
+    assert.match(container.textContent, /CURRENT protected row/)
+  })
+})
+
+test('Gate0 AS01 A-B-A navigation rejects the first A response even if transport ignores abort', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    let release
+    let count = 0
+    gateTransport = url => {
+      if (url.endsWith('/teaching/assignments') && ++count === 1)
+        return new Promise(resolve => { release = () => resolve(gateResponse(url, 'Obsolete A')) })
+      return gateResponse(url, 'Latest scope')
+    }
+    await render(gateProps)
+    await render({ ...gateProps, tenantId: 'gate-b' })
+    await render(gateProps)
+    await act(async () => release())
+    assert.doesNotMatch(container.textContent, /Obsolete A/)
+    assert.match(container.textContent, /Latest scope/)
+  })
+})
+
+test('Gate0 AS01 retries a transient read explicitly and keeps error/empty/ready exclusive', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    let fail = true
+    let requests = 0
+    gateTransport = url => { requests++; return fail ? gateError(503) : gateResponse(url) }
+    await render(gateProps)
+    assert.equal(container.querySelector('table'), null)
+    const retry = [...container.querySelectorAll('button')].find(b => b.textContent === 'Thử lại')
+    assert.ok(retry)
+    const before = requests
+    fail = false
+    await act(async () => retry.click())
+    assert.ok(requests > before)
+    assert.match(container.textContent, /Protected assignment/)
+    assert.equal(container.querySelector('[role="alert"]'), null)
+  })
+})
+
+test('Gate0 AS01 same-scope retry ignores an older request generation', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    gateTransport = () => gateError(503)
+    await render(gateProps)
+    const pending = []
+    gateTransport = url => url.endsWith('/teaching/assignments')
+      ? new Promise(resolve => pending.push(title => resolve(gateResponse(url, title))))
+      : gateResponse(url)
+    const retry = [...container.querySelectorAll('button')].find(b => b.textContent === 'Thử lại')
+    await act(async () => { retry.click(); retry.click() })
+    assert.equal(pending.length, 2)
+    await act(async () => pending[1]('Latest retry'))
+    await act(async () => pending[0]('Stale retry'))
+    assert.match(container.textContent, /Latest retry/)
+    assert.doesNotMatch(container.textContent, /Stale retry/)
+  })
+})
+
+test('Gate0 AS03 late recipient history cannot restore detail after navigation to AS05', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    let release
+    gateTransport = url => {
+      if (url.endsWith('/recipients')) return Response.json([{ id: 'r-private', studentName: 'Old recipient', assignment_id: 'a1' }])
+      if (url.endsWith('/r-private/submissions')) return new Promise(resolve => { release = () => resolve(Response.json({ versions: [{ id: 'v1', answer_text: 'OLD secret history', fileIds: [] }] })) })
+      if (url.endsWith('/grading-context')) return Response.json({ submissionId: 's-new', studentName: 'New student', assignmentTitle: 'New grade scope', currentVersionId: 'v-new', timezone: 'Asia/Ho_Chi_Minh', versions: [], grade: null })
+      return gateResponse(url)
+    }
+    await render({ ...gateProps, id: 'AS03', selectedId: 'a1' })
+    assert.ok(release)
+    await render({ ...gateProps, id: 'AS05', selectedId: 's-new' })
+    await act(async () => release())
+    assert.match(container.textContent, /New grade scope/)
+    assert.doesNotMatch(container.textContent, /Old recipient|OLD secret history|Protected assignment/)
+  })
+})
+
+test('Gate0 AS07 clears answer draft/history/mine on token change but preserves a same-scope draft', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    let expired = false
+    gateTransport = url => {
+      if (expired) return gateError(401)
+      return Response.json(url.endsWith('/my/assignments')
+        ? { items: [{ ...assignment, status: 'PUBLISHED' }], timezone: 'Asia/Ho_Chi_Minh' }
+        : { versions: [{ id: 'v1', version_no: 1, submitted_at: '2026-10-28T00:00:00Z', answer_text: 'Private history', fileIds: [] }] })
+    }
+    const props = { ...gateProps, id: 'AS07', selectedId: 'a1' }
+    await render(props)
+    await act(async () => {
+      const input = container.querySelector('textarea')
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(input, 'Private draft')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await render({ ...props, allowed: [] })
+    assert.equal(container.querySelector('textarea').value, 'Private draft')
+    expired = true
+    await render({ ...props, token: 'new-token' })
+    assert.equal(container.querySelector('textarea'), null)
+    assert.doesNotMatch(container.textContent, /Private draft|Private history|Bài tập thật/)
+  })
+})
+
+test('Gate0 AS02 does not publish or navigate from an old create continuation after token change', async () => {
+  await assignmentFixture(async ({ container, render }) => {
+    const writes = [], navigated = []
+    let release
+    gateTransport = (url, init) => {
+      if (init.method === 'POST') {
+        writes.push(url)
+        return new Promise(resolve => { release = () => resolve(Response.json({ id: 'old-created', revision: 1, status: 'DRAFT' })) })
+      }
+      return gateResponse(url)
+    }
+    const props = { ...gateProps, id: 'AS02', navigate: p => navigated.push(p) }
+    await render(props)
+    await act(async () => {
+      for (const [selector, value] of [['input:not([type])', 'Draft title'], ['textarea', 'Draft content'], ['input[type="datetime-local"]', '2099-01-01T09:00']]) {
+        const input = container.querySelector(selector)
+        const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, value)
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      }
+      const select = container.querySelector('select'); select.value = 'c1'; select.dispatchEvent(new window.Event('change', { bubbles: true }))
+    })
+    const previousConfirm = window.confirm
+    window.confirm = () => true
+    try {
+      await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Xác nhận xuất bản').click())
+      assert.equal(writes.length, 1)
+      await render({ ...props, token: 'new-session' })
+      await act(async () => release())
+      assert.equal(writes.length, 1)
+      assert.deepEqual(navigated, [])
+      assert.equal(container.querySelector('input:not([type])').value, '')
+    } finally { window.confirm = previousConfirm }
+  })
 })
