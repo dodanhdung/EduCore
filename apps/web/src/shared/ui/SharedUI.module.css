@@ -1,0 +1,39 @@
+.page { display: grid; gap: 24px; min-width: 0; }
+.main, .withAside { min-width: 0; }
+.withAside { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); gap: 24px; }
+.withAside > * { min-width: 0; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; min-width: 0; margin-bottom: 24px; }
+.headerText { min-width: 0; }
+.header h1 { margin: 0; color: var(--ec-foreground); font-size: clamp(24px, 2.3vw, 28px); line-height: 1.25; overflow-wrap: anywhere; }
+.header p { margin: 6px 0 0; color: var(--ec-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.context { color: var(--ec-secondary); font-size: 12px; margin-bottom: 6px; }
+.header > button, .header > a { flex-shrink: 0; }
+.badge { display: inline-block; max-width: 100%; padding: 3px 8px; border: 1px solid currentColor; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; white-space: normal; }
+.neutral { color: var(--ec-secondary); background: var(--ec-surface-muted); }
+.info { color: var(--ec-primary-hover); background: var(--ec-primary-soft); }
+.success { color: var(--ec-success); background: var(--ec-success-soft); }
+.warning { color: var(--ec-warning); background: var(--ec-warning-soft); }
+.danger { color: var(--ec-danger); background: #fef2f2; }
+.metric { display: flex; flex-direction: column; gap: 18px; min-width: 0; min-height: 160px; padding: 24px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); box-shadow: 0 1px 2px #0f172a08; }
+.metricTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex: 1; }
+.metricText { min-width: 0; }
+.metric h2 { margin: 0 0 4px; color: var(--ec-muted); font-size: 12px; font-weight: 500; line-height: 1.4; letter-spacing: .04em; text-transform: uppercase; }
+.metric strong { display: block; color: var(--ec-foreground); font-size: clamp(24px, 3vw, 40px); line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metricIcon { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 48px; border-radius: 12px; color: var(--ec-primary); background: var(--ec-primary-soft); }
+.metricDetail { color: var(--ec-secondary); font-size: 12px; line-height: 1.5; }
+.metricAction { margin-top: auto; }
+.resource { padding: 24px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); overflow-wrap: anywhere; }
+.resource h2 { margin: 0 0 6px; font-size: 18px; }.resource p { margin: 0 0 12px; color: var(--ec-secondary); line-height: 1.5; }
+.resource button, .pagination button, .filterFields button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ec-border); border-radius: 8px; color: var(--ec-foreground); background: var(--ec-surface); }
+.tableRegion { min-width: 0; }.tableScroll { max-width: 100%; overflow-x: auto; }.tableScroll:focus-visible { outline: 3px solid var(--ec-focus); outline-offset: -3px; }
+.table { width: 100%; min-width: 600px; border-collapse: collapse; text-align: left; table-layout: fixed; }
+.table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.table th { padding: 12px; color: var(--ec-secondary); background: var(--ec-surface-muted); font-size: 11px; text-transform: uppercase; }
+.table td { padding: 14px 12px; border-bottom: 1px solid var(--ec-border); font-size: 12px; overflow-wrap: anywhere; vertical-align: top; }
+.end { text-align: right; }.pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; }
+.filters { min-width: 0; padding: 24px; border: 1px solid var(--ec-border); border-radius: 12px; background: var(--ec-surface); }
+.filterFields { display: flex; align-items: end; flex-wrap: wrap; gap: 16px; }.filterFields > * { min-width: 0; flex: 1 1 180px; }.filterFields > button { flex: 0 0 auto; }
+.filterFields label { display: grid; gap: 7px; color: var(--ec-secondary); font-size: 12px; font-weight: 600; }
+.filterFields input, .filterFields select { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--ec-border); border-radius: 8px; background: var(--ec-surface); color: var(--ec-foreground); }
+.filterScope { margin: 12px 0 0; color: var(--ec-secondary); font-size: 12px; }
+@media (max-width: 640px) { .header { flex-direction: column; gap: 12px; }.header > button, .header > a { max-width: 100%; }.withAside { grid-template-columns: 1fr; }.metric { padding: 16px; }.filters { padding: 16px; }.filterFields > * { flex-basis: 100%; }.filterFields > button { flex-basis: auto; } }
