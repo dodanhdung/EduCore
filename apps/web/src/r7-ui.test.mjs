@@ -164,6 +164,53 @@ test('R7 UI mobile menu has native keyboard control, active link and tenant/self
   } finally { dom.window.close() }
 })
 
+test('R13.1 shell keeps tenant controls usable and closes menus across scope changes', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: `http://localhost/app/${tenantId}/settings/members` })
+  globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement
+  const root = createRoot(dom.window.document.getElementById('root'))
+  const paths = []
+  let logouts = 0
+  const op01 = routes.find(route => route.id === 'OP01')
+  const au05 = routes.find(route => route.id === 'AU05')
+  const draw = (route, tenant = principal.allowedTenants[0], navigation = [op01, au05]) => React.createElement(AppShell, {
+    route, tenant, navigation, navigate: path => paths.push(path), onLogout: () => { logouts += 1 },
+  }, React.createElement('h1', null, 'Nội dung không đổi'))
+  try {
+    await act(async () => root.render(draw(op01)))
+    const account = dom.window.document.querySelector('.account-menu')
+    const accountTrigger = account.querySelector('summary')
+    await act(async () => accountTrigger.click())
+    assert.equal(account.open, true)
+    await act(async () => account.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    assert.equal(account.open, false)
+    assert.equal(dom.window.document.activeElement, accountTrigger)
+
+    await act(async () => accountTrigger.click())
+    await act(async () => dom.window.document.body.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true })))
+    assert.equal(account.open, false)
+    await act(async () => accountTrigger.click())
+    await act(async () => account.querySelector('a[href="/select-tenant"]').click())
+    assert.equal(paths.at(-1), '/select-tenant')
+    assert.equal(account.open, false)
+
+    const mobile = dom.window.document.querySelector('.mobile-nav details')
+    await act(async () => mobile.querySelector('summary').click())
+    assert.equal(mobile.open, true)
+    await act(async () => mobile.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    assert.equal(mobile.open, false)
+    assert.equal(dom.window.document.activeElement, mobile.querySelector('summary'))
+
+    await act(async () => root.render(draw(au05, { id: 'second-tenant', name: 'Trung tâm thứ hai' }, [au05])))
+    assert.match(dom.window.document.querySelector('.tenant-context').textContent, /Trung tâm thứ hai/)
+    assert.doesNotMatch(dom.window.document.querySelector('.sidebar nav').textContent, /Tài khoản người dùng/)
+    assert.equal(dom.window.document.querySelector('.sidebar a[aria-current="page"]').getAttribute('href'), '/app/second-tenant/me')
+    assert.equal(dom.window.document.activeElement.id, 'main-content')
+    assert.match(dom.window.document.querySelector('#main-content h1').textContent, /Nội dung không đổi/)
+    await act(async () => dom.window.document.querySelector('.top-actions button').click())
+    assert.equal(logouts, 1)
+  } finally { await act(async () => root.unmount()); dom.window.close() }
+})
+
 test('R7 actual App expiry timer removes AppShell without requiring navigation or reload', async () => {
   const { controller } = backend()
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/login' })
