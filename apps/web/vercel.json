@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://[TEN_SERVICE].onrender.com/api/:path*"
+      "destination": "https://educore-staging-api.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
