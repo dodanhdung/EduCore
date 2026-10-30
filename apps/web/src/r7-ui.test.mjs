@@ -145,7 +145,7 @@ test('R7 UI AppShell consumes only eligible links and protected screens remain d
   assert.match(markup, new RegExp(`href="/app/${tenantId}/settings/members"`))
   assert.doesNotMatch(markup, /href="[^"]*finance|href="[^"]*teachers|Dữ liệu mẫu|PREVIEW_ONLY/)
   const denied = renderToStaticMarkup(React.createElement(AppView, { ...props, state: { ...state, session: { ...state.session, navigation: undefined } } }))
-  assert.match(denied, /Không đủ quyền/)
+  assert.match(denied, /Đang xác minh quyền truy cập/)
   assert.doesNotMatch(denied, /app-shell/)
 })
 
@@ -237,7 +237,9 @@ test('R7 actual App expiry timer removes AppShell without requiring navigation o
 })
 
 test('Phase B App timer removes expired navigation on desktop and mobile while retaining AU05', async () => {
-  const { controller } = backend(undefined, true)
+  let hold = false, release
+  const gate = new Promise(resolve => { release = resolve })
+  const { controller } = backend(async path => { if (hold && path.endsWith('/navigation')) await gate }, true)
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/login' })
   globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement
   const timers = new Map()
@@ -257,11 +259,141 @@ test('Phase B App timer removes expired navigation on desktop and mobile while r
     assert.equal(timers.size, 3)
     const evidenceTimer = [...timers.values()].sort((a, b) => a.delay - b.delay)[0]
     assert.ok(evidenceTimer.delay <= 30_000)
+    hold = true
     evidence.validUntil = Date.now() - 1
     await act(async () => evidenceTimer.callback())
     assert.equal(controller.getSnapshot().session.navigation, undefined)
     assert.doesNotMatch(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
     assert.doesNotMatch(view.document.querySelector('.mobile-nav').textContent, /Tài khoản người dùng/)
     assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản/)
+    await act(async () => { release(); await controller.revalidate() })
+    assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
+  } finally { release(); await act(async () => root.unmount()); dom.window.close() }
+})
+
+async function actualProtectedApp(controller, run) {
+  const dom = new JSDOM('<div id="root"></div>', { url: `http://localhost/app/${tenantId}/settings/members` })
+  globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement
+  const timers = new Map()
+  let nextTimer = 0
+  dom.window.setTimeout = (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id }
+  dom.window.clearTimeout = id => timers.delete(id)
+  const root = createRoot(dom.window.document.getElementById('root'))
+  try {
+    await act(async () => root.render(React.createElement(App, { controller })))
+    await run({ dom, document: dom.window.document, timers })
   } finally { await act(async () => root.unmount()); dom.window.close() }
+}
+function holdResponse() { let release; const promise = new Promise(resolve => { release = resolve }); return { promise, release } }
+const forbiddenCopy = /Không đủ quyền|Không có quyền truy cập/
+
+test('R13 actual App focus storms show checking immediately, hide protected content and restore only fresh grants', async () => {
+  const gate = holdResponse()
+  let hold = false
+  const { controller, calls } = backend(async path => { if (hold && path.endsWith('/navigation')) await gate.promise }, true)
+  await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+  try {
+    await actualProtectedApp(controller, async view => {
+      assert.ok(view.document.querySelector('.app-shell'))
+      const before = calls.length
+      hold = true
+      await act(async () => { for (let i = 0; i < 10; i++) view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
+      assert.equal(view.document.querySelector('.app-shell'), null)
+      assert.match(view.document.querySelector('[role="status"]').textContent, /Đang xác minh quyền truy cập/)
+      assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+      assert.equal(calls.slice(before).filter(c => c.path.endsWith('/me')).length, 1)
+      assert.equal(calls.slice(before).filter(c => c.path.endsWith('/navigation')).length, 1)
+      await act(async () => { gate.release(); await controller.revalidate() })
+      assert.ok(view.document.querySelector('.app-shell'))
+      assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+    })
+  } finally { gate.release() }
+})
+
+test('R13 actual App expires navigation into one pending revalidation and ignores its stale timer', async () => {
+  const gate = holdResponse()
+  let hold = false
+  const { controller, calls } = backend(async path => { if (hold && path.endsWith('/navigation')) await gate.promise }, true)
+  await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+  try {
+    await actualProtectedApp(controller, async view => {
+      const evidence = controller.getSnapshot().session.navigation
+      const timer = [...view.timers.values()].find(t => t.delay <= 30_000)
+      assert.ok(timer)
+      hold = true; evidence.validUntil = Date.now() - 1
+      const before = calls.length
+      await act(async () => { timer.callback(); view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
+      assert.equal(controller.getSnapshot().session.navigationStatus, 'pending')
+      assert.equal(view.document.querySelector('.app-shell'), null)
+      assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+      assert.equal(calls.slice(before).filter(c => c.path.endsWith('/navigation')).length, 1)
+      await act(async () => { gate.release(); await controller.revalidate() })
+      const fresh = controller.getSnapshot().session.navigation, count = calls.length
+      await act(async () => timer.callback())
+      assert.equal(controller.getSnapshot().session.navigation, fresh)
+      assert.equal(calls.length, count)
+      assert.ok(view.document.querySelector('.app-shell'))
+    })
+  } finally { gate.release() }
+})
+
+test('R13 actual App distinguishes revoked permissions from an unavailable navigation service', async () => {
+  for (const response of ['revoked', 'forbidden', 'unavailable']) {
+    const gate = holdResponse()
+    let hold = false, failure = response
+    const { controller } = backend(async path => {
+      if (!hold || !path.endsWith('/navigation')) return
+      await gate.promise
+      if (failure === 'unavailable') return json({}, 503)
+      if (failure === 'forbidden') return json({}, 403)
+      if (failure === 'revoked') return json({ userId: principal.id, sessionId: principal.sessionId, tenantId, screenIds: [], validUntil: Date.now() + 30_000 })
+    }, true)
+    await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+    try {
+      await actualProtectedApp(controller, async view => {
+        hold = true
+        await act(async () => view.dom.window.dispatchEvent(new view.dom.window.Event('focus')))
+        assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+        await act(async () => { gate.release(); await controller.revalidate() })
+        assert.equal(view.document.querySelector('.app-shell'), null)
+        if (response !== 'unavailable') assert.match(view.document.body.textContent, forbiddenCopy)
+        else {
+          assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+          assert.match(view.document.querySelector('[role="alert"]').textContent, /Chưa thể kết nối/)
+          failure = ''
+          await act(async () => { [...view.document.querySelectorAll('button')].find(b => b.textContent === 'Thử kết nối lại').click(); await controller.revalidate() })
+          assert.ok(view.document.querySelector('.app-shell'))
+        }
+      })
+    } finally { gate.release() }
+  }
+})
+
+test('R13 focus near access expiry keeps refresh single-flight with the existing cookie and CSRF contract', async () => {
+  const gate = holdResponse()
+  const { controller, calls } = backend(async (path, options) => {
+    if (path.endsWith('/refresh')) {
+      assert.equal(options.credentials, 'include')
+      assert.equal(options.headers['X-CSRF-Token'], 'TEST_SECRET_CSRF')
+      await gate.promise
+      return json({ accessToken: 'TEST_SECRET_ROTATED', csrfToken: 'TEST_SECRET_NEW_CSRF', expiresInSeconds: 900 })
+    }
+  }, true)
+  await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+  const deadline = controller.getSnapshot().session.refreshDeadline, now = Date.now
+  const instant = controller.getSnapshot().session.expiresAt - 45_000
+  Date.now = () => instant
+  try {
+    await actualProtectedApp(controller, async view => {
+      await act(async () => { for (let i = 0; i < 5; i++) view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
+      assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
+      assert.equal(view.document.querySelector('.app-shell'), null)
+      await act(async () => { gate.release(); await controller.revalidate(true) })
+      assert.equal(calls.filter(c => c.path.endsWith('/refresh')).length, 1)
+      assert.equal(controller.getSnapshot().session.accessToken, 'TEST_SECRET_ROTATED')
+      assert.equal(controller.getSnapshot().session.csrfToken, 'TEST_SECRET_NEW_CSRF')
+      assert.equal(controller.getSnapshot().session.refreshDeadline, deadline)
+      assert.ok(view.document.querySelector('.app-shell'))
+    })
+  } finally { gate.release(); Date.now = now }
 })

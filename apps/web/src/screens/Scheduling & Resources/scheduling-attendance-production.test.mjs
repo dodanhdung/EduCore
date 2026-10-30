@@ -8,6 +8,8 @@ const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/app/tena
 globalThis.window = dom.window
 globalThis.document = dom.window.document
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
 const tenant = '00000000-0000-4000-8000-000000000001'
 const session = '00000000-0000-4000-8000-000000000002'
 const calls = []
@@ -68,7 +70,7 @@ test('AT02 blocks finalization until changed marks are saved and confirmed by th
     const response = (body, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } })
     if (path.endsWith(`/attendance/sessions/${session}`) && options.method === 'GET') return response({
-      sessionId: session, classId: 'class', startsAt: new Date().toISOString(),
+      sessionId: session, classId: 'class', startsAt: new Date(Date.now() - 3600000).toISOString(),
       endsAt: new Date(Date.now() + 3600_000).toISOString(), status: 'CONFIRMED',
       timeZone: 'Asia/Ho_Chi_Minh', finalized: false,
       participants: [{ id: 'participant', studentId: 'student', name: 'Learner', enrollmentId: 'enrollment',
@@ -107,6 +109,111 @@ test('AT02 blocks finalization until changed marks are saved and confirmed by th
     assert.deepEqual(writes, ['mark', 'mark'])
     assert.equal(button('Xác nhận đầy đủ').disabled, false)
     await act(async () => { button('Xác nhận đầy đủ').click(); await new Promise((resolve) => setTimeout(resolve, 30)) })
+    assert.deepEqual(writes, ['mark', 'mark'])
+    assert.ok(document.querySelector('dialog[open]'))
+    await act(async () => { button('Xác nhận điểm danh').click(); await new Promise(resolve => setTimeout(resolve, 30)) })
     assert.deepEqual(writes, ['mark', 'mark', 'finalize'])
   } finally { await act(async () => root.unmount()); responseOverride = null }
+})
+
+const pause = () => new Promise(resolve => setTimeout(resolve, 35))
+const findButton = label => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === label)
+const participant = (id = 'p1', status = 'ATTENDED') => ({ id, studentId: id, name: `Học viên ${id}`, enrollmentId: `e-${id}`, attendanceId: `a-${id}`, status, revision: 1, approvedLeave: false, billingSourceLocked: false, invoiceIssued: false })
+const sheetValue = (patch = {}) => ({ sessionId: session, classId: 'class', startsAt: new Date(Date.now() - 4 * 86400000).toISOString(), endsAt: new Date(Date.now() - 4 * 86400000 + 3600000).toISOString(), status: 'CONFIRMED', timeZone: 'Asia/Ho_Chi_Minh', finalized: false, participants: [participant()], ...patch })
+async function attendanceCase(handler, run, props = {}) {
+  const root = createRoot(document.getElementById('root'))
+  responseOverride = handler
+  const render = async extra => { await act(async () => { root.render(React.createElement(SchedulingAttendanceProduction, { id: 'AT02', tenantId: tenant, token: 'token-a', selectedId: session, navigate() {}, ...props, ...extra })); await pause() }) }
+  try { await render(); await run(render) } finally { await act(async () => root.unmount()); responseOverride = null }
+}
+
+test('AT02 future session stays read-only and EXCUSED requires approved leave', async () => {
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (options.method !== 'GET') writes.push(url)
+    return Response.json(String(url).includes('/scheduling/') ? { className: 'Toán 8A' } : sheetValue({ startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: new Date(Date.now() + 90000000).toISOString() }))
+  }, async () => {
+    assert.match(document.body.textContent, /chưa đủ điều kiện/)
+    assert.ok(document.querySelector('select').disabled)
+    assert.ok(document.querySelector('option[value="EXCUSED"]').disabled)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.deepEqual(writes, [])
+  })
+})
+
+test('AT02 token change and 401/403 remove the old roster and do not offer read retry', async () => {
+  for (const status of [401, 403]) await attendanceCase((url, options) => options.headers.Authorization === 'Bearer token-a'
+    ? Response.json(String(url).includes('/scheduling/') ? { className: 'Toán 8A' } : sheetValue())
+    : Response.json({ code: 'DENIED' }, { status }), async render => {
+    assert.match(document.body.textContent, /Học viên p1/)
+    await render({ token: 'token-b' })
+    assert.doesNotMatch(document.body.textContent, /Học viên p1/)
+    assert.equal(document.querySelector('select'), null)
+    assert.equal(findButton('Thử lại'), undefined)
+  })
+})
+
+test('AT02 saves a batch sequentially, suppresses double click and reconciles partial failure', async () => {
+  const rows = [participant('p1', null), participant('p2', null)]
+  const writes = []
+  let release
+  await attendanceCase(async (url, options) => {
+    if (String(url).includes('/scheduling/')) return Response.json({ className: 'Toán 8A' })
+    if (String(url).endsWith('/marks')) {
+      const body = JSON.parse(options.body); writes.push(body.participantId)
+      if (body.participantId === 'p2') return Response.json({ code: 'REVISION_STALE' }, { status: 409 })
+      await new Promise(resolve => { release = resolve })
+      rows[0] = { ...rows[0], status: body.status, revision: 2 }
+      return Response.json({ id: rows[0].attendanceId, revision: 2 })
+    }
+    return Response.json(sheetValue({ participants: rows }))
+  }, async () => {
+    await act(async () => { for (const s of document.querySelectorAll('select')) { s.value = 'ATTENDED'; s.dispatchEvent(new dom.window.Event('change', { bubbles: true })) } })
+    await act(async () => { findButton('Lưu nháp').click(); findButton('Lưu nháp').click(); await pause() })
+    assert.deepEqual(writes, ['p1'])
+    await act(async () => { release(); await pause() })
+    assert.deepEqual(writes, ['p1', 'p2'])
+    assert.match(document.body.textContent, /1\/2/)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.doesNotMatch(document.body.textContent, /Bản nháp đã lưu/)
+  })
+})
+
+test('AT02 rechecks revisions before finalize and never posts when another actor changed a row', async () => {
+  let reads = 0
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (String(url).includes('/scheduling/')) return Response.json({ className: 'Toán 8A' })
+    if (options.method !== 'GET') writes.push(url)
+    const value = sheetValue(); value.participants[0].revision = ++reads
+    return Response.json(value)
+  }, async () => {
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    assert.ok(document.querySelector('dialog[open]'))
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.match(document.body.textContent, /đã thay đổi/)
+    assert.deepEqual(writes, [])
+  })
+})
+
+test('AT02 confirmed success reloads persisted result; billed rows cannot be edited', async () => {
+  let finalized = false
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (String(url).includes('/scheduling/')) return Response.json({ className: 'Toán 8A' })
+    if (String(url).endsWith('/finalize')) { finalized = true; writes.push(options); return Response.json({ id: session, status: 'FINALIZED' }) }
+    return Response.json(sheetValue({ finalized }))
+  }, async () => {
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.equal(writes.length, 1)
+    assert.ok(writes[0].headers['Idempotency-Key'])
+    assert.match(document.body.textContent, /Kết quả đã xác nhận trên máy chủ/)
+    assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+  })
+  await attendanceCase(() => Response.json(sheetValue({ participants: [{ ...participant(), billingSourceLocked: true }] })), async () => {
+    assert.ok(document.querySelector('select').disabled)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.match(document.body.textContent, /đã được tính phí/)
+  })
 })

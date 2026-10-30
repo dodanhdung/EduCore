@@ -63,10 +63,11 @@ function ScreenPlaceholder({ route }: { route: ScreenRoute }) {
   </section>
 }
 
-function StatePage({ code, title, detail, navigate, to }: { code: string; title: string; detail: string; navigate: (path: string) => void; to?: string }) {
-  return <section className="panel state-page" role={code === 'Đang kiểm tra' ? 'status' : undefined}>
+function StatePage({ code, title, detail, navigate, to, onRetry }: { code: string; title: string; detail: string; navigate: (path: string) => void; to?: string; onRetry?: () => void }) {
+  return <section className="panel state-page" role={code === 'Đang kiểm tra' ? 'status' : onRetry ? 'alert' : undefined}>
     <span className="eyebrow">{code}</span><h1>{title}</h1><p>{detail}</p>
     {to && <Link to={to} navigate={navigate}>Quay về đăng nhập</Link>}
+    {onRetry && <button type="button" onClick={onRetry}>Thử kết nối lại</button>}
   </section>
 }
 
@@ -107,7 +108,11 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       onActivate={(email, otp, password, signal) => api.completeActivation(email, otp, password, signal)} />
     return <PublicLayout route={result.route} navigate={navigate} />
   }
-  if (result.kind === 'checking') return <StatePage code="Đang kiểm tra" title="Đang kiểm tra phiên" detail="Vui lòng chờ trong giây lát." navigate={navigate} />
+  if (result.kind === 'checking') return <StatePage code="Đang kiểm tra" title={state.status === 'authenticated' ? 'Đang xác minh quyền truy cập' : 'Đang kiểm tra phiên'} detail="Đang kết nối và kiểm tra quyền hiện hành. Vui lòng chờ trong giây lát." navigate={navigate} />
+  if (result.kind === 'navigation-unavailable') return <StatePage code="Chưa xác minh được quyền" title="Chưa thể kết nối để xác minh quyền truy cập" detail="Dữ liệu cần quyền truy cập tạm thời được ẩn. Vui lòng thử kết nối lại." navigate={navigate} onRetry={() => {
+    const current = controller.getSnapshot()
+    if (current.status === 'authenticated') void controller.revalidate(current.session.expiresAt - Date.now() <= 60_000).catch(() => {})
+  }} />
   if (result.kind === 'unauthenticated') return <StatePage code="Chưa đăng nhập" title="Cần đăng nhập" detail="Phiên đăng nhập chưa có, đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại." navigate={navigate} to="/login" />
   if (result.kind === 'tenant-selection') return <><TenantSelectionScreen tenants={state.status === 'authenticated' ? state.session.principal.allowedTenants : []} onSelect={async (id) => {
     if (!await controller.selectTenant(id)) return false
@@ -133,7 +138,7 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
       : (['AT01', 'AT02', 'AT03', 'AT04'] as string[]).includes(result.route.id)
         ? <SchedulingAttendanceProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
           id={result.route.id as 'AT01' | 'AT02' | 'AT03' | 'AT04'}
-          tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate} />
+          tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate} allowed={session!.navigation?.screenIds ?? []} />
       : (['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as string[]).includes(result.route.id)
         ? <BillingProduction key={`${tenant.id}:${result.route.id}:${result.params.draftId ?? result.params.invoiceId ?? ''}`}
             id={result.route.id as 'BL01' | 'BL02' | 'BL03' | 'BL04' | 'BL05' | 'BL06' | 'BL07'}
@@ -188,7 +193,11 @@ export default function App({ controller = sessions }: { controller?: SessionCon
   useEffect(() => {
     if (state.status !== 'authenticated' || !state.session.navigation) return
     const evidence = state.session.navigation
-    const timer = window.setTimeout(() => controller.expireNavigation(evidence), Math.max(0, evidence.validUntil - Date.now()))
+    const timer = window.setTimeout(() => {
+      if (!controller.expireNavigation(evidence)) return
+      const current = controller.getSnapshot()
+      if (current.status === 'authenticated') void controller.revalidate(current.session.expiresAt - Date.now() <= 60_000).catch(() => {})
+    }, Math.max(0, evidence.validUntil - Date.now()))
     return () => window.clearTimeout(timer)
   }, [state, controller])
   useEffect(() => {

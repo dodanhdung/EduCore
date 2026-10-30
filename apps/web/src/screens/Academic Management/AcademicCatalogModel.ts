@@ -6,7 +6,7 @@ export type CatalogItem = Subject | Level
 export type CatalogModel = { kind: 'AC05'; tab: CatalogTab; page: Page<CatalogItem>; query: string; sample: boolean; canCreate: boolean; canEdit: boolean }
 export type CourseModel = { kind: 'AC06'; page: Page<Course>; query: string; sample: boolean; canCreate: boolean; canEdit: boolean; choices: { subjects?: Page<Subject>; levels?: Page<Level> } }
 export type ClassesModel = { kind: 'AC07'; page: Page<ClassRow>; query: string; sample: boolean; canCreate: boolean; canEdit: boolean; canOpen: boolean; courses?: Page<Course> }
-export type ClassModel = { kind: 'AC08'; detail: ClassDetail; sample: boolean; canEdit: boolean; canBack: boolean; timezone: string; enrollmentAccess: 'available' | 'unavailable'; assignmentAccess: 'available' | 'unavailable' }
+export type ClassModel = { kind: 'AC08'; detail: ClassDetail; sample: boolean; canEdit: boolean; canBack: boolean; timezone: string; enrollmentCount?: number; enrollmentAccess: 'available' | 'unavailable'; assignmentAccess: 'available' | 'unavailable' }
 export type AcademicCatalogModel = CatalogModel | CourseModel | ClassesModel | ClassModel
 
 export function pageOf<T>(items: T[], page = 1, pageSize = 20, total = items.length): Page<T> {
@@ -21,8 +21,8 @@ export function courseModel(page: Page<Course>, query: string, sample: boolean, 
 export function classesModel(page: Page<ClassRow>, query: string, sample: boolean, canCreate: boolean, canEdit: boolean, canOpen: boolean, courses?: Page<Course>): ClassesModel {
   return { kind: 'AC07', page, query, sample, canCreate, canEdit, canOpen, courses }
 }
-export function classModel(detail: ClassDetail, sample: boolean, canEdit: boolean, canBack: boolean, timezone = 'UTC'): ClassModel {
-  return { kind: 'AC08', detail, sample, canEdit, canBack, timezone, enrollmentAccess: detail.enrollments === undefined ? 'unavailable' : 'available', assignmentAccess: detail.teacherAssignments === undefined ? 'unavailable' : 'available' }
+export function classModel(detail: ClassDetail, sample: boolean, canEdit: boolean, canBack: boolean, timezone = 'UTC', enrollmentCount?: number): ClassModel {
+  return { kind: 'AC08', detail, sample, canEdit, canBack, timezone, enrollmentCount, enrollmentAccess: detail.enrollments === undefined ? 'unavailable' : 'available', assignmentAccess: detail.teacherAssignments === undefined ? 'unavailable' : 'available' }
 }
 export function completeChoices<T>(page: Page<T> | undefined): page is Page<T> {
   return Boolean(page && page.items.length >= page.total)

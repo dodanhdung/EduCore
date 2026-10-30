@@ -32,9 +32,13 @@ function monthWindows(anchor: string) {
   return result
 }
 
-export function SchedulingProduction({ id, tenantId, token, selectedId, navigate, allowed = [], clock = () => new Date() }: {
+type SchedulingProps = {
   id: Id; tenantId: string; token: string; selectedId?: string; navigate: (path: string) => void; allowed?: readonly string[]; clock?: () => Date
-}) {
+}
+export function SchedulingProduction(props: SchedulingProps) {
+  return <SchedulingScope key={JSON.stringify([props.id, props.tenantId, props.token, props.selectedId])} {...props} />
+}
+function SchedulingScope({ id, tenantId, token, selectedId, navigate, allowed = [], clock = () => new Date() }: SchedulingProps) {
   const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10))
   const [reload, setReload] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -52,6 +56,7 @@ export function SchedulingProduction({ id, tenantId, token, selectedId, navigate
   const [choices, setChoices] = useState<ApiChoices>()
   const [caps, setCaps] = useState<ApiCaps>()
   const [draftPreview, setDraftPreview] = useState<ApiPreview | null>(null)
+  const [initialClassId] = useState(() => new URLSearchParams(window.location.search).get('classId') ?? '')
   const commandInFlight = useRef(false)
   const base = `/api/v1/tenants/${encodeURIComponent(tenantId)}/scheduling`
   const req = useCallback(<T,>(path: string, signal?: AbortSignal) => api.request<T>(`${base}${path}`, { accessToken: token, cache: 'no-store', signal }), [base, token])
@@ -73,7 +78,11 @@ export function SchedulingProduction({ id, tenantId, token, selectedId, navigate
           if (abort.signal.aborted) return
           setSessions([...new Map(pages.flatMap((page) => page.items).map((session) => [session.id, session])).values()])
           setTimeZone(pages[0].timeZone)
-          if (id === 'SC01') setCaps(await req<ApiCaps>('/capabilities', abort.signal))
+          if (id === 'SC01') {
+            const [capabilities, roomPage] = await Promise.all([req<ApiCaps>('/capabilities', abort.signal), allPages<ApiRoom>('/rooms', abort.signal).catch(() => null)])
+            if (abort.signal.aborted) return
+            setCaps(capabilities); setRooms(roomPage?.items ?? [])
+          }
           if (pages.some((page) => page.truncated)) setNotice('Danh sách quá lớn; một số buổi ngoài phạm vi phân trang chưa được tải.')
         } else if (id === 'SC02') {
           const [roomPage, blockPage, resourcePage, capabilities] = await Promise.all([allPages<ApiRoom>('/rooms', abort.signal), allPages<ApiBusy>('/unavailability', abort.signal), allPages<ApiChoice>('/resources', abort.signal), req<ApiCaps>('/capabilities', abort.signal)])
@@ -143,7 +152,7 @@ export function SchedulingProduction({ id, tenantId, token, selectedId, navigate
   return <div className="scheduling-production">
     {error && <p role="alert" className="scheduling-error">{error}</p>}
     {notice && <p role="status" className="scheduling-hint">{notice}</p>}
-    {id === 'SC01' && <CentralScheduleScreen data={data} state="ready" timeZone={timeZone} canCreate={!!caps?.scheduleCreate && allowed.includes('SC03')} onCreate={() => go('/schedule/create')} onOpenSession={allowed.includes('SC05') ? (sessionId) => go(`/schedule/sessions/${encodeURIComponent(sessionId)}`) : undefined} onPeriodChange={onPeriodChange} />}
+    {id === 'SC01' && <CentralScheduleScreen data={data} initialClassId={initialClassId} state="ready" timeZone={timeZone} canCreate={!!caps?.scheduleCreate && allowed.includes('SC03')} onCreate={() => go(`/schedule/create${initialClassId ? `?classId=${encodeURIComponent(initialClassId)}` : ''}`)} onOpenSession={allowed.includes('SC05') ? (sessionId) => go(`/schedule/sessions/${encodeURIComponent(sessionId)}`) : undefined} onPeriodChange={onPeriodChange} />}
     {id === 'SC02' && <ResourcesScreen data={data} state="ready" timeZone={timeZone} actions={{ canManageRooms: !!caps?.roomManage, canManageResources: !!caps?.resourceManage, busy,
       createRoom: async (form) => !!(caps?.roomManage && await send('/rooms', { code: form.code, name: form.name, capacity: Number(form.capacity), reason: form.reason })),
       updateRoom: async (roomId, form) => !!(caps?.roomManage && await send(`/rooms/${encodeURIComponent(roomId)}`, { capacity: Number(form.capacity), active: form.active === 'true', reason: form.reason }, 'PATCH')),
@@ -151,7 +160,7 @@ export function SchedulingProduction({ id, tenantId, token, selectedId, navigate
       confirmBlock: async (blockId) => !!(caps?.resourceManage && await send(`/unavailability/${encodeURIComponent(blockId)}/confirm`, { reason: 'Xác nhận lịch bận' })),
       cancelBlock: async (blockId) => !!(caps?.resourceManage && await send(`/unavailability/${encodeURIComponent(blockId)}/cancel`, { reason: 'Hủy lịch bận' })),
     }} />}
-    {id === 'SC03' && <CreateScheduleScreen data={data} timeZone={timeZone} canCreate={!!caps?.scheduleCreate} canConfirm={!!caps?.scheduleConfirm} busy={busy} onSaveDraft={createDraft} onCheckDraft={async (saved) => draftCheck(saved.id, saved.series)} onConfirmDraft={async (saved, reason) => !!(caps?.scheduleConfirm && saved.preview?.ready && !saved.preview.conflicts.length && await send(`${saved.series ? '/series' : '/sessions'}/${encodeURIComponent(saved.id)}/confirm`, { reason }))} />}
+    {id === 'SC03' && <CreateScheduleScreen data={data} initialClassId={initialClassId} onBack={() => go(initialClassId && allowed.includes('AC08') ? `/classes/${encodeURIComponent(initialClassId)}` : '/schedule')} timeZone={timeZone} canCreate={!!caps?.scheduleCreate} canConfirm={!!caps?.scheduleConfirm} busy={busy} onSaveDraft={createDraft} onCheckDraft={async (saved) => draftCheck(saved.id, saved.series)} onConfirmDraft={async (saved, reason) => !!(caps?.scheduleConfirm && saved.preview?.ready && !saved.preview.conflicts.length && await send(`${saved.series ? '/series' : '/sessions'}/${encodeURIComponent(saved.id)}/confirm`, { reason }))} />}
 {id === 'SC05' && <SessionDetailScreen data={data} selectedId={selectedId} timeZone={timeZone} clock={clock} canEdit={!!caps?.scheduleUpdate} onBack={() => go('/schedule')} actions={{ canConfirm: !!caps?.scheduleConfirm, canCancel: !!caps?.scheduleCancel, busy, draftPreview,
       onCheckDraft: async () => { if (!selectedId) return null; const result = await draftCheck(selectedId, false); setDraftPreview(result); return result },
       onConfirmDraft: async () => !!(selectedId && caps?.scheduleConfirm && draftPreview?.ready && !draftPreview.conflicts.length && await send(`/sessions/${encodeURIComponent(selectedId)}/confirm`, { reason: 'Xác nhận bản nháp' })),

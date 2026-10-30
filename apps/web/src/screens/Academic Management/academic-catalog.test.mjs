@@ -17,6 +17,8 @@ const { createRoot } = await import('react-dom/client')
 const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
 const { AcademicCatalogProduction } = await vite.ssrLoadModule('/src/screens/Academic Management/AcademicCatalogProduction.tsx')
 const { AcademicCatalogView } = await vite.ssrLoadModule('/src/screens/Academic Management/AcademicCatalogViews.tsx')
+const { AcademicClassSchedule } = await vite.ssrLoadModule('/src/screens/Academic Management/AcademicClassSchedule.tsx')
+const { AcademicAdmission } = await vite.ssrLoadModule('/src/screens/Academic Management/AcademicAdmission.tsx')
 const { courseModel, classesModel, classModel, pageOf, completeChoices, editorBody, editorError, newEditor } = await vite.ssrLoadModule('/src/screens/Academic Management/AcademicCatalogModel.ts')
 const root = createRoot(dom.window.document.getElementById('root'))
 after(async () => { await act(async () => root.unmount()); await vite.close(); dom.window.close() })
@@ -29,6 +31,51 @@ async function mount(id, extra = {}) {
 }
 async function click(button) { assert.ok(button, 'expected button'); await act(async () => button.click()) }
 const find = (text) => [...dom.window.document.querySelectorAll('button')].find(button => button.textContent.trim() === text)
+
+test('AC08 schedule filters the authorized calendar by class, deduplicates windows and navigates with class context', async () => {
+  const stamp = new Date().toISOString()
+  const session = { id: 'session-one', classId: 'class-a', className: 'Toán 8A', teacherName: 'Mai Phương', startsAt: stamp, endsAt: stamp, status: 'CONFIRMED' }
+  reply = () => Response.json(page([session, { ...session, id: 'other-session', classId: 'other-class', teacherName: 'Other teacher' }]))
+  const navigation = []
+  await act(async () => { root.render(React.createElement(AcademicClassSchedule, { key: ++seq, tenantId: 'tenant-a', token: 'token-a', classId: 'class-a', timezone: 'Asia/Ho_Chi_Minh', allowed: ['SC03', 'SC05', 'AT02'], navigate: path => navigation.push(path) })); await new Promise(resolve => setTimeout(resolve, 35)) })
+  assert.equal(document.querySelectorAll('tbody tr').length, 1)
+  assert.match(document.body.textContent, /Mai Phương/)
+  assert.doesNotMatch(document.body.textContent, /Other teacher/)
+  await click(find('Tạo buổi cho lớp'))
+  assert.equal(navigation.at(-1), '/app/tenant-a/schedule/create?classId=class-a')
+  await click(find('Bảng điểm danh'))
+  assert.equal(navigation.at(-1), '/app/tenant-a/sessions/session-one/attendance')
+})
+
+test('AC08 enrollment uses API names and scoped placement, sends UUID only in business payload', async () => {
+  const writes = []
+  reply = (url, options) => {
+    if (options.method === 'POST') { writes.push(options); return Response.json({ id: 'enrollment-new', status: 'ACTIVE' }) }
+    if (url.includes('/permissions/')) return Response.json({ ...caps, enroll: true, tenantTimezone: 'UTC' })
+    if (url.includes('/placement-context')) return Response.json({ targetSubjectId: 'subject-a', targetLevelId: 'level-a', publishedAssessments: [] })
+    return Response.json(page([{ id: 'student-one', code: 'HS01', name: 'Trần Bảo Ngọc', status: 'ACTIVE' }]))
+  }
+  await act(async () => { root.render(React.createElement(AcademicAdmission, { key: ++seq, tenantId: 'tenant-a', token: 'token-a', classId: 'class-a', enrollments: [], onChanged() {} })); await new Promise(resolve => setTimeout(resolve, 35)) })
+  assert.match(document.body.textContent, /Trần Bảo Ngọc/)
+  assert.doesNotMatch(document.body.textContent, /Mã định danh/)
+  async function enter(selector, value, type = 'input') {
+    await act(async () => { const element = document.querySelector(selector); const proto = element.tagName === 'SELECT' ? dom.window.HTMLSelectElement.prototype : element.tagName === 'TEXTAREA' ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value); element.dispatchEvent(new dom.window.Event(type, { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 20)) })
+  }
+  // Select explicitly by its API option rather than depending on presentation order.
+  const studentSelect = [...document.querySelectorAll('select')].find(s => s.querySelector('option[value="student-one"]'))
+  await act(async () => { studentSelect.value = 'student-one'; studentSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 25)) })
+  await enter('input[type="datetime-local"]', new Date(Date.now() + 86400000).toISOString().slice(0, 16))
+  await enter('textarea', 'Xác nhận đầu vào phù hợp')
+  await act(async () => document.querySelector('input[type="checkbox"]').click())
+  await click(find('Xác nhận ghi danh'))
+  assert.equal(writes.length, 1)
+  const body = JSON.parse(writes[0].body)
+  assert.equal(body.classId, 'class-a')
+  assert.equal(body.studentId, 'student-one')
+  assert.equal(body.placement.subjectId, 'subject-a')
+  assert.equal(body.confirmed, true)
+  assert.ok(writes[0].headers['Idempotency-Key'])
+})
 
 test('AC05 keeps tab data independent, level order only, and sends exact catalog update body', async () => {
   calls.length = 0
@@ -83,7 +130,7 @@ test('AC07 keeps class list when optional courses 403 and displays server count/
   const row = { id: 'class-a', code: 'CL-01', name: 'Class A', status: 'COMPLETED', courseId: 'course-a', courseName: 'Course A', capacity: 18, enrollmentCount: 0 }
   const html = renderToStaticMarkup(React.createElement(AcademicCatalogView, { model: classesModel(page([row]), '', false, false, false, false) }))
   assert.match(html, /0 \/ 18/)
-  assert.match(html, /COMPLETED/)
+  assert.match(html, /Đã hoàn tất/)
 })
 
 test('AC08 distinguishes omitted arrays from empty arrays and keeps history ranges', () => {
@@ -97,7 +144,7 @@ test('AC08 distinguishes omitted arrays from empty arrays and keeps history rang
   assert.match(empty, /Chưa có ghi danh/)
   assert.match(empty, /Chưa có phân công/)
   const history = renderToStaticMarkup(React.createElement(AcademicCatalogView, { model: classModel({ ...base, enrollments: [{ id: 'e-1', studentCode: 'HS-01', studentName: 'Lan', status: 'PENDING', effectiveFrom: '2026-11-01', effectiveTo: null, priorEnrollmentId: 'e-0' }], teacherAssignments: [{ id: 'a-1', teacherName: 'Mai', validFrom: '2026-09-01', validTo: '2026-10-01' }] }, false, false, false) }))
-  assert.match(history, /PENDING/)
+  assert.match(history, /Chờ xử lý/)
   assert.match(history, /e-0/)
   assert.match(history, /01\/11\/2026/)
   assert.match(history, /01\/10\/2026/)

@@ -77,7 +77,7 @@ test('SC01 changes calendar modes, periods and today; a non-first event opens it
     const event = [...view.document.querySelectorAll('.scheduling-event')].find((node) => node.textContent.includes('IELTS-03'))
     assert.ok(event)
     await act(async () => event.click())
-    assert.match(view.document.querySelector('[role="dialog"]').textContent, /Mai Phương · Phòng P.302/)
+    assert.match(view.document.querySelector('[role="dialog"]').textContent, /Mai Phương · Phòng IELTS/)
     assert.doesNotMatch(view.document.querySelector('[role="dialog"]').textContent, /Đã lưu thành công/)
   } finally { await view.close() }
 })

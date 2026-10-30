@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { addDays, formatInstant, tenantLocalDate } from './SchedulingDates.ts'
 import './SchedulingScreens.css'
 import '../Attendance & Leave/AttendanceScreens.css'
+import { ManagerAttendanceList, ManagerAttendanceSheet } from '../Attendance & Leave/ManagerAttendanceView.tsx'
+import { ResourceState } from '../../shared/ui/SharedUI.tsx'
 
 type Id = 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'
 type Page<T> = { items: T[]; page: number; pageSize: number; total: number; timeZone: string }
@@ -41,12 +43,16 @@ function navigateTo(tenantId: string, path: string, navigate: (path: string) => 
 }
 function newKey() { return crypto.randomUUID() }
 
-export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId, navigate }: {
-  id: Id; tenantId: string; token: string; selectedId?: string; navigate: (path: string) => void
-}) {
+type Props = { id: Id; tenantId: string; token: string; selectedId?: string; navigate: (path: string) => void; allowed?: readonly string[] }
+export function SchedulingAttendanceProduction(props: Props) {
+  return <AttendanceScope key={JSON.stringify([props.id, props.tenantId, props.token, props.selectedId])} {...props} />
+}
+function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = [] }: Props) {
   const [reload, setReload] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [readStatus, setReadStatus] = useState<number | null>(null)
+  const [loadedRead, setLoadedRead] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [zone, setZone] = useState('')
@@ -60,6 +66,7 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
   const [session, setSession] = useState<Session | null>(null)
   const [due, setDue] = useState<Due[]>([])
   const [sheet, setSheet] = useState<Sheet | null>(null)
+  const [sheetClassName, setSheetClassName] = useState('')
   const [leaves, setLeaves] = useState<Leave[]>([])
   const [eligible, setEligible] = useState<Eligible[]>([])
   const [form, setForm] = useState<Record<string, string>>({})
@@ -72,20 +79,32 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
   const [teacherFilter, setTeacherFilter] = useState('')
   const [roomFilter, setRoomFilter] = useState('')
   const [openedAt] = useState(() => Date.now())
+  const readScope = JSON.stringify([id, selectedId, reload, month])
+  const marking = useRef(false)
+  const active = useRef(true)
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
 
   const req = useCallback(<T,>(area: 'scheduling' | 'attendance', path: string, signal?: AbortSignal) =>
     api.request<T>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/${area}${path}`,
       { accessToken: token, cache: 'no-store', signal }), [tenantId, token])
-  const command = async (area: 'scheduling' | 'attendance', path: string, body: Record<string, unknown>, method: 'POST' | 'PATCH' = 'POST') => {
-    setBusy(true); setError(''); setNotice('')
+  const command = useCallback(async (area: 'scheduling' | 'attendance', path: string, body: Record<string, unknown>, method: 'POST' | 'PATCH' = 'POST', refresh = true) => {
+    if (!active.current) return null
+    if (refresh) { setBusy(true); setError(''); setNotice('') }
     try {
       const value = await api.request<CommandResult>(`/api/v1/tenants/${encodeURIComponent(tenantId)}/${area}${path}`,
         { method, body, accessToken: token, idempotencyKey: newKey(), cache: 'no-store' })
-      setReload((n) => n + 1)
-      setNotice('Đã lưu trên máy chủ.')
+      if (!active.current) return null
+      if (refresh) { setReload((n) => n + 1); setNotice('Đã lưu trên máy chủ.') }
       return value
-    } catch (cause) { setError(phaseMessage(cause)); return null } finally { setBusy(false) }
-  }
+    } catch (cause) {
+      if (active.current) {
+        const status = cause instanceof ApiError ? cause.status : 0
+        setError(status === 0 || status >= 500 ? 'Kết quả lưu chưa xác định. Đọc lại dữ liệu trước khi thao tác tiếp.' : phaseMessage(cause))
+        if (status === 401 || status === 403) { setSheet(null); setDue([]); setForm({}); setReadStatus(status) }
+      }
+      return null
+    } finally { if (refresh && active.current) setBusy(false) }
+  }, [tenantId, token])
   const allPages = useCallback(async <T,>(area: 'scheduling' | 'attendance', path: string, signal: AbortSignal) => {
     const first = await req<Page<T>>(area, `${path}${path.includes('?') ? '&' : '?'}pageSize=100`, signal)
     const pages = Math.min(Math.ceil(first.total / 100), 20)
@@ -95,7 +114,7 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
   }, [req])
   useEffect(() => {
     const abort = new AbortController()
-    queueMicrotask(() => { if (!abort.signal.aborted) { setLoading(true); setError('') } })
+    queueMicrotask(() => { if (!abort.signal.aborted) { setLoading(true); setError(''); setReadStatus(null) } })
     void (async () => {
       try {
         if (id === 'SC01' || id === 'SC06') {
@@ -125,10 +144,15 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
         } else if (id === 'AT01') {
           const pages = await Promise.all(range(month).map(([from, to]) =>
             allPages<Due>('attendance', `/due?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, abort.signal)))
+          if (abort.signal.aborted) return
           setDue([...new Map(pages.flatMap((p) => p.items).map((s) => [s.id, s])).values()]); setZone(pages[0].timeZone)
+          if (pages.some(p => p.truncated)) setNotice('Danh sách vượt giới hạn tải. Kết quả hiện tại chưa đầy đủ.')
         } else if (id === 'AT02' && selectedId) {
           const s = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(selectedId)}`, abort.signal)
+          if (abort.signal.aborted) return
           setSheet(s); setZone(s.timeZone)
+          const detail = await req<Session>('scheduling', `/sessions/${encodeURIComponent(selectedId)}`, abort.signal).catch(() => undefined)
+          if (!abort.signal.aborted) setSheetClassName(detail?.className ?? '')
         } else if (id === 'AT03') {
           const p = await allPages<Eligible>('attendance', '/my-participants', abort.signal)
           setEligible(p.items); setZone(p.timeZone)
@@ -136,11 +160,11 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
           const p = await allPages<Leave>('attendance', '/leaves', abort.signal)
           setLeaves(p.items); setZone(p.timeZone)
         } else throw Error('MISSING_TARGET')
-      } catch (cause) { if (!abort.signal.aborted) setError(phaseMessage(cause)) }
-      finally { if (!abort.signal.aborted) setLoading(false) }
+      } catch (cause) { if (!abort.signal.aborted) { setError(phaseMessage(cause)); setReadStatus(cause instanceof ApiError ? cause.status : 0); setSheet(null); setDue([]); setForm({}) } }
+      finally { if (!abort.signal.aborted) { setLoadedRead(readScope); setLoading(false) } }
     })()
     return () => abort.abort()
-  }, [id, selectedId, reload, month, allPages, req])
+  }, [id, selectedId, reload, month, allPages, req, readScope])
   useEffect(() => {
     if (!zone) return
     const local = tenantLocalDate(zone)
@@ -168,30 +192,39 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
     catch (cause) { setError(phaseMessage(cause)) }
   }
   const saveMarks = async () => {
-    if (!sheet) return
+    if (!sheet || marking.current || busy || !active.current || !['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized) return
     for (const p of sheet.participants) {
       const value = form[`status:${p.id}`] ?? p.status
       if (!value || (value === 'EXCUSED' && !p.approvedLeave)) { setError('Chọn kết quả hợp lệ cho mỗi học sinh.'); return }
     }
-    for (const p of sheet.participants) {
-      const value = form[`status:${p.id}`] ?? p.status
-      if (value === p.status) continue
-      const result = await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/marks`,
-        { participantId: p.id, status: value, revision: p.revision, reason: 'Lưu nháp điểm danh' })
-      if (!result) return
-    }
+    marking.current = true; setBusy(true); setError(''); setNotice('')
     try {
+      let complete = true
+      for (const p of sheet.participants) {
+        if (!active.current) return
+        const value = form[`status:${p.id}`] ?? p.status
+        if (value === p.status) continue
+        const result = await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/marks`,
+          { participantId: p.id, status: value, revision: p.revision, reason: 'Lưu nháp điểm danh' }, 'POST', false)
+        if (!result) { complete = false; break }
+      }
+      if (!active.current) return
       const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
+      if (!active.current) return
       setSheet(persisted)
-      setNotice('Bản nháp đã lưu. Xác nhận là bước riêng.')
-    } catch (cause) { setError(phaseMessage(cause)) }
+      if (complete) { setForm({}); setNotice('Bản nháp đã lưu. Xác nhận là bước riêng.') }
+    } catch (cause) { if (active.current) { setError(phaseMessage(cause)); if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setSheet(null); setForm({}); setReadStatus(cause.status) } } }
+    finally { marking.current = false; if (active.current) setBusy(false) }
   }
   const hasUnsavedMarks = !!sheet && sheet.participants.some((p) => (form[`status:${p.id}`] ?? p.status) !== p.status)
   const finalize = async () => {
+    if (marking.current || busy || !active.current) return
     if (!sheet || hasUnsavedMarks) { setError('Lưu thay đổi điểm danh trước khi xác nhận.'); return }
-    setBusy(true)
+    if (!['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now()) return
+    marking.current = true; setBusy(true)
     try {
       const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
+      if (!active.current) return
       const unchanged = persisted.participants.length === sheet.participants.length && persisted.participants.every((p) => {
         const displayed = sheet.participants.find((row) => row.id === p.id)
         return displayed && displayed.status === p.status && displayed.revision === p.revision
@@ -202,7 +235,7 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
         setError('Cần lưu đủ kết quả trước khi xác nhận.'); return
       }
       await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' })
-    } catch (cause) { setError(phaseMessage(cause)) } finally { setBusy(false) }
+    } catch (cause) { if (active.current) { setError(phaseMessage(cause)); if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setSheet(null); setForm({}); setReadStatus(cause.status) } } } finally { marking.current = false; if (active.current) setBusy(false) }
   }
   const localDay = (iso: string) => tenantLocalDate(zone, new Date(iso)) ?? ''
   const filteredCalendar = calendar.filter((s) => (!classFilter || s.classId === classFilter)
@@ -211,6 +244,20 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
     : mode === 'day' ? localDay(s.startsAt) === day
       : localDay(s.startsAt) >= addDays(day, -((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7))
         && localDay(s.startsAt) < addDays(day, 7 - ((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7))))
+  if (id === 'AT01' || id === 'AT02') {
+    if (loading || loadedRead !== readScope) return <section className="attendance-page"><ResourceState kind="loading" /></section>
+    if (readStatus !== null) return <section className="attendance-page"><ResourceState kind={readStatus === 401 ? 'unauthenticated' : readStatus === 403 ? 'forbidden' : readStatus === 404 ? 'not-found' : 'error'} onRetry={![401, 403, 404].includes(readStatus) ? () => setReload(n => n + 1) : undefined} /></section>
+    if (id === 'AT01') return <>{notice && <p role="status">{notice}</p>}<ManagerAttendanceList sessions={due} zone={zone} month={month} onMonth={setMonth} onOpen={sessionId => go(`/sessions/${encodeURIComponent(sessionId)}/attendance`)} /></>
+    if (!sheet) return <ResourceState kind="not-found" />
+    return <ManagerAttendanceSheet sheet={sheet} className={sheetClassName} busy={busy} values={form} hasUnsaved={hasUnsavedMarks} notice={notice} error={error}
+      onChoose={(participantId, value) => { update(`status:${participantId}`, value); setNotice('') }} onSave={saveMarks} onFinalize={finalize} onBack={() => go('/attendance')}
+      onClass={allowed.includes('AC08') ? () => go(`/classes/${encodeURIComponent(sheet.classId)}`) : undefined}
+      corrections={sheet.finalized && <section className="attendance-card"><h2>Đề nghị điều chỉnh</h2><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>{sheet.participants.filter(p => p.attendanceId).map(p => <details key={p.id}><summary>{p.name}</summary>
+        {p.billingSourceLocked && <p>{p.invoiceIssued ? 'Hóa đơn đã phát hành: cần điều chỉnh tài chính riêng.' : 'Nguồn đã dùng trong bản nháp tính phí, điều chỉnh trực tiếp đang khóa.'}</p>}
+        <select aria-label={`Trạng thái mới ${p.name}`} disabled={busy || p.billingSourceLocked} value={form[`correct:${p.id}`] ?? ''} onChange={e => update(`correct:${p.id}`, e.target.value)}>
+          <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option><option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>
+        {input(`reason:${p.id}`, 'Lý do điều chỉnh')}{action('Gửi điều chỉnh', () => { void command('attendance', `/records/${p.attendanceId}/correct`, { status: form[`correct:${p.id}`], revision: p.revision, reason: form[`reason:${p.id}`] }) }, p.billingSourceLocked || !form[`correct:${p.id}`] || !form[`reason:${p.id}`]?.trim())}</details>)}</section>} />
+  }
   return <section className="scheduling-page attendance-page">
     <h1>{({ SC01: 'Lịch học trung tâm', SC02: 'Phòng học và lịch bận', SC03: 'Tạo lịch học', SC05: 'Chi tiết buổi học', SC06: 'Lịch cá nhân',
       AT01: 'Buổi cần điểm danh', AT02: 'Điểm danh buổi học', AT03: 'Gửi đơn xin nghỉ', AT04: 'Đơn xin nghỉ' } as Record<Id, string>)[id]}</h1>
@@ -294,27 +341,6 @@ export function SchedulingAttendanceProduction({ id, tenantId, token, selectedId
           {caps?.scheduleCancel && <div><h2>Hủy buổi</h2>{input('cancelReason', 'Lý do hủy')}
             {action('Xác nhận hủy', () => { void command('scheduling', `/sessions/${session.id}/cancel`, { revision: session.revision, reason: form.cancelReason }) })}</div>}
         </>}
-      </>}
-      {id === 'AT01' && <><label>Tháng <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} /></label>
-        {due.length ? <ul>{due.map((s) => <li key={s.id}><button onClick={() => go(`/sessions/${s.id}/attendance`)}>{s.className}</button>
-          {' '}· {dateTime(s.startsAt, zone)} · {s.expectedCount} học sinh · {s.finalized ? 'Đã xác nhận' : 'Chưa xác nhận'}</li>)}</ul> : <p>Không có buổi cần điểm danh.</p>}</>}
-      {id === 'AT02' && sheet && <><p>{dateTime(sheet.startsAt, zone)} · {sheet.finalized ? 'Đã xác nhận' : 'Bản nháp'}</p>
-        {sheet.participants.length ? <ul>{sheet.participants.map((p) => <li key={p.id}><strong>{p.name}</strong> · {p.enrollmentId ?? 'Không có ghi danh'}
-          {!sheet.finalized && <select aria-label={`Điểm danh ${p.name}`} disabled={busy || loading} value={form[`status:${p.id}`] ?? p.status ?? ''} onChange={(e) => update(`status:${p.id}`, e.target.value)}>
-            <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option>
-            <option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>}
-          {sheet.finalized && <span> {p.status ?? 'Chưa có'} · {p.approvedLeave ? 'Đã duyệt nghỉ' : 'Không có đơn nghỉ được duyệt'}</span>}
-          {p.billingSourceLocked && <p>{p.invoiceIssued
-            ? 'Hóa đơn đã phát hành: không sửa nguồn điểm danh trực tiếp; cần điều chỉnh tài chính riêng.'
-            : 'Nguồn đã được dùng trong bản nháp tính phí; điều chỉnh trực tiếp đang bị khóa.'}</p>}
-          {sheet.finalized && p.attendanceId && <details><summary>Đề nghị điều chỉnh</summary><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>
-            <select aria-label={`Trạng thái mới ${p.name}`} value={form[`correct:${p.id}`] ?? ''} onChange={(e) => update(`correct:${p.id}`, e.target.value)}>
-              <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option><option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>
-            {input(`reason:${p.id}`, 'Lý do điều chỉnh')}{action('Gửi điều chỉnh', () => { void command('attendance', `/records/${p.attendanceId}/correct`,
-              { status: form[`correct:${p.id}`], revision: p.revision, reason: form[`reason:${p.id}`] }) }, p.billingSourceLocked)}</details>}
-        </li>)}</ul> : <p>Danh sách tham gia trống; không thể xác nhận.</p>}
-        {!sheet.finalized && <div className="attendance-actions">{action('Lưu nháp', () => { void saveMarks() }, !sheet.participants.length)}
-          {action('Xác nhận đầy đủ', () => { void finalize() }, loading || hasUnsavedMarks || !sheet.participants.length || sheet.participants.some((p) => !p.status))}</div>}
       </>}
       {id === 'AT03' && <><p>Đơn nghỉ đúng hạn vẫn phải chờ người có quyền duyệt. Đơn dưới 24 giờ cần quyền duyệt ngoại lệ.</p>
         <label className="attendance-field">Buổi và học sinh<select value={form.participantId ?? ''} onChange={(e) => update('participantId', e.target.value)}><option value="">Chọn</option>

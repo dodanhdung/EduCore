@@ -355,7 +355,7 @@ test('Phase B evidence timer clears only its captured session and keeps AU05', a
   evidence.validUntil = Date.now() - 1
   controller.expireNavigation(evidence)
   assert.equal(controller.getSnapshot().session.navigation, undefined)
-  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'checking')
   assert.equal(resolveRoute(`/app/${tenantA}/me`, controller.getSnapshot()).kind, 'screen')
 })
 
@@ -363,7 +363,7 @@ test('R7 no evidence or role labels alone grant no business routes', async () =>
   const { controller } = await selected()
   const state = controller.getSnapshot()
   for (const role of ['MANAGER', 'TEACHER', 'PARENT']) {
-    assert.equal(resolveRoute(`/app/${tenantA}/students`, { ...state, session: { ...state.session, roles: [role] } }).kind, 'forbidden')
+    assert.equal(resolveRoute(`/app/${tenantA}/students`, { ...state, session: { ...state.session, roles: [role] } }).kind, 'navigation-unavailable')
   }
   assert.deepEqual(navigationRoutes(state.session).map((r) => r.id), ['AU05'])
 })
@@ -384,11 +384,123 @@ test('R7 permission loss removes navigation and previous protected route', async
   assert.equal(resolveRoute(`/app/${tenantA}/students`, controller.getSnapshot()).kind, 'forbidden')
 })
 
+test('R13 tab revalidation stays checking through delayed me/navigation and coalesces rapid focus checks', async () => {
+  const meGate = deferred(), navGate = deferred(), meEntered = deferred(), navEntered = deferred()
+  let hold = false
+  const { controller, calls, state } = await selected({ navigation: true, fault: async path => {
+    if (!hold) return
+    if (path.endsWith('/me')) { meEntered.resolve(); await meGate.promise }
+    if (path.endsWith('/navigation')) { navEntered.resolve(); await navGate.promise }
+  } })
+  state.screenIds = ['G01']; await controller.revalidate()
+  const path = `/app/${tenantA}/overview`, old = controller.getSnapshot().session.navigation
+  const phases = [], before = calls.length
+  const unsubscribe = controller.subscribe(() => phases.push(resolveRoute(path, controller.getSnapshot()).kind))
+  hold = true
+  const pending = controller.revalidate()
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking', 'synchronous focus state')
+  assert.equal(canView(routes.find(r => r.id === 'G01'), controller.getSnapshot().session, tenantA, old), false)
+  for (let i = 0; i < 10; i++) assert.equal(controller.revalidate(), pending)
+  await meEntered.promise
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking')
+  meGate.resolve(); await navEntered.promise
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking')
+  navGate.resolve(); assert.equal(await pending, true)
+  unsubscribe()
+  assert.deepEqual(phases, ['checking', 'screen'])
+  assert.equal(calls.slice(before).filter(c => c.path.endsWith('/me')).length, 1)
+  assert.equal(calls.slice(before).filter(c => c.path.endsWith('/navigation')).length, 1)
+  assert.equal(calls.slice(before).filter(c => c.path.endsWith('/refresh')).length, 0)
+})
+
+test('R13 expired 60-second evidence is checking even before its timer fires and requires fresh grants', async () => {
+  const { controller } = await selected({ navigation: true })
+  const old = controller.getSnapshot().session.navigation, now = Date.now
+  const path = `/app/${tenantA}/settings/members`
+  Date.now = () => old.validUntil
+  try {
+    assert.equal(canView(routes.find(r => r.id === 'OP01'), controller.getSnapshot().session, tenantA, old), false)
+    assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking')
+    assert.equal(controller.expireNavigation(old), true)
+    assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking')
+    assert.equal(await controller.revalidate(), true)
+    assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'screen')
+    assert.ok(controller.getSnapshot().session.navigation.validUntil > Date.now())
+    assert.equal(controller.expireNavigation(old), false, 'stale timer cannot invalidate renewed evidence')
+  } finally { Date.now = now }
+})
+
+test('R13 revoked grants show forbidden only after fresh navigation confirms denial', async () => {
+  let hold = false
+  const gate = deferred(), entered = deferred()
+  const { controller, state } = await selected({ navigation: true, fault: async path => {
+    if (hold && path.endsWith('/navigation')) { entered.resolve(); await gate.promise }
+  } })
+  hold = true
+  const pending = controller.revalidate(), path = `/app/${tenantA}/settings/members`
+  await entered.promise
+  state.screenIds = []
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'checking')
+  gate.resolve(); await pending
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'forbidden')
+  assert.deepEqual(navigationRoutes(controller.getSnapshot().session).map(r => r.id), ['AU05'])
+})
+
+test('R13 network failure is unavailable, never forbidden or cached authorization, and permits explicit recovery', async () => {
+  let unavailable = false
+  const { controller } = await selected({ navigation: true, fault: path => {
+    if (unavailable && path.endsWith('/navigation')) throw new TypeError('network')
+  } })
+  const old = controller.getSnapshot().session.navigation, path = `/app/${tenantA}/settings/members`
+  unavailable = true; await controller.revalidate()
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'navigation-unavailable')
+  assert.equal(canView(routes.find(r => r.id === 'OP01'), controller.getSnapshot().session, tenantA, old), false)
+  unavailable = false; await controller.revalidate()
+  assert.equal(resolveRoute(path, controller.getSnapshot()).kind, 'screen')
+})
+
+test('R13 stale revalidation response cannot restore an old tenant or a logged-out session', async () => {
+  for (const change of ['tenant', 'logout']) {
+    let hold = false
+    const gate = deferred(), entered = deferred()
+    const { controller } = await selected({ navigation: true, fault: async path => {
+      if (hold && path.endsWith('/navigation')) { hold = false; entered.resolve(); await gate.promise }
+    } })
+    hold = true
+    const pending = controller.revalidate()
+    await entered.promise
+    const transition = change === 'tenant' ? controller.selectTenant(tenantB) : controller.logout()
+    assert.equal(controller.getSnapshot().status === 'authenticated' ? controller.getSnapshot().session.navigation : undefined, undefined)
+    gate.resolve(); assert.equal(await pending, false); await transition
+    if (change === 'logout') assert.equal(controller.getSnapshot().status, 'unauthenticated')
+    else {
+      assert.equal(controller.getSnapshot().session.principal.tenantId, tenantB)
+      assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'forbidden')
+      assert.equal(resolveRoute(`/app/${tenantB}/settings/members`, controller.getSnapshot()).kind, 'screen')
+    }
+  }
+})
+
+test('R13 hard session expiry wins over delayed permission revalidation', async () => {
+  let hold = false
+  const gate = deferred(), entered = deferred()
+  const { controller } = await selected({ navigation: true, fault: async path => {
+    if (hold && path.endsWith('/navigation')) { entered.resolve(); await gate.promise }
+  } })
+  hold = true
+  const pending = controller.revalidate()
+  await entered.promise
+  controller.expire()
+  gate.resolve(); assert.equal(await pending, false)
+  assert.equal(controller.getSnapshot().status, 'unauthenticated')
+  assert.equal(controller.getSnapshot().reason, 'session-expired')
+})
+
 for (const status of [403, 404, 409, 503]) {
   test(`R7 navigation ${status} never fabricates grants`, async () => {
     const { controller } = await selected({ navigation: true, fault: (path) => path.endsWith('/navigation') && json({}, status) })
     assert.equal(controller.getSnapshot().session.navigation, undefined)
-    assert.equal(resolveRoute(`/app/${tenantA}/students`, controller.getSnapshot()).kind, 'forbidden')
+    assert.equal(resolveRoute(`/app/${tenantA}/students`, controller.getSnapshot()).kind, status === 403 ? 'forbidden' : 'navigation-unavailable')
   })
 }
 
@@ -419,7 +531,7 @@ test('Phase B navigation response arriving after its request deadline cannot gra
   Date.now = () => started + 60_001
   try { gate.resolve(); assert.equal(await select, true) } finally { Date.now = now }
   assert.equal(controller.getSnapshot().session.navigation, undefined)
-  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantA}/settings/members`, controller.getSnapshot()).kind, 'navigation-unavailable')
 })
 
 test('Phase B navigation 401 invalidates the local session', async () => {

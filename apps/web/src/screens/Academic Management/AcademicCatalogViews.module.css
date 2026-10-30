@@ -2,6 +2,13 @@
 .root>div{grid-template-columns:minmax(0,1fr)}
 .root>div>div{min-width:0}
 .root *{box-sizing:border-box}
+.root :global(.academic-admission-fields){border:0;padding:0;margin:0;display:grid;gap:14px;min-width:0}
+.root :global(.academic-class-schedule) input{font:inherit;padding:9px;border:1px solid var(--ec-border);border-radius:8px}
+.root :global(.academic-field):has(input[type="checkbox"]){display:flex;align-items:center;gap:10px}
+.root :global(.academic-field) input[type="checkbox"]{width:18px;height:18px;min-height:18px;flex:0 0 18px;margin:0}
+.operation{border:1px solid var(--ec-border);background:var(--ec-surface);border-radius:12px;padding:16px 22px;margin-bottom:20px}
+.operation>summary{cursor:pointer;color:var(--ec-primary);font-weight:700;min-height:44px;align-content:center}
+.operation[open]>summary{margin-bottom:16px}
 .root button{cursor:pointer;min-height:36px}
 .root button:focus-visible,.root input:focus-visible,.root select:focus-visible{outline:3px solid #2c83db;outline-offset:2px}
 .primary{border:1px solid #135eaa;background:#1267b5;color:#fff;border-radius:8px;padding:10px 17px;font-weight:700}
@@ -16,6 +23,7 @@
 .panel{min-width:0;border:1px solid #dce5ed;border-radius:12px;background:#fff;padding:20px 22px;margin:0 0 20px;box-shadow:0 2px 8px #19374b09}
 .panelHead{margin:0 0 16px}.panelHead h2{font-size:17px;line-height:1.4;margin:0 0 4px}.panelHead p,.note{color:#5b6c7c;font-size:13px;line-height:1.5;margin:4px 0 12px}
 .twoColumns{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px}.twoColumns .panel{min-width:0}
+.root[data-screen-id="AC08"] .twoColumns{grid-template-columns:1fr}
 .details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0}.details div{min-width:0}.details dt{color:#65788a;font-size:12px}.details dd{margin:5px 0 0;font-weight:650;overflow-wrap:anywhere}
 .editorOverlay{position:fixed;inset:0;z-index:100;background:#162f4488;display:grid;place-items:center;padding:20px}
 .editorDialog{width:min(560px,100%);max-height:min(90vh,850px);overflow:auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 24px 80px #0004}

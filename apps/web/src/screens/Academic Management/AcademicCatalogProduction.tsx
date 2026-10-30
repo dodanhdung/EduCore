@@ -3,6 +3,7 @@ import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import type { AcademicId, Capabilities, ClassDetail, ClassRow, Course, Level, Page, Subject } from './AcademicApi.ts'
 import { AcademicAdmission } from './AcademicAdmission.tsx'
 import { AcademicTeacherAssignment } from './AcademicTeacherAssignment.tsx'
+import { AcademicClassSchedule } from './AcademicClassSchedule.tsx'
 import { AcademicCatalogEditor } from './AcademicCatalogEditor.tsx'
 import { AcademicCatalogStatusView, AcademicCatalogView } from './AcademicCatalogViews.tsx'
 import type { Editor, EditorKind } from './AcademicCatalogViews.tsx'
@@ -13,7 +14,7 @@ const api = new ApiClient(import.meta.env.VITE_API_BASE_URL ?? '')
 type Id = Extract<AcademicId, 'AC05' | 'AC06' | 'AC07' | 'AC08'>
 type Props = { id: Id; tenantId: string; token: string; selectedId?: string; navigate: (next: string) => void; allowed?: readonly string[] }
 type Phase = 'loading' | 'ready' | 'unauthenticated' | 'forbidden' | 'not-found' | 'error'
-type Data = { main: Page<Subject> | Page<Level> | Page<Course> | Page<ClassRow> | ClassDetail; subjects?: Page<Subject>; levels?: Page<Level>; courses?: Page<Course> }
+type Data = { main: Page<Subject> | Page<Level> | Page<Course> | Page<ClassRow> | ClassDetail; subjects?: Page<Subject>; levels?: Page<Level>; courses?: Page<Course>; enrollmentCount?: number }
 const falseCaps: Capabilities = { studentCreate: false, studentUpdate: false, teacherCreate: false, teacherUpdate: false,
   catalogManage: false, courseUpdate: false, classCreate: false, classUpdate: false, teacherAssign: false, enroll: false, transferRequest: false, tenantTimezone: '' }
 function errorPhase(error: unknown): Phase {
@@ -53,7 +54,12 @@ function CatalogScope({ id, tenantId, token, selectedId, navigate, allowed }: Pr
         const main = await get<Data['main']>(suffix)
         const capabilities = await get<Capabilities>(`/permissions/capabilities/current${id === 'AC08' ? `?classId=${encodeURIComponent(selectedId!)}` : ''}`)
         let extra: Partial<Data> = {}
-        if (id === 'AC06') {
+        if (id === 'AC08') {
+          const detail = main as ClassDetail
+          const page = await get<Page<ClassRow>>(`/classes?q=${encodeURIComponent(detail.code)}&pageSize=100`).catch(() => undefined)
+          const count = page?.items?.find(row => row.id === detail.id)?.enrollmentCount
+          extra = { enrollmentCount: typeof count === 'number' ? count : undefined }
+        } else if (id === 'AC06') {
           const [subjects, levels] = await Promise.all([get<Page<Subject>>('/subjects?pageSize=100').catch(() => undefined), get<Page<Level>>('/levels?pageSize=100').catch(() => undefined)])
           extra = { subjects, levels }
         } else if (id === 'AC07') {
@@ -88,7 +94,7 @@ function CatalogScope({ id, tenantId, token, selectedId, navigate, allowed }: Pr
   if (id === 'AC05') model = catalogModel(tab, data.main as Page<Subject> | Page<Level>, query, false, caps.catalogManage)
   else if (id === 'AC06') model = courseModel(data.main as Page<Course>, query, false, caps.catalogManage, caps.courseUpdate, data.subjects, data.levels)
   else if (id === 'AC07') model = classesModel(data.main as Page<ClassRow>, query, false, caps.classCreate, caps.classUpdate, allowed === undefined || allowed.includes('AC08'), data.courses)
-  else model = classModel(data.main as ClassDetail, false, caps.classUpdate, allowed === undefined || allowed.includes('AC07'), caps.tenantTimezone || 'UTC')
+  else model = classModel(data.main as ClassDetail, false, caps.classUpdate, allowed === undefined || allowed.includes('AC07'), caps.tenantTimezone || 'UTC', data.enrollmentCount)
   const detail = id === 'AC08' ? data.main as ClassDetail : null
   return <AcademicCatalogView model={model} onQuery={changeQuery} onPage={changePage} onTab={setTab}
     onCreate={(resource, element) => open(resource, undefined, element)} onEdit={(resource, item, element) => open(resource, item, element)}
@@ -97,6 +103,7 @@ function CatalogScope({ id, tenantId, token, selectedId, navigate, allowed }: Pr
     onBack={() => navigate(targetPath(tenantId, 'classes'))}
     feedback={feedback && <p role="status">{feedback}</p>}
     editor={editor && <AcademicCatalogEditor key={`${editor.kind}:${editor.target ?? 'new'}`} editor={editor} model={model} busy={busy} error={saveError} onClose={close} onSave={save} />}
-    operation={detail && <AcademicAdmission tenantId={tenantId} token={token} classId={detail.id} enrollments={detail.enrollments ?? []} onChanged={() => setRevision(value => value + 1)} />}
-    assignmentOperation={detail && <AcademicTeacherAssignment tenantId={tenantId} token={token} classId={detail.id} onChanged={() => setRevision(value => value + 1)} />} />
+    operation={detail && <AcademicAdmission tenantId={tenantId} token={token} classId={detail.id} enrollments={detail.enrollments ?? []} onChanged={() => { setFeedback('Máy chủ đã lưu ghi danh hoặc yêu cầu chuyển lớp. Kiểm tra lịch sử ghi danh bên dưới.'); setRevision(value => value + 1) }} />}
+    assignmentOperation={detail && <AcademicTeacherAssignment tenantId={tenantId} token={token} classId={detail.id} onChanged={() => setRevision(value => value + 1)} />}
+    schedule={detail && <AcademicClassSchedule key={JSON.stringify([tenantId, token, detail.id])} tenantId={tenantId} token={token} classId={detail.id} timezone={caps.tenantTimezone || 'UTC'} navigate={navigate} allowed={allowed} />} />
 }

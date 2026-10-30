@@ -60,7 +60,7 @@ test('production AC02 keeps resource detail and mutation capability separate', a
   assert.ok(requests.some(({ url }) => url.includes('/students/student-a')))
   assert.ok(requests.some(({ url }) => url.includes('studentId=student-a')))
   assert.ok(dom.window.document.querySelector('[data-screen-id="AC09"]'))
-  assert.equal(dom.window.document.querySelector('[data-screen-id="AC09"] button').disabled, true)
+  assert.equal(dom.window.document.querySelector('[data-screen-id="AC09"] button.academic-primary').disabled, true)
 })
 
 test('production Academic renders forbidden state without stale prior records', async () => {

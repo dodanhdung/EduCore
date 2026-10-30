@@ -5,7 +5,7 @@ import { NAVIGATION_SCREENS, navigationResponse } from './navigation.ts'
 
 export type Tenant = { id: string; name: string }
 export type Principal = { id: string; sessionId: string; tenantId: string | null; allowedTenants: Tenant[] }
-export type Session = { accessToken: string; expiresAt: number; csrfToken: string; principal: Principal; tenantEpoch: number; refreshDeadline?: number; navigation?: PermissionEvidence }
+export type Session = { accessToken: string; expiresAt: number; csrfToken: string; principal: Principal; tenantEpoch: number; refreshDeadline?: number; navigation?: PermissionEvidence; navigationStatus?: 'pending' | 'denied' | 'unavailable' }
 export type AuthState = { status: 'checking' } | { status: 'unauthenticated'; reason?: 'session-expired' | 'access-revoked' | 'unavailable' | 'logged-out' | 'logout-unconfirmed' } | { status: 'authenticated'; session: Session }
 
 // Navigation evidence is separate from /auth/me and never authorizes resource APIs.
@@ -14,15 +14,18 @@ export type PermissionEvidence = NavigationResponse & { tenantEpoch: number }
 export type NavigationReader = (token: string, tenantId: string) => Promise<NavigationResponse>
 type RevocationTarget = { token?: string; confirmed: boolean; uncertain: boolean }
 
+function currentNavigation(session: Session, tenantId: string, evidence?: PermissionEvidence): evidence is PermissionEvidence {
+  return !session.navigationStatus && evidence?.tenantId === tenantId && evidence.userId === session.principal.id
+    && evidence.sessionId === session.principal.sessionId && evidence.tenantEpoch === session.tenantEpoch
+    && evidence.validUntil > Date.now() && evidence.validUntil <= session.expiresAt
+}
+
 export function canView(route: ScreenRoute, session: Session, tenantId: string, evidence?: PermissionEvidence): boolean {
   if (session.expiresAt <= Date.now() || session.principal.tenantId !== tenantId) return false
   if (!session.principal.allowedTenants.some((tenant) => tenant.id === tenantId)) return false
   if (route.selfService) return true
   if (!NAVIGATION_SCREENS.includes(route.id as typeof NAVIGATION_SCREENS[number])) return false
-  return evidence?.tenantId === tenantId && evidence.userId === session.principal.id
-    && evidence.sessionId === session.principal.sessionId && evidence.tenantEpoch === session.tenantEpoch
-    && evidence.validUntil > Date.now() && evidence.validUntil <= session.expiresAt
-    && evidence.screenIds.includes(route.id) || false
+  return currentNavigation(session, tenantId, evidence) && evidence.screenIds.includes(route.id)
 }
 
 export function navigationRoutes(session: Session, evidence = session.navigation) {
@@ -49,7 +52,16 @@ export function resolveRoute(path: string, state: AuthState, evidence = state.st
   // Keep the existing 'unauthenticated' UI branch compatible; the reason allows specific copy.
   if (state.session.expiresAt <= Date.now()) return { kind: 'unauthenticated' as const, reason: 'session-expired' as const }
   if (matched.route.id === 'AU02') return { kind: 'tenant-selection' as const, route: matched.route }
-  if (!matched.tenantId || !canView(matched.route, state.session, matched.tenantId, evidence)) return { kind: 'forbidden' as const }
+  const session = state.session
+  if (!matched.tenantId || matched.tenantId !== session.principal.tenantId
+    || !session.principal.allowedTenants.some(tenant => tenant.id === matched.tenantId)) return { kind: 'forbidden' as const }
+  if (!matched.route.selfService) {
+    if (session.navigationStatus === 'denied') return { kind: 'forbidden' as const }
+    if (session.navigationStatus === 'unavailable') return { kind: 'navigation-unavailable' as const }
+    // Missing, expired or differently bound evidence is unverified, not a denial.
+    if (!currentNavigation(session, matched.tenantId, evidence)) return { kind: 'checking' as const }
+  }
+  if (!canView(matched.route, session, matched.tenantId, evidence)) return { kind: 'forbidden' as const }
   return { kind: 'screen' as const, route: matched.route, tenantId: matched.tenantId, params: matched.params }
 }
 
@@ -105,7 +117,8 @@ export class SessionController {
     return expiresAt
   }
   private async grants(session: Session, revision: number) {
-    if (!this.navigationReader || !session.principal.tenantId) return session
+    if (!session.principal.tenantId) return session
+    if (!this.navigationReader) return { ...session, navigation: undefined, navigationStatus: 'unavailable' as const }
     try {
       const deadline = Date.now() + 60_000
       const grant = navigationResponse(await this.navigationReader(session.accessToken, session.principal.tenantId))
@@ -115,12 +128,12 @@ export class SessionController {
         || grant.validUntil <= Date.now() || deadline <= Date.now()) {
         throw new ApiError(502, 'INVALID_NAVIGATION')
       }
-      return { ...session, navigation: { ...grant, tenantEpoch: session.tenantEpoch,
+      return { ...session, navigationStatus: undefined, navigation: { ...grant, tenantEpoch: session.tenantEpoch,
         validUntil: Math.min(grant.validUntil, session.expiresAt, deadline) } }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) throw error
       // No fallback grants on forbidden, missing contract, conflict or network error.
-      return { ...session, navigation: undefined }
+      return { ...session, navigation: undefined, navigationStatus: error instanceof ApiError && error.status === 403 ? 'denied' as const : 'unavailable' as const }
     }
   }
   private publish(session: Session) {
@@ -132,10 +145,11 @@ export class SessionController {
     if (state.status !== 'authenticated' || state.session.navigation !== evidence
       || state.session.principal.id !== evidence.userId || state.session.principal.sessionId !== evidence.sessionId
       || state.session.principal.tenantId !== evidence.tenantId || state.session.tenantEpoch !== evidence.tenantEpoch
-      || evidence.validUntil > Date.now()) return
-    const session = { ...state.session, navigation: undefined }
+      || evidence.validUntil > Date.now()) return false
+    const session: Session = { ...state.session, navigation: undefined, navigationStatus: 'pending' }
     this.active = session
     this.set({ status: 'authenticated', session })
+    return true
   }
   login(email: string, password: string) {
     const revision = ++this.revision
@@ -226,7 +240,7 @@ export class SessionController {
     if (this.pendingCheck) return this.pendingCheck
     if (this.current.status !== 'authenticated') return Promise.resolve(false)
     const revision = ++this.revision
-    this.set({ status: 'authenticated', session: { ...this.current.session, navigation: undefined } })
+    this.set({ status: 'authenticated', session: { ...this.current.session, navigation: undefined, navigationStatus: 'pending' } })
     const pending = this.serial(async () => {
       if (revision !== this.revision) return false
       const active = this.active

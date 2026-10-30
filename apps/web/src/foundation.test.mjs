@@ -20,7 +20,7 @@ test('public routes work, checking and unauthenticated states never render prote
 
 test('tenant and permission gates fail closed without authoritative grants', () => {
   assert.equal(resolveRoute(`/app/${otherId}/me`, authenticated).kind, 'forbidden')
-  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated).kind, 'forbidden')
+  assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated).kind, 'checking')
   assert.equal(resolveRoute(`/app/${tenantId}/students`, authenticated, evidence(['AC01'])).kind, 'screen')
   assert.equal(resolveRoute(`/app/${tenantId}/settings/members`, authenticated, evidence(['OP01'])).kind, 'screen')
   assert.equal(canView(routes.find((r) => r.id === 'AC01'), session, otherId, { tenantId: otherId, screenIds: ['AC01'] }), false)
