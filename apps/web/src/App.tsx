@@ -17,6 +17,7 @@ import { ErrorScreen } from './screens/Authentication & Shared/GL02/ErrorScreen.
 import type { AcademicId } from './screens/Academic Management/AcademicScreens.tsx'
 import { AcademicProduction } from './screens/Academic Management/AcademicProduction.tsx'
 import { SchedulingAttendanceProduction } from './screens/Scheduling & Resources/SchedulingAttendanceProduction.tsx'
+import { SchedulingProduction } from './screens/Scheduling & Resources/SchedulingProduction.tsx'
 import { BillingProduction } from './screens/Billing & Receivables/BillingProduction.tsx'
 import { FinanceProduction } from './screens/Billing & Receivables/FinanceProduction.tsx'
 import { AssignmentsProduction } from './screens/Assignments & Grading/AssignmentsProduction.tsx'
@@ -124,9 +125,14 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
           id={result.route.id as AcademicId} tenantId={tenant.id} token={session!.accessToken} navigate={navigate}
           allowed={session!.navigation?.screenIds ?? []}
           selectedId={result.params.studentId ?? result.params.teacherId ?? result.params.classId} />
-      : (['SC01', 'SC02', 'SC03', 'SC05', 'SC06', 'AT01', 'AT02', 'AT03', 'AT04'] as string[]).includes(result.route.id)
+      : (['SC01', 'SC02', 'SC03', 'SC05', 'SC06'] as string[]).includes(result.route.id)
+        ? <SchedulingProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
+          id={result.route.id as 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06'}
+          tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate}
+          allowed={session!.navigation?.screenIds ?? []} />
+      : (['AT01', 'AT02', 'AT03', 'AT04'] as string[]).includes(result.route.id)
         ? <SchedulingAttendanceProduction key={`${tenant.id}:${result.route.id}:${result.params.sessionId ?? ''}`}
-          id={result.route.id as 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'}
+          id={result.route.id as 'AT01' | 'AT02' | 'AT03' | 'AT04'}
           tenantId={tenant.id} token={session!.accessToken} selectedId={result.params.sessionId} navigate={navigate} />
       : (['BL01', 'BL02', 'BL03', 'BL04', 'BL05', 'BL06', 'BL07'] as string[]).includes(result.route.id)
         ? <BillingProduction key={`${tenant.id}:${result.route.id}:${result.params.draftId ?? result.params.invoiceId ?? ''}`}

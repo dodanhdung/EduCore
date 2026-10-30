@@ -5,7 +5,7 @@ export function Panel({ title, hint, children }: { title: string; hint?: string;
   return <section className="scheduling-card"><h2>{title}</h2>{hint && <p className="scheduling-hint">{hint}</p>}{children}</section>
 }
 export function StatusBadge({ status }: { status: SessionStatus | 'ACTIVE' | 'INACTIVE' }) {
-  const label = { CONFIRMED: 'Đã xác nhận', DRAFT: 'Bản nháp', CANCELLED: 'Đã hủy', ACTIVE: 'Hoạt động', INACTIVE: 'Tạm ngưng' }[status]
+  const label = { CONFIRMED: 'Đã xác nhận', DRAFT: 'Bản nháp', COMPLETED: 'Đã hoàn tất', CANCELLED: 'Đã hủy', ACTIVE: 'Hoạt động', INACTIVE: 'Tạm ngưng' }[status]
   return <span className={`scheduling-badge scheduling-badge-${status.toLowerCase()}`}>{label}</span>
 }
 export function PendingAction({ children }: { children: ReactNode }) {

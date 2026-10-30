@@ -151,7 +151,11 @@ test('weekly draft validates a six-month limit and produces the full local date 
   assert.equal(candidateDates(draft).length, 8)
   assert.equal(sixMonthLimit(draft.date), '2027-04-23')
   assert.match(validateDraft({ ...draft, repeatUntil: '2027-04-24' }).repeatUntil, /sáu tháng/)
-  assert.match(validateDraft({ ...draft, weekdays: [] }).weekdays, /ít nhất một/)
+  assert.match(validateDraft({ ...draft, weekdays: [] }).weekdays, /đúng một/)
+  assert.match(validateDraft({ ...draft, weekdays: [1, 3] }).weekdays, /đúng một/)
+  assert.deepEqual(candidateDates({ ...draft, weekdays: [1, 3] }), [])
+  assert.deepEqual(candidateDates({ ...draft, weekdays: [1] }).every((date) => new Date(`${date}T00:00:00Z`).getUTCDay() === 1), true)
+  assert.deepEqual(candidateDates({ ...draft, weekdays: [3] }).every((date) => new Date(`${date}T00:00:00Z`).getUTCDay() === 3), true)
   assert.match(validateDraft({ ...draft, end: '17:00' }).end, /sau giờ bắt đầu/)
 })
 
@@ -168,6 +172,44 @@ test('SC03 keeps inputs between form and review; no local confirmation succeeds'
     await click(view, '.scheduling-create-actions button:first-child')
     assert.equal(view.document.querySelector('input[type="date"]').value, '2026-10-23')
     assert.doesNotMatch(view.document.body.textContent, /lịch đã được xác nhận|đã lưu thành công/i)
+  } finally { await view.close() }
+})
+
+test('SC03 weekday radios replace the previous selection and keep candidate dates aligned', async () => {
+  const view = mount(CreateScheduleScreen, { data: schedulingFixtures, preview: true })
+  try {
+    await view.render()
+    const radios = [...view.document.querySelectorAll('input[name="schedule-weekday"]')]
+    assert.equal(radios.length, 7)
+    assert.equal(radios.filter((radio) => radio.checked).length, 1)
+    assert.match(view.document.querySelector('.scheduling-weekdays').textContent, /Mỗi lịch lặp hiện hỗ trợ một thứ trong tuần/)
+    await act(async () => radios[0].click())
+    assert.equal(radios.filter((radio) => radio.checked).length, 1)
+    assert.equal(radios[0].checked, true)
+    await act(async () => radios[2].click())
+    assert.equal(radios.filter((radio) => radio.checked).length, 1)
+    assert.equal(radios[2].checked, true)
+    await click(view, '.scheduling-create-actions .scheduling-primary')
+    const dates = [...view.document.querySelectorAll('.scheduling-table tbody td:first-of-type')].map((cell) => cell.textContent.slice(0, 10))
+    assert.ok(dates.length > 0)
+    assert.ok(dates.every((value) => new Date(`${value.slice(6)}-${value.slice(3, 5)}-${value.slice(0, 2)}T00:00:00Z`).getUTCDay() === 3))
+  } finally { await view.close() }
+})
+
+test('SC03 requires one weekday inline before advancing', async () => {
+  const view = mount(CreateScheduleScreen, { data: schedulingFixtures })
+  try {
+    await view.render()
+    await act(async () => [...view.document.querySelectorAll('.scheduling-choice button')].find((button) => button.textContent === 'Hằng tuần').click())
+    await change(view, '.scheduling-fields label:nth-child(1) select', 'ENG-C1')
+    await change(view, '.scheduling-fields label:nth-child(2) select', 'GV-018')
+    await change(view, '.scheduling-fields label:nth-child(4) select', 'P.304')
+    await change(view, '.scheduling-fields input[type="date"]', '2026-11-04')
+    await change(view, '.scheduling-fields input[type="time"]', '17:00')
+    await change(view, '.scheduling-fields label:nth-child(7) input', '18:30')
+    await click(view, '.scheduling-create-actions .scheduling-primary')
+    assert.equal(view.document.querySelector('.scheduling-weekdays [role="alert"]')?.textContent, 'Chọn đúng một thứ trong tuần.')
+    assert.match(view.document.querySelector('.scheduling-card h2').textContent, /Chọn lớp/)
   } finally { await view.close() }
 })
 
@@ -317,11 +359,86 @@ test('SC05 history belongs to the selected session and missing history remains e
   try { await noHistory.render(); assert.match(noHistory.document.body.textContent, /Chưa có dữ liệu lịch sử/); assert.doesNotMatch(noHistory.document.body.textContent, /Nguyễn Văn An xác nhận|Buổi học bị hủy\. Dữ liệu mẫu/) } finally { await noHistory.close() }
 })
 
-test('SC05 future actions use tenant-local today and fail closed without timezone', async () => {
+test('SC05 uses the API instant for same-day actions and fails closed without trusted time', async () => {
   const now = new Date('2026-10-21T03:00:00Z')
-  for (const [timeZone, editable] of [['Asia/Ho_Chi_Minh', false], ['America/Los_Angeles', true], [undefined, false]]) {
-    const view = mount(SessionDetailScreen, { data: schedulingFixtures, selectedId: 'session-eng-21', canEdit: true, timeZone, now })
+  const base = schedulingFixtures.sessions.find((item) => item.id === 'session-eng-21')
+for (const [startsAt, timeZone, editable, status] of [['2026-10-21T11:00:00Z', 'Asia/Ho_Chi_Minh', true], ['2026-10-21T02:00:00Z', 'Asia/Ho_Chi_Minh', false], ['2026-10-20T11:00:00Z', 'Asia/Ho_Chi_Minh', false], [undefined, 'Asia/Ho_Chi_Minh', false], ['bad', 'Asia/Ho_Chi_Minh', false], ['2026-10-21T11:00:00Z', undefined, false], ['2026-10-21T11:00:00Z', 'Asia/Ho_Chi_Minh', false, 'CANCELLED'], ['2026-10-21T11:00:00Z', 'Asia/Ho_Chi_Minh', false, 'COMPLETED']]) {
+    const data = { ...schedulingFixtures, sessions: [{ ...base, startsAt, status: status ?? base.status }] }
+    const view = mount(SessionDetailScreen, { data, selectedId: 'session-eng-21', canEdit: true, timeZone, now })
     try { await view.render(); assert.equal(Boolean(view.document.querySelector('.scheduling-action-stack')), editable) } finally { await view.close() }
+  }
+})
+
+test('SC05 separates update and cancel capability on a same-day future session', async () => {
+  const base = schedulingFixtures.sessions.find((item) => item.id === 'session-eng-21')
+  const data = { ...schedulingFixtures, sessions: [{ ...base, startsAt: '2026-10-21T11:00:00Z' }] }
+  for (const [canEdit, canCancel, update, cancel] of [[true, false, true, false], [false, true, false, true], [false, false, false, false]]) {
+    const view = mount(SessionDetailScreen, { data, selectedId: base.id, timeZone: 'Asia/Ho_Chi_Minh', now: new Date('2026-10-21T03:00:00Z'), canEdit, actions: { canCancel } })
+    try {
+      await view.render()
+      const text = [...view.document.querySelectorAll('.scheduling-action-stack button')].map((button) => button.textContent)
+      assert.equal(text.includes('Đổi buổi này'), update)
+      assert.equal(text.includes('Hủy buổi học'), cancel)
+    } finally { await view.close() }
+  }
+})
+
+test('SC05 preview exposes deterministic same-day future and past browser states', async () => {
+  for (const [state, expected] of [['', true], ['&state=same-day-past', false]]) {
+    const view = mount(PreviewApp, { screenId: 'SC05' }, `http://localhost/__ui-preview/SC05?sessionId=session-eng-21${state}`)
+    try { await view.render(); assert.equal(Boolean(view.document.querySelector('.scheduling-action-stack')), expected) } finally { await view.close() }
+  }
+})
+
+test('SC05 validates same-day future reschedule and rechecks an open dialog at submit', async () => {
+  const base = schedulingFixtures.sessions.find((item) => item.id === 'session-eng-21')
+  const data = { ...schedulingFixtures, sessions: [{ ...base, startsAt: '2026-10-21T11:00:00Z' }] }
+  let current = new Date('2026-10-21T03:00:00Z')
+  let writes = 0
+  const view = mount(SessionDetailScreen, { data, selectedId: base.id, timeZone: 'Asia/Ho_Chi_Minh', clock: () => current, canEdit: true, actions: { onReschedule: async () => { writes++; return true } } })
+  try {
+    await view.render()
+    await click(view, '.scheduling-action-stack .scheduling-primary')
+    await change(view, '.scheduling-form label:nth-child(1) input', '2026-10-21')
+    await change(view, '.scheduling-form label:nth-child(2) input', '19:00')
+    await change(view, '.scheduling-form label:nth-child(3) input', '20:00')
+    await change(view, '.scheduling-form label:nth-child(4) input', 'Đổi giờ')
+    await click(view, '.scheduling-form-actions .scheduling-primary')
+    assert.equal(writes, 1)
+  } finally { await view.close() }
+  const stale = mount(SessionDetailScreen, { data, selectedId: base.id, timeZone: 'Asia/Ho_Chi_Minh', clock: () => current, canEdit: true, actions: { onCancel: async () => { writes++; return true }, canCancel: true } })
+  try {
+    await stale.render()
+    await click(stale, '.scheduling-action-stack button:last-child')
+    await change(stale, '.scheduling-form label input', 'Đổi giờ')
+    current = new Date('2026-10-21T11:00:00Z')
+    await click(stale, '.scheduling-form-actions .scheduling-primary')
+    assert.equal(writes, 1)
+    assert.match(stale.document.querySelector('[role="alert"]').textContent, /đã bắt đầu/)
+  } finally { await stale.close() }
+})
+
+test('SC05 rejects past start, reversed interval and nonexistent DST wall time before calling save', async () => {
+  const base = schedulingFixtures.sessions.find((item) => item.id === 'session-eng-21')
+  for (const [timeZone, now, startsAt, date, start, end, expected] of [
+    ['Asia/Ho_Chi_Minh', '2026-10-21T03:00:00Z', '2026-10-21T11:00:00Z', '2026-10-21', '09:00', '10:00', /tương lai/],
+    ['Asia/Ho_Chi_Minh', '2026-10-21T03:00:00Z', '2026-10-21T11:00:00Z', '2026-10-21', '19:00', '18:00', /sau giờ bắt đầu/],
+    ['America/New_York', '2026-03-08T05:00:00Z', '2026-03-08T15:00:00Z', '2026-03-08', '02:30', '03:30', /không hợp lệ/],
+  ]) {
+    let writes = 0
+    const data = { ...schedulingFixtures, sessions: [{ ...base, startsAt }] }
+    const view = mount(SessionDetailScreen, { data, selectedId: base.id, canEdit: true, timeZone, now: new Date(now), actions: { onReschedule: async () => { writes++; return true } } })
+    try {
+      await view.render()
+      await click(view, '.scheduling-action-stack .scheduling-primary')
+      await change(view, '.scheduling-form label:nth-child(1) input', date)
+      await change(view, '.scheduling-form label:nth-child(2) input', start)
+      await change(view, '.scheduling-form label:nth-child(3) input', end)
+      await change(view, '.scheduling-form label:nth-child(4) input', 'Điều chỉnh giờ')
+      await click(view, '.scheduling-form-actions .scheduling-primary')
+      assert.equal(writes, 0)
+      assert.match(view.document.querySelector('[role="alert"]').textContent, expected)
+    } finally { await view.close() }
   }
 })
 

@@ -34,7 +34,7 @@ export function validateDraft(draft: ScheduleDraft): DraftErrors {
   if (!/^\d\d:\d\d$/.test(draft.start)) errors.start = 'Chọn giờ bắt đầu.'
   if (!/^\d\d:\d\d$/.test(draft.end) || draft.end <= draft.start) errors.end = 'Giờ kết thúc phải sau giờ bắt đầu.'
   if (draft.repeat === 'WEEKLY') {
-    if (draft.weekdays.length === 0) errors.weekdays = 'Chọn ít nhất một thứ trong tuần.'
+    if (draft.weekdays.length !== 1 || !Number.isInteger(draft.weekdays[0]) || draft.weekdays[0] < 0 || draft.weekdays[0] > 6) errors.weekdays = 'Chọn đúng một thứ trong tuần.'
     if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.repeatUntil) || Number.isNaN(dayDate(draft.repeatUntil).getTime()) || isoDate(dayDate(draft.repeatUntil)) !== draft.repeatUntil || draft.repeatUntil < draft.date) errors.repeatUntil = 'Ngày lặp đến phải từ ngày bắt đầu trở đi.'
     else if (!errors.date && draft.repeatUntil > sixMonthLimit(draft.date)) errors.repeatUntil = 'Khoảng lặp tối đa sáu tháng.'
     else if (!errors.date && draft.weekdays.length && !Array.from({ length: 7 }, (_, index) => addDays(draft.date, index)).some((date) => date <= draft.repeatUntil && draft.weekdays.includes(dayDate(date).getUTCDay()))) errors.repeatUntil = 'Không có buổi nào trong khoảng lặp.'

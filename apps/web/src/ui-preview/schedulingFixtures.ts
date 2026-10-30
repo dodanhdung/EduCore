@@ -2,7 +2,7 @@ import type { PersonalScheduleScope, SchedulingData } from '../screens/Schedulin
 import type { ScheduleConflict } from '../screens/Scheduling & Resources/SC04/ConflictPanel.tsx'
 
 // Dữ liệu minh họa chỉ được import bởi UI Preview trong môi trường phát triển.
-export const schedulingPreviewClock = { today: '2026-10-21', timeZone: 'Asia/Ho_Chi_Minh' } as const
+export const schedulingPreviewClock = { today: '2026-10-21', timeZone: 'Asia/Ho_Chi_Minh', now: new Date('2026-10-21T03:00:00Z') } as const
 export const schedulingFixtures: SchedulingData = {
   sessions: [
     { id: 'session-eng-19', date: '2026-10-19', start: '18:00', end: '19:30', classId: 'ENG-B2', className: 'ENG-B2', teacherId: 'GV-018', teacherName: 'Đặng Văn Trần', roomId: 'P.201', status: 'CONFIRMED' },
