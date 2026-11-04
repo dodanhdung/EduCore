@@ -3,6 +3,7 @@ import { ApiClient } from './api.ts'
 import { createNavigationReader } from './navigation.ts'
 import { landingPath, navigationRoutes, resolveRoute, SessionController } from './auth.ts'
 import type { AuthState } from './auth.ts'
+import { SessionPage } from './SessionPage.tsx'
 import type { ScreenRoute } from './routes.ts'
 import { AppShell } from './shared/shell/AppShell.tsx'
 import { matchRoute, tenantPath } from './routes.ts'
@@ -88,7 +89,13 @@ export { AppShell } from './shared/shell/AppShell.tsx'
 
 export function AppView({ state, path, navigate, onLogout, controller = sessions }: { state: AuthState; path: string; navigate: (path: string) => void; onLogout: () => void; controller?: SessionController }) {
   const [portalChild, setPortalChild] = useState<{ tenantId: string; viewerId: string; studentId: string } | null>(null)
-  const result = resolveRoute(path, state)
+  const resolved = resolveRoute(path, state)
+  const identity = state.status === 'authenticated' ? JSON.stringify([state.session.principal.id, state.session.principal.sessionId, state.session.principal.tenantId, state.session.tenantEpoch]) : ''
+  const [retained, setRetained] = useState<{ identity: string; path: string; result: Extract<ReturnType<typeof resolveRoute>, { kind: 'screen' }> } | null>(null)
+  const paused = (resolved.kind === 'checking' || resolved.kind === 'navigation-unavailable') && !!retained && retained.identity === identity && retained.path === path
+  if (resolved.kind === 'screen' && (retained?.identity !== identity || retained.path !== path)) setRetained({ identity, path, result: resolved })
+  else if (resolved.kind !== 'screen' && !paused && retained) setRetained(null)
+  const result = paused && retained ? retained.result : resolved
   if (result.kind === 'not-found') return <ErrorScreen code="404" navigate={navigate} />
   if (result.kind === 'public') {
     if (result.route.id === 'AU01') return <>
@@ -120,7 +127,9 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
     return next.status === 'authenticated' ? landingPath(next.session) : false
   }} navigate={navigate} /><button className="tenant-logout" onClick={onLogout}>Đăng xuất</button></>
   if (result.kind === 'forbidden') return <ErrorScreen code="403" navigate={navigate} />
-  const session = state.status === 'authenticated' ? state.session : null
+  if (state.status !== 'authenticated') return null
+  return <SessionPage key={JSON.stringify([identity, path])} controller={controller} identity={identity} path={path} paused={paused} unavailable={resolved.kind === 'navigation-unavailable'}>{credential => {
+  const session = { ...state.session, accessToken: result.route.selfService ? state.session.accessToken : credential }
   const tenant = session?.principal.allowedTenants.find((item) => item.id === result.tenantId)
   if (!tenant) return <ErrorScreen code="403" navigate={navigate} />
   const screen = result.route.id === 'AU05'
@@ -153,10 +162,10 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
         ? <AssignmentsProduction key={`${tenant.id}:${result.route.id}:${result.params.assignmentId ?? result.params.submissionId ?? ''}`}
           id={result.route.id as 'AS01' | 'AS02' | 'AS03' | 'AS04' | 'AS05' | 'AS06' | 'AS07'} tenantId={tenant.id}
           token={session!.accessToken} selectedId={result.params.assignmentId ?? result.params.submissionId} allowed={session!.navigation?.screenIds ?? []} navigate={navigate} />
-      : result.route.id === 'G01' ? <DashboardProduction key={`${tenant.id}:${session!.accessToken}`} tenantId={tenant.id} token={session!.accessToken}
+      : result.route.id === 'G01' ? <DashboardProduction key={tenant.id} tenantId={tenant.id} token={session!.accessToken}
           onUnauthorized={() => controller.expire('access-revoked')} />
       : (['PO01', 'PO02', 'PO03', 'PO04', 'PO05'] as string[]).includes(result.route.id)
-        ? <PortalProduction key={`${tenant.id}:${session!.accessToken}:${result.route.id}:${result.params.studentId ?? ''}`}
+        ? <PortalProduction key={`${tenant.id}:${result.route.id}:${result.params.studentId ?? ''}`}
             id={result.route.id as 'PO01' | 'PO02' | 'PO03' | 'PO04' | 'PO05'} tenantId={tenant.id}
             token={session!.accessToken} viewerId={session!.principal.id} selectedId={result.params.studentId}
             initialChildId={portalChild?.tenantId === tenant.id && portalChild.viewerId === session!.principal.id ? portalChild.studentId : undefined}
@@ -173,6 +182,7 @@ export function AppView({ state, path, navigate, onLogout, controller = sessions
   return <AppShell route={result.route} tenant={tenant} navigate={navigate} onLogout={onLogout} navigation={navigationRoutes(session!)}>
     {screen}
   </AppShell>
+  }}</SessionPage>
 }
 
 export default function App({ controller = sessions }: { controller?: SessionController } = {}) {
@@ -191,35 +201,28 @@ export default function App({ controller = sessions }: { controller?: SessionCon
     void controller.revalidate(false).catch(() => {})
   }, [path, state, controller])
   useEffect(() => {
-    if (state.status !== 'authenticated' || !state.session.navigation) return
-    const evidence = state.session.navigation
-    const timer = window.setTimeout(() => {
-      if (!controller.expireNavigation(evidence)) return
-      const current = controller.getSnapshot()
-      if (current.status === 'authenticated') void controller.revalidate(current.session.expiresAt - Date.now() <= 60_000).catch(() => {})
-    }, Math.max(0, evidence.validUntil - Date.now()))
-    return () => window.clearTimeout(timer)
-  }, [state, controller])
-  useEffect(() => {
     if (state.status !== 'authenticated') return
-    const remaining = state.session.expiresAt - Date.now()
-    if (remaining <= 0) { controller.expire(); return }
-    const timer = window.setTimeout(() => {
-      const current = controller.getSnapshot()
-      if (current.status !== 'authenticated') return
-      const refresh = current.session.expiresAt - Date.now() <= 60_000
-      void controller.revalidate(refresh).catch(() => { /* Controller already failed closed. */ })
-    }, Math.max(0, Math.min(60_000, remaining - 60_000)))
-    const expiry = window.setTimeout(() => controller.expire(), remaining)
-    return () => { window.clearTimeout(timer); window.clearTimeout(expiry) }
+    const session = state.session, now = Date.now(), timers: number[] = []
+    if (!session.revalidating) {
+      const navigationDue = session.principal.tenantId && session.navigationStatus !== 'denied'
+        ? Math.max(session.navigation ? session.navigation.validUntil - 20_000 : now, session.retryAt ?? 0) : Infinity
+      const due = Math.min(session.expiresAt - 60_000, navigationDue, session.refreshDeadline ?? Infinity)
+      timers.push(window.setTimeout(() => { void controller.maintain().catch(() => {}) }, Math.max(0, due - now)))
+    }
+    if (session.expiresAt > now) timers.push(window.setTimeout(() => { void controller.maintain().catch(() => {}) }, session.expiresAt - now))
+    if (session.refreshDeadline && session.refreshDeadline > now && session.revalidating)
+      timers.push(window.setTimeout(() => { void controller.maintain().catch(() => {}) }, session.refreshDeadline - now))
+    const evidence = session.navigation
+    if (evidence && evidence.validUntil > now) timers.push(window.setTimeout(() => {
+      if (controller.expireNavigation(evidence)) void controller.maintain().catch(() => {})
+    }, evidence.validUntil - now))
+    return () => timers.forEach(timer => window.clearTimeout(timer))
   }, [state, controller])
   useEffect(() => {
-    const check = () => {
-      const current = controller.getSnapshot()
-      if (current.status === 'authenticated') void controller.revalidate(current.session.expiresAt - Date.now() <= 60_000).catch(() => {})
-    }
+    const check = (event: Event) => { if (event.type === 'focus' || document.visibilityState === 'visible') void controller.maintain().catch(() => {}) }
     window.addEventListener('focus', check)
-    return () => window.removeEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
+    return () => { window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check) }
   }, [controller])
   return <AppView state={state} path={path} navigate={navigate} controller={controller} onLogout={() => { void controller.logout(); navigate('/login') }} />
 }

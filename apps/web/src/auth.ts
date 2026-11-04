@@ -5,7 +5,7 @@ import { NAVIGATION_SCREENS, navigationResponse } from './navigation.ts'
 
 export type Tenant = { id: string; name: string }
 export type Principal = { id: string; sessionId: string; tenantId: string | null; allowedTenants: Tenant[] }
-export type Session = { accessToken: string; expiresAt: number; csrfToken: string; principal: Principal; tenantEpoch: number; refreshDeadline?: number; navigation?: PermissionEvidence; navigationStatus?: 'pending' | 'denied' | 'unavailable' }
+export type Session = { accessToken: string; expiresAt: number; csrfToken: string; principal: Principal; tenantEpoch: number; refreshDeadline?: number; navigation?: PermissionEvidence; navigationStatus?: 'pending' | 'denied' | 'unavailable'; revalidating?: boolean; retryAt?: number }
 export type AuthState = { status: 'checking' } | { status: 'unauthenticated'; reason?: 'session-expired' | 'access-revoked' | 'unavailable' | 'logged-out' | 'logout-unconfirmed' } | { status: 'authenticated'; session: Session }
 
 // Navigation evidence is separate from /auth/me and never authorizes resource APIs.
@@ -15,7 +15,7 @@ export type NavigationReader = (token: string, tenantId: string) => Promise<Navi
 type RevocationTarget = { token?: string; confirmed: boolean; uncertain: boolean }
 
 function currentNavigation(session: Session, tenantId: string, evidence?: PermissionEvidence): evidence is PermissionEvidence {
-  return !session.navigationStatus && evidence?.tenantId === tenantId && evidence.userId === session.principal.id
+  return session.navigationStatus !== 'denied' && evidence?.tenantId === tenantId && evidence.userId === session.principal.id
     && evidence.sessionId === session.principal.sessionId && evidence.tenantEpoch === session.tenantEpoch
     && evidence.validUntil > Date.now() && evidence.validUntil <= session.expiresAt
 }
@@ -50,13 +50,15 @@ export function resolveRoute(path: string, state: AuthState, evidence = state.st
   if (state.status === 'unauthenticated') return { kind: 'unauthenticated' as const }
   // An expired access token requires re-authentication, not an HTTP 403-style denial.
   // Keep the existing 'unauthenticated' UI branch compatible; the reason allows specific copy.
-  if (state.session.expiresAt <= Date.now()) return { kind: 'unauthenticated' as const, reason: 'session-expired' as const }
+  if (state.session.expiresAt <= Date.now()) return state.session.refreshDeadline && state.session.refreshDeadline > Date.now()
+    ? { kind: 'checking' as const } : { kind: 'unauthenticated' as const, reason: 'session-expired' as const }
   if (matched.route.id === 'AU02') return { kind: 'tenant-selection' as const, route: matched.route }
   const session = state.session
   if (!matched.tenantId || matched.tenantId !== session.principal.tenantId
     || !session.principal.allowedTenants.some(tenant => tenant.id === matched.tenantId)) return { kind: 'forbidden' as const }
   if (!matched.route.selfService) {
     if (session.navigationStatus === 'denied') return { kind: 'forbidden' as const }
+    if (canView(matched.route, session, matched.tenantId, evidence)) return { kind: 'screen' as const, route: matched.route, tenantId: matched.tenantId, params: matched.params }
     if (session.navigationStatus === 'unavailable') return { kind: 'navigation-unavailable' as const }
     // Missing, expired or differently bound evidence is unverified, not a denial.
     if (!currentNavigation(session, matched.tenantId, evidence)) return { kind: 'checking' as const }
@@ -117,8 +119,8 @@ export class SessionController {
     return expiresAt
   }
   private async grants(session: Session, revision: number) {
-    if (!session.principal.tenantId) return session
-    if (!this.navigationReader) return { ...session, navigation: undefined, navigationStatus: 'unavailable' as const }
+    if (!session.principal.tenantId) return { ...session, revalidating: false }
+    if (!this.navigationReader) return { ...session, revalidating: false, retryAt: Date.now() + 5000, navigation: undefined, navigationStatus: 'unavailable' as const }
     try {
       const deadline = Date.now() + 60_000
       const grant = navigationResponse(await this.navigationReader(session.accessToken, session.principal.tenantId))
@@ -128,12 +130,17 @@ export class SessionController {
         || grant.validUntil <= Date.now() || deadline <= Date.now()) {
         throw new ApiError(502, 'INVALID_NAVIGATION')
       }
-      return { ...session, navigationStatus: undefined, navigation: { ...grant, tenantEpoch: session.tenantEpoch,
+      const screenIds = session.navigation?.screenIds
+      return { ...session, revalidating: false, retryAt: Date.now() + 5000, navigationStatus: undefined, navigation: { ...grant,
+        screenIds: screenIds && screenIds.length === grant.screenIds.length && screenIds.every((id, i) => id === grant.screenIds[i]) ? screenIds : grant.screenIds, tenantEpoch: session.tenantEpoch,
         validUntil: Math.min(grant.validUntil, session.expiresAt, deadline) } }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) throw error
-      // No fallback grants on forbidden, missing contract, conflict or network error.
-      return { ...session, navigation: undefined, navigationStatus: error instanceof ApiError && error.status === 403 ? 'denied' as const : 'unavailable' as const }
+      // Only an authoritative denial invalidates still-current evidence immediately.
+      // Transient errors never extend its deadline or create replacement grants.
+      const denied = error instanceof ApiError && error.status === 403
+      return { ...session, revalidating: false, retryAt: Date.now() + 5000, navigation: denied ? undefined : session.navigation,
+        navigationStatus: denied ? 'denied' as const : 'unavailable' as const }
     }
   }
   private publish(session: Session) {
@@ -146,7 +153,7 @@ export class SessionController {
       || state.session.principal.id !== evidence.userId || state.session.principal.sessionId !== evidence.sessionId
       || state.session.principal.tenantId !== evidence.tenantId || state.session.tenantEpoch !== evidence.tenantEpoch
       || evidence.validUntil > Date.now()) return false
-    const session: Session = { ...state.session, navigation: undefined, navigationStatus: 'pending' }
+    const session: Session = { ...state.session, navigationStatus: state.session.navigationStatus === 'unavailable' ? 'unavailable' : state.session.navigationStatus === 'denied' ? 'denied' : 'pending' }
     this.active = session
     this.set({ status: 'authenticated', session })
     return true
@@ -234,13 +241,34 @@ export class SessionController {
     })
   }
   refresh() { return this.revalidate(true) }
+  // Called by timers/focus/visibility: fresh evidence needs no extra network check.
+  maintain() {
+    const state = this.current
+    if (state.status !== 'authenticated') return Promise.resolve(false)
+    const session = state.session, now = Date.now()
+    if (session.refreshDeadline !== undefined && session.refreshDeadline <= now) { this.expire(); return Promise.resolve(false) }
+    if (this.pendingCheck) {
+      // Wake React after suspended timers, without cancelling the in-flight refresh.
+      this.set({ status: 'authenticated', session: { ...session } })
+      return this.pendingCheck
+    }
+    if (session.expiresAt - now <= 60_000) return this.revalidate(true)
+    if (session.retryAt && session.retryAt > now) {
+      this.set({ status: 'authenticated', session: { ...session } })
+      return Promise.resolve(false)
+    }
+    if (session.principal.tenantId && (!session.navigation || session.navigation.validUntil - now <= 20_000)) return this.revalidate()
+    return Promise.resolve(false)
+  }
   revalidate(refresh = false) {
     // Background maintenance must not supersede an explicit login/tenant choice.
     if (this.transition && this.transition === this.revision) return Promise.resolve(false)
     if (this.pendingCheck) return this.pendingCheck
     if (this.current.status !== 'authenticated') return Promise.resolve(false)
+    if (this.current.session.refreshDeadline !== undefined && this.current.session.refreshDeadline <= Date.now()) { this.expire(); return Promise.reject(new ApiError(401, 'AUTH_REQUIRED')) }
+    refresh = refresh || this.current.session.expiresAt - Date.now() <= 60_000
     const revision = ++this.revision
-    this.set({ status: 'authenticated', session: { ...this.current.session, navigation: undefined, navigationStatus: 'pending' } })
+    this.set({ status: 'authenticated', session: { ...this.current.session, revalidating: true } })
     const pending = this.serial(async () => {
       if (revision !== this.revision) return false
       const active = this.active
@@ -257,7 +285,7 @@ export class SessionController {
           || principal.tenantId !== active.principal.tenantId || (principal.tenantId !== null
             && !principal.allowedTenants.some((t) => t.id === principal.tenantId))) throw new ApiError(401, 'ACCESS_REVOKED')
         if (response && (!response.accessToken || !response.csrfToken)) throw new ApiError(502, 'INVALID_SESSION')
-        const next: Session = { ...active, principal, accessToken: token, navigation: undefined, tenantEpoch: ++this.epoch,
+        const next: Session = { ...active, principal, accessToken: token, revalidating: true,
           csrfToken: response?.csrfToken ?? active.csrfToken,
           expiresAt: response ? this.expiry(response.expiresInSeconds, started, active.refreshDeadline) : active.expiresAt }
         if (revision !== this.revision) {
@@ -266,12 +294,25 @@ export class SessionController {
           return false
         }
         this.active = next
+        // A checked token rotation is usable immediately with the same still-valid
+        // permission evidence. Page identity and grant epoch do not rotate with it.
+        if (response) this.publish(next)
         const ready = await this.grants(next, revision)
         if (revision !== this.revision) return false
         this.publish(ready)
         return true
       } catch (error) {
         if (revision !== this.revision) { await this.revoke(target); return false }
+        if (!refresh && active.expiresAt <= Date.now() && active.refreshDeadline && active.refreshDeadline > Date.now()) {
+          // The access token may have expired while a navigation request was in
+          // flight. A queued maintenance pass can now try the real refresh cookie.
+          this.publish({ ...active, revalidating: false, navigationStatus: 'pending' })
+          return false
+        }
+        if (!refresh && (!(error instanceof ApiError) || error.status >= 500) && active.expiresAt > Date.now()) {
+          this.publish({ ...active, revalidating: false, retryAt: Date.now() + 5000, navigationStatus: 'unavailable' })
+          return false
+        }
         this.expire(error instanceof ApiError && error.status === 401 ? 'access-revoked' : 'unavailable')
         await this.revoke(target)
         throw error

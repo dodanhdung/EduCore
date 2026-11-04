@@ -10,9 +10,12 @@ globalThis.window = initial.window
 globalThis.document = initial.window.document
 globalThis.HTMLElement = initial.window.HTMLElement
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+const originalFetch = globalThis.fetch
+let businessReply = () => new Response('{}', { status: 404 })
+globalThis.fetch = (...args) => businessReply(...args)
 const { createRoot } = await import('react-dom/client')
 const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
-after(async () => { await vite.close(); initial.window.close() })
+after(async () => { globalThis.fetch = originalFetch; await vite.close(); initial.window.close() })
 const { default: App, AppView, AppShell } = await vite.ssrLoadModule('/src/App.tsx')
 const { ApiClient } = await vite.ssrLoadModule('/src/api.ts')
 const { SessionController, navigationRoutes } = await vite.ssrLoadModule('/src/auth.ts')
@@ -21,7 +24,7 @@ const tenantId = '00000000-0000-4000-8000-000000000001'
 const principal = { id: '00000000-0000-4000-8000-000000000003', sessionId: '00000000-0000-4000-8000-000000000004', tenantId: null, allowedTenants: [{ id: tenantId, name: 'Trung tâm thật' }] }
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status })
 
-function backend(fault, navigation = false) {
+function backend(fault, navigation = false, screenIds = ['OP01']) {
   const calls = []
   let selected = false
   const api = new ApiClient('http://localhost:3000', async (url, options) => {
@@ -36,7 +39,7 @@ function backend(fault, navigation = false) {
       selected = true
       return json({ accessToken: 'TEST_SECRET_SELECTED', expiresInSeconds: 900, principal: { ...principal, tenantId } })
     }
-    if (path.endsWith('/navigation')) return json({ userId: principal.id, sessionId: principal.sessionId, tenantId, screenIds: ['OP01'], validUntil: Date.now() + 30_000 })
+    if (path.endsWith('/navigation')) return json({ userId: principal.id, sessionId: principal.sessionId, tenantId, screenIds, validUntil: Date.now() + 30_000 })
     if (path.endsWith('/logout')) return new Response(null, { status: 204 })
     return json({}, 404)
   })
@@ -221,6 +224,7 @@ test('R7 actual App expiry timer removes AppShell without requiring navigation o
   dom.window.clearTimeout = (id) => { timers.delete(id) }
   const root = createRoot(dom.window.document.getElementById('root'))
   const view = { dom, document: dom.window.document }
+  const actualNow = Date.now
   try {
     await act(async () => root.render(React.createElement(App, { controller })))
     await fill(view); await submit(view)
@@ -229,11 +233,12 @@ test('R7 actual App expiry timer removes AppShell without requiring navigation o
     assert.equal(timers.size, 2, 'maintenance and hard expiry timers exist')
     const expiry = [...timers.values()].sort((a, b) => b.delay - a.delay)[0]
     assert.ok(expiry.delay > 800_000 && expiry.delay <= 900_000)
+    Date.now = () => controller.getSnapshot().session.refreshDeadline + 1
     await act(async () => expiry.callback())
     assert.equal(controller.getSnapshot().status, 'unauthenticated')
     assert.equal(view.document.querySelector('.app-shell'), null)
     assert.match(view.document.body.textContent, /hết hạn hoặc bị thu hồi/)
-  } finally { await act(async () => root.unmount()); dom.window.close() }
+  } finally { Date.now = actualNow; await act(async () => root.unmount()); dom.window.close() }
 })
 
 test('Phase B App timer removes expired navigation on desktop and mobile while retaining AU05', async () => {
@@ -257,12 +262,12 @@ test('Phase B App timer removes expired navigation on desktop and mobile while r
     assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
     await act(async () => view.document.querySelector(`.sidebar a[href="/app/${tenantId}/me"]`).click())
     assert.equal(timers.size, 3)
-    const evidenceTimer = [...timers.values()].sort((a, b) => a.delay - b.delay)[0]
+    const evidenceTimer = [...timers.values()].find(timer => timer.delay > 20_000 && timer.delay <= 30_000)
     assert.ok(evidenceTimer.delay <= 30_000)
     hold = true
     evidence.validUntil = Date.now() - 1
     await act(async () => evidenceTimer.callback())
-    assert.equal(controller.getSnapshot().session.navigation, undefined)
+    assert.equal(controller.getSnapshot().session.navigation, evidence)
     assert.doesNotMatch(view.document.querySelector('.sidebar').textContent, /Tài khoản người dùng/)
     assert.doesNotMatch(view.document.querySelector('.mobile-nav').textContent, /Tài khoản người dùng/)
     assert.match(view.document.querySelector('.sidebar').textContent, /Tài khoản/)
@@ -271,8 +276,8 @@ test('Phase B App timer removes expired navigation on desktop and mobile while r
   } finally { release(); await act(async () => root.unmount()); dom.window.close() }
 })
 
-async function actualProtectedApp(controller, run) {
-  const dom = new JSDOM('<div id="root"></div>', { url: `http://localhost/app/${tenantId}/settings/members` })
+async function actualProtectedApp(controller, run, path = `/app/${tenantId}/settings/members`) {
+  const dom = new JSDOM('<div id="root"></div>', { url: `http://localhost${path}` })
   globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement
   const timers = new Map()
   let nextTimer = 0
@@ -287,24 +292,29 @@ async function actualProtectedApp(controller, run) {
 function holdResponse() { let release; const promise = new Promise(resolve => { release = resolve }); return { promise, release } }
 const forbiddenCopy = /Không đủ quyền|Không có quyền truy cập/
 
-test('R13 actual App focus storms show checking immediately, hide protected content and restore only fresh grants', async () => {
+test('R13 actual App ignores recent focus storms and silently revalidates current grants without remounting', async () => {
   const gate = holdResponse()
   let hold = false
   const { controller, calls } = backend(async path => { if (hold && path.endsWith('/navigation')) await gate.promise }, true)
   await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
   try {
     await actualProtectedApp(controller, async view => {
-      assert.ok(view.document.querySelector('.app-shell'))
+      const shell = view.document.querySelector('.app-shell')
+      assert.ok(shell)
       const before = calls.length
       hold = true
       await act(async () => { for (let i = 0; i < 10; i++) view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
-      assert.equal(view.document.querySelector('.app-shell'), null)
-      assert.match(view.document.querySelector('[role="status"]').textContent, /Đang xác minh quyền truy cập/)
+      assert.equal(view.document.querySelector('.app-shell'), shell)
+      assert.equal(calls.length, before)
+      let pending
+      await act(async () => { pending = controller.revalidate() })
+      assert.equal(view.document.querySelector('.app-shell'), shell)
+      assert.equal(view.document.querySelector('.session-page').hasAttribute('inert'), false)
       assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
       assert.equal(calls.slice(before).filter(c => c.path.endsWith('/me')).length, 1)
       assert.equal(calls.slice(before).filter(c => c.path.endsWith('/navigation')).length, 1)
-      await act(async () => { gate.release(); await controller.revalidate() })
-      assert.ok(view.document.querySelector('.app-shell'))
+      await act(async () => { gate.release(); await pending })
+      assert.equal(view.document.querySelector('.app-shell'), shell)
       assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
     })
   } finally { gate.release() }
@@ -315,16 +325,21 @@ test('R13 actual App expires navigation into one pending revalidation and ignore
   let hold = false
   const { controller, calls } = backend(async path => { if (hold && path.endsWith('/navigation')) await gate.promise }, true)
   await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+  const actualNow = Date.now
   try {
     await actualProtectedApp(controller, async view => {
       const evidence = controller.getSnapshot().session.navigation
-      const timer = [...view.timers.values()].find(t => t.delay <= 30_000)
+      const shell = view.document.querySelector('.app-shell')
+      const timer = [...view.timers.values()].find(t => t.delay > 20_000 && t.delay <= 30_000)
       assert.ok(timer)
-      hold = true; evidence.validUntil = Date.now() - 1
+      hold = true
+      const expiredAt = evidence.validUntil + 1
+      Date.now = () => expiredAt
       const before = calls.length
       await act(async () => { timer.callback(); view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
       assert.equal(controller.getSnapshot().session.navigationStatus, 'pending')
-      assert.equal(view.document.querySelector('.app-shell'), null)
+      assert.equal(view.document.querySelector('.app-shell'), shell)
+      assert.equal(view.document.querySelector('.session-page').hasAttribute('inert'), true)
       assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
       assert.equal(calls.slice(before).filter(c => c.path.endsWith('/navigation')).length, 1)
       await act(async () => { gate.release(); await controller.revalidate() })
@@ -332,9 +347,9 @@ test('R13 actual App expires navigation into one pending revalidation and ignore
       await act(async () => timer.callback())
       assert.equal(controller.getSnapshot().session.navigation, fresh)
       assert.equal(calls.length, count)
-      assert.ok(view.document.querySelector('.app-shell'))
+      assert.equal(view.document.querySelector('.app-shell'), shell)
     })
-  } finally { gate.release() }
+  } finally { Date.now = actualNow; gate.release() }
 })
 
 test('R13 actual App distinguishes revoked permissions from an unavailable navigation service', async () => {
@@ -352,14 +367,18 @@ test('R13 actual App distinguishes revoked permissions from an unavailable navig
     try {
       await actualProtectedApp(controller, async view => {
         hold = true
-        await act(async () => view.dom.window.dispatchEvent(new view.dom.window.Event('focus')))
+        await act(async () => { void controller.revalidate() })
         assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
         await act(async () => { gate.release(); await controller.revalidate() })
-        assert.equal(view.document.querySelector('.app-shell'), null)
-        if (response !== 'unavailable') assert.match(view.document.body.textContent, forbiddenCopy)
+        if (response !== 'unavailable') { assert.equal(view.document.querySelector('.app-shell'), null); assert.match(view.document.body.textContent, forbiddenCopy) }
         else {
+          assert.ok(view.document.querySelector('.app-shell'))
+          const evidence = controller.getSnapshot().session.navigation
+          evidence.validUntil = Date.now() - 1
+          await act(async () => controller.expireNavigation(evidence))
+          assert.equal(view.document.querySelector('.session-page').hasAttribute('inert'), true)
           assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
-          assert.match(view.document.querySelector('[role="alert"]').textContent, /Chưa thể kết nối/)
+          assert.match(view.document.querySelector('dialog[open]').textContent, /Chưa thể kết nối/)
           failure = ''
           await act(async () => { [...view.document.querySelectorAll('button')].find(b => b.textContent === 'Thử kết nối lại').click(); await controller.revalidate() })
           assert.ok(view.document.querySelector('.app-shell'))
@@ -382,18 +401,121 @@ test('R13 focus near access expiry keeps refresh single-flight with the existing
   await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
   const deadline = controller.getSnapshot().session.refreshDeadline, now = Date.now
   const instant = controller.getSnapshot().session.expiresAt - 45_000
-  Date.now = () => instant
   try {
     await actualProtectedApp(controller, async view => {
+      const shell = view.document.querySelector('.app-shell')
+      Date.now = () => instant
       await act(async () => { for (let i = 0; i < 5; i++) view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
       assert.doesNotMatch(view.document.body.textContent, forbiddenCopy)
-      assert.equal(view.document.querySelector('.app-shell'), null)
+      assert.equal(view.document.querySelector('.app-shell'), shell)
       await act(async () => { gate.release(); await controller.revalidate(true) })
       assert.equal(calls.filter(c => c.path.endsWith('/refresh')).length, 1)
       assert.equal(controller.getSnapshot().session.accessToken, 'TEST_SECRET_ROTATED')
       assert.equal(controller.getSnapshot().session.csrfToken, 'TEST_SECRET_NEW_CSRF')
       assert.equal(controller.getSnapshot().session.refreshDeadline, deadline)
-      assert.ok(view.document.querySelector('.app-shell'))
+      assert.equal(view.document.querySelector('.app-shell'), shell)
     })
   } finally { gate.release(); Date.now = now }
+})
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 25))
+async function enterValue(view, node, value) {
+  await act(async () => {
+    const prototype = node.tagName === 'SELECT' ? view.dom.window.HTMLSelectElement.prototype : node.tagName === 'TEXTAREA' ? view.dom.window.HTMLTextAreaElement.prototype : view.dom.window.HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(node, value)
+    node.dispatchEvent(new view.dom.window.Event(node.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+  })
+}
+function demoBusinessResponse(url) {
+  const path = new URL(String(url), 'http://localhost').pathname
+  const page = items => ({ items, total: items.length, page: 1, pageSize: 100, timeZone: 'UTC', asOf: new Date().toISOString() })
+  if (path.endsWith('/permissions/capabilities/current')) return json({ classUpdate: true, tenantTimezone: 'UTC', enroll: true })
+  if (path.endsWith('/academic/classes/class-one')) return json({ id: 'class-one', name: 'Toán 8A', code: 'T8A', courseId: 'course', courseName: 'Toán nâng cao', capacity: 16, status: 'ACTIVE', subjectId: 'subject', levelId: 'level', enrollments: [], teacherAssignments: [] })
+  if (path.endsWith('/academic/classes')) return json(page([{ id: 'class-one', name: 'Toán 8A', enrollmentCount: 10 }]))
+  if (path.endsWith('/academic/students')) return json(page([]))
+  if (path.endsWith('/scheduling/choices')) return json({ timeZone: 'UTC', classes: [{ id: 'class-one', name: 'Toán 8A', enrollmentCount: 10 }], teachers: [], rooms: [], resources: [], assignments: [] })
+  if (path.endsWith('/scheduling/capabilities')) return json({ scheduleCreate: true, scheduleConfirm: true })
+  if (path.endsWith('/portal/overview')) return json({ tenantId, tenantName: 'Trung tâm hư cấu', scope: 'TENANT', timeZone: 'UTC', asOf: new Date().toISOString(), students: 10, classes: 1, outstandingVnd: '0' })
+  return json(page([]))
+}
+
+for (const screen of ['AC08', 'SC03', 'G01']) test(`R13 ${screen} keeps its actual page and draft through focus, proactive refresh, rotation and an expired-evidence mask`, async () => {
+  let hold = false, gate = holdResponse(), reference
+  const method = ApiClient.prototype.request, sent = []
+  ApiClient.prototype.request = function (path, options = {}) {
+    if (options.accessToken?.startsWith('educore-page:')) reference = options.accessToken
+    return method.call(this, path, options)
+  }
+  businessReply = (url, options) => { sent.push({ url, options }); assert.doesNotMatch(options.headers.Authorization ?? '', /educore-page:/); return demoBusinessResponse(url) }
+  const { controller, calls } = backend(async path => {
+    if (path.endsWith('/refresh')) return json({ accessToken: 'ROTATED_CURRENT_TOKEN', csrfToken: 'ROTATED_CSRF', expiresInSeconds: 900 })
+    if (hold && path.endsWith('/navigation')) await gate.promise
+  }, true, ['AC07', 'AC08', 'G01', 'SC03'])
+  await controller.login('person@example.test', 'test password'); await controller.selectTenant(tenantId)
+  const path = `/app/${tenantId}/${screen === 'AC08' ? 'classes/class-one' : screen === 'SC03' ? 'schedule/create' : 'overview'}`
+  try {
+    await actualProtectedApp(controller, async view => {
+      await act(async () => { await settle() })
+      const shell = view.document.querySelector('.app-shell')
+      let input, modal, filter
+      if (screen === 'AC08') {
+        await act(async () => [...view.document.querySelectorAll('button')].find(b => b.textContent === 'Chỉnh sửa lớp').click())
+        modal = view.document.querySelector('[role="dialog"]')
+        input = modal.querySelector('input')
+        filter = view.document.querySelector('.academic-class-schedule input[type="month"]')
+        await enterValue(view, filter, '2027-01')
+      } else if (screen === 'SC03') input = view.document.querySelector('input[type="date"]')
+      else input = null
+      const draft = screen === 'SC03' ? '2027-01-12' : 'Tên lớp chưa lưu'
+      if (input) { await enterValue(view, input, draft); input.focus(); input.scrollTop = 19 }
+      shell.scrollTop = 137
+      const assertRetained = paused => {
+        assert.equal(view.document.querySelector('.app-shell'), shell)
+        assert.equal(view.document.querySelector('.session-page').hasAttribute('inert'), paused)
+        assert.equal(shell.scrollTop, 137)
+        if (input) { assert.ok(input.isConnected); assert.equal(input.value, draft); assert.equal(input.scrollTop, 19) }
+        if (modal) { assert.ok(modal.isConnected); assert.equal(view.document.querySelector('[role="dialog"]'), modal); assert.equal(filter.value, '2027-01') }
+      }
+      const count = calls.length
+      await act(async () => { for (let i = 0; i < 10; i++) view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
+      assert.equal(calls.length, count, 'no network revalidation for recent valid evidence')
+      assertRetained(false)
+      hold = true
+      // The first captured timer refreshes navigation 20 seconds before expiry.
+      const proactive = [...view.timers.values()].find(t => t.delay > 0 && t.delay <= 10_000)
+      assert.ok(proactive)
+      const clock = Date.now, proactiveAt = controller.getSnapshot().session.navigation.validUntil - 20_000
+      Date.now = () => proactiveAt
+      let pending
+      try { await act(async () => { proactive.callback(); pending = controller.revalidate() }); assertRetained(false) }
+      finally { Date.now = clock }
+      await act(async () => { gate.release(); await pending })
+      assertRetained(false)
+      gate = holdResponse()
+      await act(async () => { pending = controller.refresh() })
+      assertRetained(false)
+      assert.equal(controller.getSnapshot().session.accessToken, 'ROTATED_CURRENT_TOKEN', 'rotation is published before a slow navigation response')
+      const client = new ApiClient('', globalThis.fetch)
+      await client.academic(tenantId, '/students', reference)
+      assert.equal(sent.at(-1).options.headers.Authorization, 'Bearer ROTATED_CURRENT_TOKEN')
+      const evidence = controller.getSnapshot().session.navigation
+      evidence.validUntil = Date.now() - 1
+      await act(async () => { controller.expireNavigation(evidence); view.dom.window.dispatchEvent(new view.dom.window.Event('focus')) })
+      assertRetained(true)
+      assert.equal(view.document.querySelector('.session-page').style.visibility, 'hidden')
+      const escape = new view.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      view.document.querySelector('dialog[open]').dispatchEvent(escape)
+      assert.equal(escape.defaultPrevented, true, 'Escape cannot dismiss the authentication barrier')
+      const before = sent.length
+      await assert.rejects(client.academic(tenantId, '/catalog/classes/class-one', reference, { method: 'PATCH', body: { name: 'Must not dispatch' } }), error => error.status === 423)
+      assert.equal(sent.length, before)
+      await act(async () => { gate.release(); await pending })
+      assertRetained(false)
+      if (input) assert.equal(view.document.activeElement, input)
+      await act(async () => controller.expire('access-revoked'))
+      assert.equal(view.document.querySelector('.app-shell'), null)
+      if (input) assert.equal(input.isConnected, false)
+      await assert.rejects(client.academic(tenantId, '/students', reference), error => error.status === 423)
+    }, path)
+  } finally { gate.release(); ApiClient.prototype.request = method; businessReply = () => json({}, 404) }
 })

@@ -5,8 +5,24 @@ export type SelectTenantResponse = { accessToken: string; expiresInSeconds: numb
 export type RefreshResponse = { accessToken: string; expiresInSeconds: number; csrfToken: string }
 type ErrorBody = { code?: string; message?: string; correlationId?: string }
 
+// A page holds this opaque in-memory reference, never an old rotating credential.
+// Resolve and authorize each business request against the live session at dispatch.
+const businessCredentials = new Map<string, (tenantId: string) => string | null>()
+export function bindBusinessCredential(reference: string, read: (tenantId: string) => string | null) {
+  businessCredentials.set(reference, read)
+  return () => { if (businessCredentials.get(reference) === read) businessCredentials.delete(reference) }
+}
+function currentAccessToken(path: string, reference?: string) {
+  if (!reference?.startsWith('educore-page:')) return reference
+  const tenant = /^\/api\/v1\/tenants\/([^/]+)\//.exec(path)?.[1]
+  const token = tenant ? businessCredentials.get(reference)?.(decodeURIComponent(tenant)) : undefined
+  if (!token) throw new ApiError(423, 'SESSION_VERIFICATION_REQUIRED')
+  return token
+}
+
 export function safeErrorMessage(error: unknown, operation: 'login' | 'tenant' | 'request' = 'request'): string {
   if (error instanceof ApiError) {
+    if (error.code === 'SESSION_VERIFICATION_REQUIRED') return 'Phiên đang được xác minh. Dữ liệu chưa được gửi; vui lòng thử lại sau khi kết nối phục hồi.'
     if (error.status === 401) return operation === 'login'
       ? 'Email hoặc mật khẩu chưa đúng. Vui lòng thử lại.'
       : 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại.'
@@ -51,7 +67,8 @@ export class ApiClient {
   } = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (options.body !== undefined) headers['Content-Type'] = 'application/json'
-    if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`
+    const accessToken = currentAccessToken(path, options.accessToken)
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
     if (options.csrfToken) headers['X-CSRF-Token'] = options.csrfToken
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
     if (options.ifMatch !== undefined) headers['If-Match'] = String(options.ifMatch)
@@ -129,7 +146,7 @@ export class ApiClient {
   async uploadAssignmentFile<T>(tenantId: string, recipientId: string, file: File, accessToken: string): Promise<T> {
     const body = new FormData(); body.append('recipientId', recipientId); body.append('file', file)
     const response = await this.transport(`${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantId)}/files`, {
-      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body, credentials: 'omit', cache: 'no-store'
+      method: 'POST', headers: { Authorization: `Bearer ${currentAccessToken(`/api/v1/tenants/${encodeURIComponent(tenantId)}/files`, accessToken)}` }, body, credentials: 'omit', cache: 'no-store'
     })
     const value = await response.json()
     if (!response.ok) throw new ApiError(response.status, value?.code ?? 'HTTP_ERROR')
@@ -141,7 +158,7 @@ export class ApiClient {
     if (typeof filename !== 'string' || filename.length > 120 || !/^[a-zA-Z0-9_-][a-zA-Z0-9._-]*\.(?:pdf|docx|jpe?g|png)$/i.test(filename))
       throw new ApiError(502, 'INVALID_FILENAME')
     const response = await this.transport(`${this.baseUrl}/api/v1/tenants/${encodeURIComponent(tenantId)}/files/${encodeURIComponent(fileId)}/download`, {
-      headers: { Authorization: `Bearer ${accessToken}` }, credentials: 'omit', cache: 'no-store'
+      headers: { Authorization: `Bearer ${currentAccessToken(`/api/v1/tenants/${encodeURIComponent(tenantId)}/files/${encodeURIComponent(fileId)}/download`, accessToken)}` }, credentials: 'omit', cache: 'no-store'
     })
     if (!response.ok) throw new ApiError(response.status, 'FILE_DOWNLOAD_FAILED')
     const blob = await response.blob()

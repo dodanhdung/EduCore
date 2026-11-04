@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ApiClient, ApiError } from './api.ts'
+import { ApiClient, ApiError, bindBusinessCredential } from './api.ts'
 import { canView, resolveRoute, SessionController } from './auth.ts'
 import { matchRoute, routes } from './routes.ts'
 
@@ -16,6 +16,32 @@ test('public routes work, checking and unauthenticated states never render prote
   assert.equal(resolveRoute('/login', { status: 'unauthenticated' }).kind, 'public')
   assert.equal(resolveRoute(`/app/${tenantId}/me`, { status: 'checking' }).kind, 'checking')
   assert.equal(resolveRoute(`/app/${tenantId}/me`, { status: 'unauthenticated' }).kind, 'unauthenticated')
+})
+
+test('stable page references resolve the current token and deny expired, disposed and cross-tenant dispatches', async () => {
+  let token = 'first-valid-token', allowed = true
+  const reference = 'educore-page:contract-test', requests = []
+  const dispose = bindBusinessCredential(reference, tenant => allowed && tenant === tenantId ? token : null)
+  const api = new ApiClient('', async (url, options) => { requests.push({ url, options }); return Response.json({ id: 'saved' }) })
+  try {
+    await api.academic(tenantId, '/classes', reference)
+    assert.equal(requests.at(-1).options.headers.Authorization, 'Bearer first-valid-token')
+    token = 'fresh-rotated-token'
+    await api.academic(tenantId, '/classes', reference)
+    assert.equal(requests.at(-1).options.headers.Authorization, 'Bearer fresh-rotated-token')
+    const file = new File(['fixture'], 'answer.txt', { type: 'text/plain' })
+    await api.uploadAssignmentFile(tenantId, 'recipient', file, reference)
+    assert.equal(requests.at(-1).options.headers.Authorization, 'Bearer fresh-rotated-token')
+    await assert.rejects(api.academic(otherId, '/classes', reference), error => error.status === 423)
+    allowed = false
+    await assert.rejects(api.academic(tenantId, '/enrollments', reference, { method: 'POST', body: {} }), error => error.status === 423)
+    await assert.rejects(api.uploadAssignmentFile(tenantId, 'recipient', file, reference), error => error.status === 423)
+    await assert.rejects(api.downloadAssignmentFile(tenantId, 'file', reference), error => error.status === 423)
+    assert.equal(requests.length, 3)
+    allowed = true; dispose()
+    await assert.rejects(api.academic(tenantId, '/classes', reference), error => error.status === 423)
+    assert.equal(requests.length, 3)
+  } finally { dispose() }
 })
 
 test('tenant and permission gates fail closed without authoritative grants', () => {
