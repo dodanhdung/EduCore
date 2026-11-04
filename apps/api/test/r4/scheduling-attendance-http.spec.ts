@@ -135,4 +135,14 @@ describe('R8 Scheduling and Attendance HTTP boundary', () => {
       expect(queries).toHaveLength(0);
     }
   });
+
+  it('current FINALIZE contract rejects unapproved reviewed-version fields instead of silently trusting them', async () => {
+    queries.length = 0;
+    for (const field of ['expectedSheetVersion', 'sheetVersion', 'rosterVersion']) {
+      await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize`)
+        .set('Authorization', 'Bearer token').set('Idempotency-Key', `proposed-${field}`)
+        .send({ reason: 'Version proposal is not implemented', [field]: 'untrusted-client-value' }).expect(400);
+    }
+    expect(queries).toHaveLength(0);
+  });
 });
