@@ -54,7 +54,8 @@ test('canonical routes remain tenant guarded and SC04 has no business route', ()
   assert.equal(matchRoute('/app/tenant-a/schedule/sessions/session-eng-19')?.params.sessionId, 'session-eng-19')
   assert.equal(routes.some((route) => route.id === 'SC04'), false)
   const state = { status: 'authenticated', session: { expiresAt: Date.now() + 60000, principal: { tenantId: 'tenant-a', allowedTenants: [{ id: 'tenant-a', name: 'Mẫu' }] } } }
-  assert.equal(resolveRoute('/app/tenant-a/schedule', state).kind, 'forbidden')
+  assert.equal(resolveRoute('/app/tenant-a/schedule', state).kind, 'checking')
+  assert.equal(resolveRoute('/app/tenant-a/schedule', { ...state, session: { ...state.session, navigationStatus: 'denied' } }).kind, 'forbidden')
   assert.equal(resolveRoute('/app/tenant-b/resources', state, { tenantId: 'tenant-b', screenIds: ['SC02'] }).kind, 'forbidden')
 })
 

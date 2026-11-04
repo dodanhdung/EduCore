@@ -2,6 +2,7 @@ export type SessionStatus = 'CONFIRMED' | 'DRAFT' | 'COMPLETED' | 'CANCELLED'
 export type ScheduleSession = {
   id: string
   startsAt?: string
+  endsAt?: string
   date: string
   start: string
   end: string

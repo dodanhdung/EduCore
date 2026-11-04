@@ -68,14 +68,15 @@ test('OP01 opens the selected membership through the approved OP02 route', async
     navigation: { userId: member, sessionId: member, tenantId: tenant, tenantEpoch: 1,
       validUntil: Date.now() + 30_000, screenIds: ['OP01', 'OP02', 'OP03'] } }
   const state = { status: 'authenticated', session }
+  const controller = { getSnapshot: () => state }
   let nextPath = ''
   try {
-    await act(async () => { root.render(React.createElement(AppView, { state, path: `/app/${tenant}/settings/members`, navigate(path) { nextPath = path }, onLogout() {} })); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    await act(async () => { root.render(React.createElement(AppView, { state, controller, path: `/app/${tenant}/settings/members`, navigate(path) { nextPath = path }, onLogout() {} })); await new Promise((resolve) => setTimeout(resolve, 20)) })
     const view = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Xem')
     assert.ok(view)
     await act(async () => view.click())
     assert.equal(nextPath, `/app/${tenant}/settings/members/${member}`)
-    await act(async () => { root.render(React.createElement(AppView, { state, path: nextPath, navigate() {}, onLogout() {} })); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    await act(async () => { root.render(React.createElement(AppView, { state, controller, path: nextPath, navigate() {}, onLogout() {} })); await new Promise((resolve) => setTimeout(resolve, 20)) })
     assert.match(document.body.textContent, /Real Member/)
     assert.ok(calls.some((c) => c.url === `/api/v1/tenants/${tenant}/members/${member}`))
   } finally { await act(async () => root.unmount()) }

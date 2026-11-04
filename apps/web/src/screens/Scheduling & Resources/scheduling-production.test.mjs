@@ -14,6 +14,7 @@ const { createRoot } = await import('react-dom/client')
 const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
 const { SchedulingProduction } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SchedulingProduction.tsx')
 const { apiWeekday, futureSessionStart, localInstant, schedulingView } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/SchedulingAdapter.ts')
+const { readCalendarContext, calendarPath, sessionPath, attendanceViewPath } = await vite.ssrLoadModule('/src/screens/Scheduling & Resources/ScheduleNavigation.ts')
 after(async () => { await vite.close(); dom.window.close() })
 
 const tenant = '00000000-0000-4000-8000-000000000001'
@@ -38,6 +39,92 @@ async function mounted(props, run) {
   try { await act(async () => { root.render(React.createElement(SchedulingProduction, { tenantId: tenant, token: 'live-token', navigate() {}, ...props })); await flush() }); await run() }
   finally { await act(async () => root.unmount()) }
 }
+
+test('schedule navigation accepts only finite internal context, never a return URL or tenant override', () => {
+  const context = readCalendarContext('?date=2026-11-03&mode=day&classId=class-1&teacherId=teacher-1&roomId=room-1&returnTo=https://evil.test&tenantId=other')
+  assert.deepEqual(context, { date: '2026-11-03', mode: 'day', classId: 'class-1', teacherId: 'teacher-1', roomId: 'room-1' })
+  assert.deepEqual(readCalendarContext('?date=2026-02-31&mode=invalid&classId=%2F%2Fevil.test&roomId=..%2Foutside'), {})
+  assert.ok(calendarPath(context).startsWith('/schedule?'))
+  assert.ok(sessionPath('session-2', context).startsWith('/schedule/sessions/session-2?'))
+  const path = attendanceViewPath('session-2', 'SC05', context)
+  assert.match(path, /^\/sessions\/session-2\/attendance\?/)
+  assert.equal(new URL(path, 'https://local.test').searchParams.get('view'), 'read')
+  assert.doesNotMatch(path, /evil|tenantId|returnTo/)
+})
+
+test('SC05 uses real authorized room names and opens exactly its session in view mode with calendar context', async () => {
+  const navigations = [], original = window.location.href
+  window.history.replaceState(null, '', '/app/tenant/schedule/sessions/x?date=2026-11-03&mode=day&classId=class-1&teacherId=teacher-1')
+  fetchHandler = async url => response(String(url).endsWith('/capabilities') ? caps : String(url).includes('/rooms?') ? page([{ id: 'room-real', name: 'Phòng 201 — Khu Toán', code: 'P201', capacity: 20, active: true, location: 'Tầng 2' }]) : { ...record, roomId: 'room-real', deliveryMode: 'ONSITE', timeZone: 'UTC' })
+  try { await mounted({ id: 'SC05', selectedId: sessionId, allowed: ['SC01', 'AT02'], navigate: path => navigations.push(path) }, async () => {
+    assert.match(document.body.textContent, /Phòng 201 — Khu Toán · Tầng 2/)
+    assert.doesNotMatch(document.querySelector('.scheduling-heading').textContent, new RegExp(sessionId))
+    assert.doesNotMatch(document.querySelector('.scheduling-description').textContent, /room-real/)
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Xem bảng điểm danh').click())
+    const target = new URL(navigations.at(-1), 'https://local.test')
+    assert.equal(target.pathname, `/app/${tenant}/sessions/${sessionId}/attendance`)
+    assert.equal(target.searchParams.get('from'), 'SC05')
+    assert.equal(target.searchParams.get('view'), 'read')
+    assert.equal(target.searchParams.get('date'), '2026-11-03')
+    assert.equal(target.searchParams.get('classId'), 'class-1')
+    assert.equal(document.querySelector('.scheduling-action-stack'), null)
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '← Quay lại lịch').click())
+    assert.equal(new URL(navigations.at(-1), 'https://local.test').pathname, `/app/${tenant}/schedule`)
+  }) } finally { window.history.replaceState(null, '', original) }
+})
+
+test('SC05 never offers attendance for draft/cancelled or absent navigation permission; optional room denial preserves detail', async () => {
+  for (const [status, allowed, visible] of [['DRAFT', ['AT02'], false], ['CANCELLED', ['AT02'], false], ['COMPLETED', ['AT02'], true], ['CONFIRMED', [], false], ['CONFIRMED', ['AT02'], true]]) {
+    fetchHandler = async url => {
+      const path = String(url)
+      if (path.includes('/rooms?')) return response({ code: 'FORBIDDEN' }, 403)
+      if (path.endsWith('/capabilities')) return response(caps)
+      if (path.includes('/preview')) return response({ ready: true, conflicts: [], sessionIds: [sessionId], reserved: false })
+      return response({ ...record, status, roomId: 'private-room', deliveryMode: 'ONSITE', timeZone: 'UTC' })
+    }
+    await mounted({ id: 'SC05', selectedId: sessionId, allowed }, async () => {
+      assert.equal([...document.querySelectorAll('button')].some(b => b.textContent === 'Xem bảng điểm danh'), visible)
+      assert.match(document.body.textContent, /Lớp thật|Chưa được cấp tên phòng/)
+      assert.doesNotMatch(document.querySelector('.scheduling-description').textContent, /private-room/)
+    })
+  }
+})
+
+test('SC01 passes the displayed period and selected filters into SC05', async () => {
+  const original = window.location.href, navigations = [], date = new Date().toISOString().slice(0, 10)
+  window.history.replaceState(null, '', `/app/tenant/schedule?date=${date}&mode=month&classId=class-1&teacherId=teacher-1`)
+  fetchHandler = async url => response(String(url).endsWith('/capabilities') ? caps : String(url).includes('/rooms?') ? page([]) : page([record]))
+  try { await mounted({ id: 'SC01', allowed: ['SC05'], navigate: path => navigations.push(path) }, async () => {
+    assert.equal(document.querySelector('.scheduling-filters select').value, 'class-1')
+    assert.equal(document.querySelector('[role=tab][aria-selected=true]').textContent, 'Tháng')
+    await act(async () => [...document.querySelectorAll('.scheduling-month-grid button')].find(b => b.querySelector('small')).click())
+    await act(async () => document.querySelector('.scheduling-event').click())
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Xem chi tiết buổi').click())
+    const target = new URL(navigations.at(-1), 'https://local.test')
+    assert.equal(target.searchParams.get('mode'), 'day')
+    assert.equal(target.searchParams.get('date'), date)
+    assert.equal(target.searchParams.get('teacherId'), 'teacher-1')
+  }) } finally { window.history.replaceState(null, '', original) }
+})
+
+test('SC05 loading and terminal read failures never offer a stale attendance action', async () => {
+  for (const status of [401, 403, 404, 500]) {
+    fetchHandler = async () => response({ code: 'DENIED' }, status)
+    await mounted({ id: 'SC05', selectedId: sessionId, allowed: ['AT02'] }, async () => {
+      assert.equal([...document.querySelectorAll('button')].some(b => b.textContent === 'Xem bảng điểm danh'), false)
+      assert.doesNotMatch(document.body.textContent, /Lớp thật/)
+      assert.ok(document.querySelector('[role=alert]'))
+    })
+  }
+  let finish
+  fetchHandler = url => String(url).endsWith('/capabilities') ? Promise.resolve(response(caps)) : new Promise(resolve => { finish = resolve })
+  await mounted({ id: 'SC05', selectedId: sessionId, allowed: ['AT02'] }, async () => {
+    assert.match(document.body.textContent, /Đang tải/)
+    assert.equal(document.querySelector('.scheduling-detail-grid'), null)
+    await act(async () => { finish(response({ ...record, timeZone: 'UTC' })); await flush() })
+    assert.match(document.body.textContent, /Xem bảng điểm danh/)
+  })
+})
 
 test('adapter respects tenant wall time, server room status and real resource identity', () => {
   assert.equal(apiWeekday([0]), 7)

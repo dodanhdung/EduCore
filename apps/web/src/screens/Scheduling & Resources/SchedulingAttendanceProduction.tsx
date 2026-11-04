@@ -5,6 +5,7 @@ import './SchedulingScreens.css'
 import '../Attendance & Leave/AttendanceScreens.css'
 import { ManagerAttendanceList, ManagerAttendanceSheet } from '../Attendance & Leave/ManagerAttendanceView.tsx'
 import { ResourceState } from '../../shared/ui/SharedUI.tsx'
+import { attendanceViewPath, calendarPath, readCalendarContext, sessionPath, validMonth } from './ScheduleNavigation.ts'
 
 type Id = 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'
 type Page<T> = { items: T[]; page: number; pageSize: number; total: number; timeZone: string }
@@ -48,6 +49,9 @@ export function SchedulingAttendanceProduction(props: Props) {
   return <AttendanceScope key={JSON.stringify([props.id, props.tenantId, props.token, props.selectedId])} {...props} />
 }
 function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = [] }: Props) {
+  const [entry] = useState(() => new URLSearchParams(window.location.search))
+  const readOnly = entry.get('view') === 'read'
+  const calendarContext = readCalendarContext(entry.toString())
   const [reload, setReload] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -56,7 +60,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [zone, setZone] = useState('')
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => validMonth(entry.get('month')) ? entry.get('month')! : new Date().toISOString().slice(0, 7))
   const [calendar, setCalendar] = useState<Session[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [blocks, setBlocks] = useState<Busy[]>([])
@@ -168,8 +172,8 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   useEffect(() => {
     if (!zone) return
     const local = tenantLocalDate(zone)
-    if (local) { setDay(local); setMonth(local.slice(0, 7)) }
-  }, [zone])
+    if (local) { setDay(local); if (!validMonth(entry.get('month'))) setMonth(local.slice(0, 7)) }
+  }, [zone, entry])
 
   const update = (key: string, value: string) => setForm((previous) => ({ ...previous, [key]: value }))
   const input = (key: string, title: string, type = 'text') => <label className="attendance-field">{title}<input type={type} value={form[key] ?? ''} onChange={(e) => update(key, e.target.value)} /></label>
@@ -192,6 +196,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
     catch (cause) { setError(phaseMessage(cause)) }
   }
   const saveMarks = async () => {
+    if (readOnly) return
     if (!sheet || marking.current || busy || !active.current || !['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized) return
     for (const p of sheet.participants) {
       const value = form[`status:${p.id}`] ?? p.status
@@ -218,6 +223,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   }
   const hasUnsavedMarks = !!sheet && sheet.participants.some((p) => (form[`status:${p.id}`] ?? p.status) !== p.status)
   const finalize = async () => {
+    if (readOnly) return
     if (marking.current || busy || !active.current) return
     if (!sheet || hasUnsavedMarks) { setError('Lưu thay đổi điểm danh trước khi xác nhận.'); return }
     if (!['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now()) return
@@ -247,12 +253,15 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   if (id === 'AT01' || id === 'AT02') {
     if (loading || loadedRead !== readScope) return <section className="attendance-page"><ResourceState kind="loading" /></section>
     if (readStatus !== null) return <section className="attendance-page"><ResourceState kind={readStatus === 401 ? 'unauthenticated' : readStatus === 403 ? 'forbidden' : readStatus === 404 ? 'not-found' : 'error'} onRetry={![401, 403, 404].includes(readStatus) ? () => setReload(n => n + 1) : undefined} /></section>
-    if (id === 'AT01') return <>{notice && <p role="status">{notice}</p>}<ManagerAttendanceList sessions={due} zone={zone} month={month} onMonth={setMonth} onOpen={sessionId => go(`/sessions/${encodeURIComponent(sessionId)}/attendance`)} /></>
+    if (id === 'AT01') return <>{notice && <p role="status">{notice}</p>}<ManagerAttendanceList sessions={due} zone={zone} month={month} onMonth={setMonth} onOpen={allowed.includes('AT02') ? sessionId => go(attendanceViewPath(sessionId, 'AT01', {}, month)) : undefined} /></>
     if (!sheet) return <ResourceState kind="not-found" />
-    return <ManagerAttendanceSheet sheet={sheet} className={sheetClassName} busy={busy} values={form} hasUnsaved={hasUnsavedMarks} notice={notice} error={error}
-      onChoose={(participantId, value) => { update(`status:${participantId}`, value); setNotice('') }} onSave={saveMarks} onFinalize={finalize} onBack={() => go('/attendance')}
+    const returnToSession = entry.get('from') === 'SC05' && allowed.includes('SC05')
+    const listMonth = entry.get('month')
+    return <ManagerAttendanceSheet sheet={sheet} className={sheetClassName} busy={busy} values={form} hasUnsaved={hasUnsavedMarks} notice={notice} error={error} readOnly={readOnly} backLabel={returnToSession ? 'Về chi tiết buổi' : 'Về danh sách'}
+      onChoose={(participantId, value) => { update(`status:${participantId}`, value); setNotice('') }} onSave={saveMarks} onFinalize={finalize} onBack={returnToSession ? () => go(sessionPath(sheet.sessionId, calendarContext)) : allowed.includes('AT01') ? () => go(`/attendance${validMonth(listMonth) ? `?month=${listMonth}` : ''}`) : undefined}
+      onCalendar={allowed.includes('SC01') ? () => go(calendarPath(calendarContext)) : undefined}
       onClass={allowed.includes('AC08') ? () => go(`/classes/${encodeURIComponent(sheet.classId)}`) : undefined}
-      corrections={sheet.finalized && <section className="attendance-card"><h2>Đề nghị điều chỉnh</h2><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>{sheet.participants.filter(p => p.attendanceId).map(p => <details key={p.id}><summary>{p.name}</summary>
+      corrections={!readOnly && sheet.finalized && <section className="attendance-card"><h2>Đề nghị điều chỉnh</h2><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>{sheet.participants.filter(p => p.attendanceId).map(p => <details key={p.id}><summary>{p.name}</summary>
         {p.billingSourceLocked && <p>{p.invoiceIssued ? 'Hóa đơn đã phát hành: cần điều chỉnh tài chính riêng.' : 'Nguồn đã dùng trong bản nháp tính phí, điều chỉnh trực tiếp đang khóa.'}</p>}
         <select aria-label={`Trạng thái mới ${p.name}`} disabled={busy || p.billingSourceLocked} value={form[`correct:${p.id}`] ?? ''} onChange={e => update(`correct:${p.id}`, e.target.value)}>
           <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option><option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>

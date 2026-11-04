@@ -207,7 +207,8 @@ test('routes keep AT05 embedded and tenant guard intact', () => {
   assert.equal(matchRoute('/app/t/leave-requests')?.route.id, 'AT04')
   assert.equal(routes.some((item) => item.id === 'AT05'), false)
   const state = { status: 'authenticated', session: { expiresAt: Date.now() + 60000, principal: { tenantId: 't', allowedTenants: [{ id: 't', name: 'Mẫu' }] } } }
-  assert.equal(resolveRoute('/app/t/attendance', state).kind, 'forbidden')
+  assert.equal(resolveRoute('/app/t/attendance', state).kind, 'checking')
+  assert.equal(resolveRoute('/app/t/attendance', { ...state, session: { ...state.session, navigationStatus: 'denied' } }).kind, 'forbidden')
 })
 
 test('AT01 tabs, empty state, and non-first session preserve ID', async () => {

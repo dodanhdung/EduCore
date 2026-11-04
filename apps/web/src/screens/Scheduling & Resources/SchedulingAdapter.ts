@@ -25,7 +25,7 @@ function localTime(iso: string, timeZone: string): string {
   catch { return '' }
 }
 export function sessionView(session: ApiSession, timeZone: string): ScheduleSession {
-  return { id: session.id, startsAt: session.startsAt, date: tenantLocalDate(timeZone, new Date(session.startsAt)) ?? '', start: localTime(session.startsAt, timeZone), end: localTime(session.endsAt, timeZone), classId: session.classId, className: session.className, teacherId: session.teacherId, teacherName: session.teacherName, roomId: session.roomId ?? '', deliveryMode: session.deliveryMode, status: session.status, revision: session.revision, seriesId: session.seriesId }
+  return { id: session.id, startsAt: session.startsAt, endsAt: session.endsAt, date: tenantLocalDate(timeZone, new Date(session.startsAt)) ?? '', start: localTime(session.startsAt, timeZone), end: localTime(session.endsAt, timeZone), classId: session.classId, className: session.className, teacherId: session.teacherId, teacherName: session.teacherName, roomId: session.roomId ?? '', deliveryMode: session.deliveryMode, status: session.status, revision: session.revision, seriesId: session.seriesId }
 }
 export function roomView(room: ApiRoom): ScheduleRoom {
   return { id: room.id, code: room.code, name: room.name, location: room.location ?? '', capacity: room.capacity, status: room.active ? 'ACTIVE' : 'INACTIVE' }

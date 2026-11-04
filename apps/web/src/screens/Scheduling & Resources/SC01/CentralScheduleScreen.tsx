@@ -3,6 +3,7 @@ import type { SchedulingData, SchedulingState, ScheduleSession } from '../Schedu
 import { addDays, dayDate, formatDate, periodLabel, shiftPeriod, shortDate, startOfWeek, tenantLocalDate, timezoneLabel } from '../SchedulingDates.ts'
 import { Panel, PendingAction, StatusBadge } from '../SchedulingPrimitives.tsx'
 import '../SchedulingScreens.css'
+import type { CalendarContext } from '../ScheduleNavigation.ts'
 
 type CalendarMode = 'day' | 'week' | 'month'
 function matchesPeriod(session: ScheduleSession, date: string, mode: CalendarMode) {
@@ -11,17 +12,17 @@ function matchesPeriod(session: ScheduleSession, date: string, mode: CalendarMod
   return session.date.slice(0, 7) === date.slice(0, 7)
 }
 
-export function CentralScheduleScreen({ data, state = 'ready', preview = false, today, timeZone, now, canCreate = true, onCreate, onOpenSession, onPeriodChange, initialClassId = '' }: {
-  data?: SchedulingData; state?: SchedulingState; preview?: boolean; today?: string; timeZone?: string; now?: Date; canCreate?: boolean; onCreate?: () => void; onOpenSession?: (id: string) => void; onPeriodChange?: (date: string) => void; initialClassId?: string
+export function CentralScheduleScreen({ data, state = 'ready', preview = false, today, timeZone, now, canCreate = true, onCreate, onOpenSession, onPeriodChange, initialClassId = '', initialContext = {} }: {
+  data?: SchedulingData; state?: SchedulingState; preview?: boolean; today?: string; timeZone?: string; now?: Date; canCreate?: boolean; onCreate?: () => void; onOpenSession?: (id: string, context: CalendarContext) => void; onPeriodChange?: (date: string) => void; initialClassId?: string; initialContext?: CalendarContext
 }) {
   const localToday = tenantLocalDate(timeZone, now)
   const currentToday = localToday ? (today ?? localToday) : null
-  const [mode, setMode] = useState<CalendarMode>('week')
-  const [selectedDate, setDate] = useState(currentToday ?? '')
+  const [mode, setMode] = useState<CalendarMode>(initialContext.mode ?? 'week')
+  const [selectedDate, setDate] = useState(initialContext.date ?? currentToday ?? '')
   const date = selectedDate || currentToday || ''
   const [classId, setClassId] = useState(initialClassId)
-  const [teacherId, setTeacherId] = useState('')
-  const [roomId, setRoomId] = useState('')
+  const [teacherId, setTeacherId] = useState(initialContext.teacherId ?? '')
+  const [roomId, setRoomId] = useState(initialContext.roomId ?? '')
   const [selected, setSelected] = useState<ScheduleSession | null>(null)
   const [pending, setPending] = useState(false)
   const [displayState, setDisplayState] = useState<SchedulingState>(state)
@@ -45,7 +46,7 @@ export function CentralScheduleScreen({ data, state = 'ready', preview = false, 
       <button type="button" onClick={() => { setDate(currentToday); onPeriodChange?.(currentToday); setSelected(null) }}>Hôm nay</button>
     </div>
     <Panel title="Bộ lọc theo phạm vi" hint="Chỉ hiện lịch và tài nguyên được cấp quyền."><div className="scheduling-filters">
-      <label>Lớp<select value={classId} onChange={(event) => { setClassId(event.target.value); setSelected(null) }}><option value="">Tất cả lớp</option>{classId && !classes.some(([id]) => id === classId) && <option value={classId}>L?p ?ang ch?n</option>}{classes.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label>
+      <label>Lớp<select value={classId} onChange={(event) => { setClassId(event.target.value); setSelected(null) }}><option value="">Tất cả lớp</option>{classId && !classes.some(([id]) => id === classId) && <option value={classId}>Lớp đang chọn</option>}{classes.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label>
       <label>Giáo viên<select value={teacherId} onChange={(event) => { setTeacherId(event.target.value); setSelected(null) }}><option value="">Tất cả giáo viên</option>{teachers.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label>
       <label>Phòng<select value={roomId} onChange={(event) => { setRoomId(event.target.value); setSelected(null) }}><option value="">Tất cả phòng</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select></label>
     </div></Panel>
@@ -54,7 +55,7 @@ export function CentralScheduleScreen({ data, state = 'ready', preview = false, 
     </Panel>
     <div className="scheduling-legend" aria-label="Chú giải trạng thái"><StatusBadge status="CONFIRMED" /><StatusBadge status="DRAFT" /><StatusBadge status="CANCELLED" /></div>
     <Panel title="Nguyên tắc lịch"><p className="scheduling-hint">Lịch đã hủy không chiếm giáo viên/phòng/học sinh. Buổi tiếp giáp đúng thời điểm kết thúc không xung đột.</p><p className="scheduling-hint">Màu chỉ hỗ trợ nhận biết; trạng thái luôn có nhãn. Không tự gợi ý tối ưu lịch trong P0.</p></Panel>
-    {selected && <div className="scheduling-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}><section role="dialog" aria-modal="true" aria-label="Thông tin buổi học" className="scheduling-dialog"><div className="scheduling-dialog-head"><h2>{selected.className}</h2><button type="button" aria-label="Đóng thông tin buổi học" onClick={() => setSelected(null)}>×</button></div><p>{formatDate(selected.date)} · {selected.start}–{selected.end} · {timezoneLabel(timeZone)}</p><p>{selected.teacherName} · {selected.deliveryMode === 'ONLINE' ? 'Trực tuyến' : roomName(selected.roomId)}</p><StatusBadge status={selected.status} /><p className="scheduling-hint">{preview ? 'Thông tin minh họa. Chi tiết đầy đủ thuộc màn SC05.' : 'Chi tiết đầy đủ thuộc màn SC05.'}</p>{onOpenSession ? <button type="button" onClick={() => onOpenSession(selected.id)}>Xem chi tiết buổi</button> : <PendingAction>Chi tiết buổi học chưa kết nối.</PendingAction>}</section></div>}
+    {selected && <div className="scheduling-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}><section role="dialog" aria-modal="true" aria-label="Thông tin buổi học" className="scheduling-dialog"><div className="scheduling-dialog-head"><h2>{selected.className}</h2><button type="button" aria-label="Đóng thông tin buổi học" onClick={() => setSelected(null)}>×</button></div><p>{formatDate(selected.date)} · {selected.start}–{selected.end} · {timezoneLabel(timeZone)}</p><p>{selected.teacherName} · {selected.deliveryMode === 'ONLINE' ? 'Trực tuyến' : roomName(selected.roomId)}</p><StatusBadge status={selected.status} /><p className="scheduling-hint">{preview ? 'Thông tin minh họa. Chi tiết đầy đủ thuộc màn SC05.' : 'Chi tiết đầy đủ thuộc màn SC05.'}</p>{onOpenSession ? <button type="button" onClick={() => onOpenSession(selected.id, { date, mode, classId, teacherId, roomId })}>Xem chi tiết buổi</button> : <PendingAction>Chi tiết buổi học chưa kết nối.</PendingAction>}</section></div>}
     {pending && <div className="scheduling-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setPending(false) }}><section role="dialog" aria-modal="true" aria-label="Tạo buổi học" className="scheduling-dialog"><div className="scheduling-dialog-head"><h2>Tạo buổi học</h2><button type="button" aria-label="Đóng" onClick={() => setPending(false)}>×</button></div><PendingAction>Tạo lịch đang chờ API và quyền hiệu lực.</PendingAction></section></div>}
   </div>
 }

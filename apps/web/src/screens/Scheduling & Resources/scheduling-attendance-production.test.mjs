@@ -127,6 +127,98 @@ async function attendanceCase(handler, run, props = {}) {
   try { await render(); await run(render) } finally { await act(async () => root.unmount()); responseOverride = null }
 }
 
+test('AT02 explicit view mode shows persisted results for future/past/finalized/cancelled without any write controls', async () => {
+  const original = window.location.href
+  window.history.replaceState(null, '', '/app/tenant/sessions/x/attendance?view=read&from=SC05')
+  try { for (const patch of [{}, { startsAt: new Date(Date.now() + 86400000).toISOString() }, { finalized: true }, { status: 'CANCELLED' }]) {
+    const writes = []
+    await attendanceCase((url, options) => { if (options.method !== 'GET') writes.push(url); return Response.json(String(url).includes('/scheduling/') ? { className: 'Toán 8A' } : sheetValue(patch)) }, async () => {
+      assert.match(document.body.textContent, /Chế độ xem/)
+      assert.match(document.body.textContent, /Học viên p1|Có mặt/)
+      assert.equal(document.querySelectorAll('select').length, 0)
+      assert.equal(findButton('Lưu nháp'), undefined)
+      assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+      assert.equal(findButton('Gửi điều chỉnh'), undefined)
+      assert.deepEqual(writes, [])
+    })
+  } } finally { window.history.replaceState(null, '', original) }
+})
+
+test('AT02 returns to its real session/calendar in the current tenant, ignores arbitrary redirects and gates navigation', async () => {
+  const original = window.location.href, paths = []
+  window.history.replaceState(null, '', '/app/tenant/sessions/x/attendance?view=read&from=SC05&date=2026-11-03&mode=day&classId=class&returnTo=https://evil.test&tenantId=other')
+  const handler = url => Response.json(String(url).includes('/scheduling/') ? { className: 'Toán 8A' } : sheetValue())
+  try {
+    await attendanceCase(handler, async () => {
+      await act(async () => findButton('Về chi tiết buổi').click())
+      const next = new URL(paths.at(-1), 'https://local.test')
+      assert.equal(next.pathname, `/app/${tenant}/schedule/sessions/${session}`)
+      assert.equal(next.searchParams.get('date'), '2026-11-03')
+      assert.equal(next.searchParams.get('returnTo'), null)
+      await act(async () => findButton('← Lịch trung tâm').click())
+      assert.ok(paths.at(-1).startsWith(`/app/${tenant}/schedule?`))
+      assert.ok(paths.every(p => !p.includes('evil') && !p.includes('/app/other/')))
+    }, { allowed: ['SC05', 'SC01', 'AC08'], navigate: p => paths.push(p) })
+    await attendanceCase(handler, async () => {
+      assert.equal(findButton('Về chi tiết buổi'), undefined)
+      assert.equal(findButton('Về danh sách'), undefined)
+      assert.equal(findButton('← Lịch trung tâm'), undefined)
+      assert.equal(findButton('← Chi tiết lớp học'), undefined)
+    }, { allowed: [] })
+  } finally { window.history.replaceState(null, '', original) }
+})
+
+test('AT01 opens its selected session read-only and retains an explicitly chosen month', async () => {
+  const original = window.location.href, paths = [], urls = []
+  window.history.replaceState(null, '', '/app/tenant/attendance?month=2026-09')
+  const handler = url => { urls.push(String(url)); return Response.json({ items: [{ id: 'non-first-session', classId: 'class', className: 'Lớp tháng 9', startsAt: '2026-09-10T10:00:00Z', teacherName: 'Cô Mai', expectedCount: 1, finalized: false }], total: 1, timeZone: 'Asia/Ho_Chi_Minh' }) }
+  try {
+    await attendanceCase(handler, async () => {
+      assert.equal(document.querySelector('input[type=month]').value, '2026-09')
+      await act(async () => findButton('Mở bảng điểm danh').click())
+      const next = new URL(paths.at(-1), 'https://local.test')
+      assert.equal(next.pathname, `/app/${tenant}/sessions/non-first-session/attendance`)
+      assert.equal(next.searchParams.get('month'), '2026-09')
+      assert.equal(next.searchParams.get('view'), 'read')
+      assert.equal(next.searchParams.get('from'), 'AT01')
+      assert.ok(urls.every(u => !u.includes('2026-11')))
+    }, { id: 'AT01', selectedId: undefined, allowed: ['AT02'], navigate: p => paths.push(p) })
+    await attendanceCase(handler, async () => assert.equal(findButton('Mở bảng điểm danh'), undefined), { id: 'AT01', selectedId: undefined, allowed: [] })
+  } finally { window.history.replaceState(null, '', original) }
+})
+
+test('AT02 warns before discarding unsaved marks through its return navigation and never writes on leave', async () => {
+  const original = window.location.href, paths = [], writes = [], oldConfirm = window.confirm
+  window.history.replaceState(null, '', '/app/tenant/sessions/x/attendance')
+  try { await attendanceCase((url, options) => { if (options.method !== 'GET') writes.push(url); return Response.json(String(url).includes('/scheduling/') ? { className: 'Toán 8A' } : sheetValue()) }, async () => {
+    await act(async () => { const select = document.querySelector('select'); select.value = 'UNEXCUSED'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })) })
+    window.confirm = () => false
+    await act(async () => findButton('Về danh sách').click())
+    assert.deepEqual(paths, [])
+    window.confirm = () => true
+    await act(async () => findButton('Về danh sách').click())
+    assert.deepEqual(paths, [`/app/${tenant}/attendance`])
+    assert.deepEqual(writes, [])
+  }, { allowed: ['AT01'], navigate: p => paths.push(p) }) } finally { window.confirm = oldConfirm; window.history.replaceState(null, '', original) }
+})
+
+test('AT02 handles missing/error sheets and isolates a deferred old-tenant response', async () => {
+  for (const status of [404, 500]) await attendanceCase(() => Response.json({ code: 'FAILED' }, { status }), async () => {
+    assert.ok(document.querySelector('[role=alert]'))
+    assert.equal(document.querySelectorAll('tbody tr').length, 0)
+    assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+    assert.equal(Boolean(findButton('Thử lại')), status === 500)
+  })
+  let oldReply
+  await attendanceCase(url => String(url).includes('/scheduling/') ? Response.json({ className: 'Lớp tenant mới' }) : String(url).includes(`/tenants/${tenant}/`) ? new Promise(resolve => { oldReply = resolve }) : Response.json(sheetValue({ participants: [participant('new-tenant')] })), async render => {
+    assert.match(document.body.textContent, /Đang tải/)
+    await render({ tenantId: 'tenant-new', token: 'new-token' })
+    assert.match(document.body.textContent, /Học viên new-tenant/)
+    await act(async () => { oldReply(Response.json(sheetValue({ participants: [participant('old-tenant')] }))); await pause() })
+    assert.doesNotMatch(document.body.textContent, /Học viên old-tenant/)
+  })
+})
+
 test('AT02 future session stays read-only and EXCUSED requires approved leave', async () => {
   const writes = []
   await attendanceCase((url, options) => {
