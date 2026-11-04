@@ -65,13 +65,13 @@ test('AT02 blocks finalization until changed marks are saved and confirmed by th
   let persistedStatus = 'ATTENDED'
   let revision = 1
   let failFirstSave = true
+  const startsAt = new Date(Date.now() - 3600000).toISOString(), endsAt = new Date(Date.now() + 3600000).toISOString()
   responseOverride = async (url, options) => {
     const path = String(url)
     const response = (body, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } })
     if (path.endsWith(`/attendance/sessions/${session}`) && options.method === 'GET') return response({
-      sessionId: session, classId: 'class', startsAt: new Date(Date.now() - 3600000).toISOString(),
-      endsAt: new Date(Date.now() + 3600_000).toISOString(), status: 'CONFIRMED',
+      sessionId: session, classId: 'class', startsAt, endsAt, status: 'CONFIRMED',
       timeZone: 'Asia/Ho_Chi_Minh', finalized: false,
       participants: [{ id: 'participant', studentId: 'student', name: 'Learner', enrollmentId: 'enrollment',
         attendanceId: 'record', status: persistedStatus, revision, approvedLeave: false,
@@ -119,7 +119,8 @@ test('AT02 blocks finalization until changed marks are saved and confirmed by th
 const pause = () => new Promise(resolve => setTimeout(resolve, 35))
 const findButton = label => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === label)
 const participant = (id = 'p1', status = 'ATTENDED') => ({ id, studentId: id, name: `Học viên ${id}`, enrollmentId: `e-${id}`, attendanceId: `a-${id}`, status, revision: 1, approvedLeave: false, billingSourceLocked: false, invoiceIssued: false })
-const sheetValue = (patch = {}) => ({ sessionId: session, classId: 'class', startsAt: new Date(Date.now() - 4 * 86400000).toISOString(), endsAt: new Date(Date.now() - 4 * 86400000 + 3600000).toISOString(), status: 'CONFIRMED', timeZone: 'Asia/Ho_Chi_Minh', finalized: false, participants: [participant()], ...patch })
+const fixtureStartsAt = new Date(Date.now() - 4 * 86400000).toISOString(), fixtureEndsAt = new Date(Date.now() - 4 * 86400000 + 3600000).toISOString()
+const sheetValue = (patch = {}) => ({ sessionId: session, classId: 'class', startsAt: fixtureStartsAt, endsAt: fixtureEndsAt, status: 'CONFIRMED', timeZone: 'Asia/Ho_Chi_Minh', finalized: false, participants: [participant()], ...patch })
 async function attendanceCase(handler, run, props = {}) {
   const root = createRoot(document.getElementById('root'))
   responseOverride = handler
@@ -308,4 +309,275 @@ test('AT02 confirmed success reloads persisted result; billed rows cannot be edi
     assert.ok(findButton('Xác nhận đầy đủ').disabled)
     assert.match(document.body.textContent, /đã được tính phí/)
   })
+})
+
+async function chooseStatus(id, value = 'ATTENDED') {
+  await act(async () => {
+    const select = document.querySelector(`select[aria-label="Điểm danh Học viên ${id}"]`)
+    select.value = value; select.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+  })
+}
+const ok = body => Response.json(body)
+const classReply = url => String(url).includes('/scheduling/')
+
+test('AT02 saves a partial draft without marking the remaining roster or allowing finalize', async () => {
+  const rows = [participant('p1', null), participant('p2', null)], writes = []
+  await attendanceCase((url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (String(url).endsWith('/marks')) {
+      const body = JSON.parse(options.body); writes.push(body)
+      rows[0] = { ...rows[0], status: body.status, revision: 2 }
+      return ok({ id: rows[0].attendanceId, status: body.status, revision: 2 })
+    }
+    return ok(sheetValue({ participants: rows }))
+  }, async () => {
+    await chooseStatus('p1')
+    assert.equal(findButton('Lưu nháp').disabled, false)
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.deepEqual(writes.map(b => [b.participantId, b.revision, b.status]), [['p1', 1, 'ATTENDED']])
+    assert.match(document.body.textContent, /Đã lưu và đọc lại 1\/1 thay đổi/)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.equal(document.querySelectorAll('select')[1].value, '')
+  })
+})
+
+test('AT02 preserves choices when acknowledged MARK is absent or has a different revision on readback', async () => {
+  for (const patch of [{ status: null, revision: 1 }, { status: 'ATTENDED', revision: 3 }]) {
+    let saved = false
+    await attendanceCase((url, options) => {
+      if (classReply(url)) return ok({ className: 'Toán 8A' })
+      if (options.method === 'POST') { saved = true; return ok({ id: 'a-p1', revision: 2, status: 'ATTENDED' }) }
+      return ok(sheetValue({ participants: [{ ...participant('p1', null), ...(saved ? patch : {}) }] }))
+    }, async () => {
+      await chooseStatus('p1')
+      await act(async () => { findButton('Lưu nháp').click(); await pause() })
+      assert.ok(document.querySelector('[role=alert]'))
+      assert.doesNotMatch(document.body.textContent, /Bản nháp đã lưu|Đã lưu và đọc lại 1\/1/)
+      assert.equal(document.querySelector('select').value, 'ATTENDED')
+      assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    })
+  }
+})
+
+test('AT02 explains partial success, retains failed choice, and retry sends only the unresolved mark', async () => {
+  const rows = [participant('p1', null), participant('p2', null)], writes = []
+  let failed = false
+  await attendanceCase((url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (String(url).endsWith('/marks')) {
+      const body = JSON.parse(options.body); writes.push(body)
+      if (body.participantId === 'p2' && !failed) { failed = true; return Response.json({ code: 'CONFLICT' }, { status: 409 }) }
+      const i = rows.findIndex(p => p.id === body.participantId)
+      rows[i] = { ...rows[i], status: body.status, revision: 2 }
+      return ok({ id: rows[i].attendanceId, revision: 2 })
+    }
+    return ok(sheetValue({ participants: rows }))
+  }, async () => {
+    await chooseStatus('p1'); await chooseStatus('p2')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.match(document.body.textContent, /Đã đọc lại 1\/2 thay đổi dự kiến/)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.equal(document.querySelectorAll('select')[1].value, 'ATTENDED')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.deepEqual(writes.map(b => b.participantId), ['p1', 'p2', 'p2'])
+    assert.ok(writes.every(b => b.revision === 1))
+    assert.equal(findButton('Xác nhận đầy đủ').disabled, false)
+  })
+})
+
+test('AT02 stops immediately on MARK 401/403/404 without reloading or revealing the old roster', async () => {
+  for (const status of [401, 403, 404]) {
+    const operations = []
+    await attendanceCase((url, options) => {
+      if (classReply(url)) return ok({ className: 'Toán 8A' })
+      operations.push(options.method)
+      if (options.method === 'POST') return Response.json({ code: 'DENIED' }, { status })
+      return ok(sheetValue({ participants: [participant('p1', null), participant('p2', null)] }))
+    }, async () => {
+      await chooseStatus('p1'); await chooseStatus('p2')
+      await act(async () => { findButton('Lưu nháp').click(); await pause() })
+      assert.deepEqual(operations, ['GET', 'POST'])
+      assert.doesNotMatch(document.body.textContent, /Học viên p1|Học viên p2/)
+      assert.equal(findButton('Lưu nháp'), undefined)
+    })
+  }
+})
+
+test('AT02 requires a successful read after lost MARK response/read failure before another write', async () => {
+  let wrote = false, reads = 0
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (options.method === 'POST') { writes.push(options); wrote = true; throw new TypeError('Connection lost') }
+    reads++
+    if (wrote && reads === 2) throw new DOMException('Timed out', 'TimeoutError')
+    return ok(sheetValue({ participants: [participant('p1', wrote ? 'ATTENDED' : null)] }))
+  }, async () => {
+    await chooseStatus('p1')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.equal(writes.length, 1)
+    assert.ok(findButton('Lưu nháp').disabled)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.ok(findButton('Đọc lại kết quả'))
+    await act(async () => { findButton('Đọc lại kết quả').click(); await pause() })
+    assert.equal(reads, 3)
+    assert.equal(writes.length, 1)
+    assert.equal(findButton('Xác nhận đầy đủ').disabled, false)
+  })
+})
+
+test('AT02 does not claim FINALIZE success from an ACK when the persisted sheet is still unfinalized', async () => {
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (options.method === 'POST') { writes.push(url); return ok({ id: 'finalization', status: 'FINALIZED' }) }
+    return ok(sheetValue())
+  }, async () => {
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.equal(writes.length, 1)
+    assert.doesNotMatch(document.body.textContent, /Đã lưu trên máy chủ\.|Kết quả đã xác nhận trên máy chủ/)
+    assert.ok(document.querySelector('[role=alert]'))
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.ok(findButton('Đọc lại kết quả'))
+  })
+})
+
+test('AT02 rechecks session state, roster, approved leave and billing locks immediately before finalize', async () => {
+  for (const patch of [
+    { status: 'CANCELLED' }, { participants: [] },
+    { participants: [{ ...participant(), billingSourceLocked: true }] },
+    { participants: [participant(), participant('p2', null)] },
+    { participants: [{ ...participant(), approvedLeave: true }] },
+  ]) {
+    let reads = 0; const writes = []
+    await attendanceCase((url, options) => {
+      if (classReply(url)) return ok({ className: 'Toán 8A' })
+      if (options.method !== 'GET') writes.push(url)
+      return ok(sheetValue(++reads > 1 ? patch : {}))
+    }, async () => {
+      await act(async () => findButton('Xác nhận đầy đủ').click())
+      await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+      assert.deepEqual(writes, [])
+      assert.ok(document.querySelector('[role=alert]'))
+    })
+  }
+})
+
+test('AT02 finalized/cancelled/empty/missing-result sheets cannot finalize and invalid EXCUSED never reaches MARK', async () => {
+  for (const patch of [{ finalized: true }, { status: 'CANCELLED' }, { participants: [] }, { participants: [participant('p1', null)] }]) {
+    const writes = []
+    await attendanceCase((url, options) => {
+      if (options.method !== 'GET') writes.push(url)
+      return ok(classReply(url) ? { className: 'Toán 8A' } : sheetValue(patch))
+    }, async () => {
+      assert.ok(!findButton('Xác nhận đầy đủ') || findButton('Xác nhận đầy đủ').disabled)
+      assert.deepEqual(writes, [])
+    })
+  }
+  const writes = []
+  await attendanceCase((url, options) => {
+    if (options.method !== 'GET') writes.push(url)
+    return ok(classReply(url) ? { className: 'Toán 8A' } : sheetValue({ participants: [participant('p1', null)] }))
+  }, async () => {
+    await chooseStatus('p1', 'EXCUSED')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.deepEqual(writes, [])
+    assert.match(document.querySelector('[role=alert]').textContent, /đơn nghỉ đã duyệt/)
+  })
+})
+
+test('AT02 reconciles failed or lost FINALIZE responses, suppresses duplicates and never retries the command automatically', async () => {
+  for (const failure of [409, 422, 500, 'connection', 'timeout']) {
+    let finalized = false, release; const writes = []
+    await attendanceCase(async (url, options) => {
+      if (classReply(url)) return ok({ className: 'Toán 8A' })
+      if (options.method === 'POST') {
+        writes.push(options)
+        await new Promise(resolve => { release = resolve })
+        if (failure === 'connection' || failure === 'timeout') { finalized = true; throw failure === 'timeout' ? new DOMException('Timeout', 'TimeoutError') : new TypeError('Offline') }
+        return Response.json({ code: 'FAILED' }, { status: failure })
+      }
+      return ok(sheetValue({ finalized }))
+    }, async () => {
+      await act(async () => findButton('Xác nhận đầy đủ').click())
+      await act(async () => { const confirm = findButton('Xác nhận điểm danh'); confirm.click(); confirm.click(); await pause() })
+      assert.equal(writes.length, 1)
+      await act(async () => { release(); await pause() })
+      assert.ok(writes[0].headers['Idempotency-Key'])
+      assert.ok(document.querySelector('[role=alert]'))
+      if (finalized) {
+        assert.match(document.body.textContent, /Kết quả đã xác nhận trên máy chủ/)
+        assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+      } else {
+        assert.ok(findButton('Xác nhận đầy đủ').disabled)
+        assert.ok(findButton('Đọc lại kết quả'))
+      }
+      assert.equal(writes.length, 1)
+    })
+  }
+})
+
+test('AT02 rejects finalize 401/403/404 without reading the denied roster again', async () => {
+  for (const status of [401, 403, 404]) {
+    const ops = []
+    await attendanceCase((url, options) => {
+      if (classReply(url)) return ok({ className: 'Toán 8A' })
+      ops.push(options.method)
+      return options.method === 'POST' ? Response.json({ code: 'DENIED' }, { status }) : ok(sheetValue())
+    }, async () => {
+      await act(async () => findButton('Xác nhận đầy đủ').click())
+      await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+      assert.deepEqual(ops, ['GET', 'GET', 'POST'])
+      assert.doesNotMatch(document.body.textContent, /Học viên p1/)
+      assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+    })
+  }
+})
+
+test('AT02 ignores an in-flight old-session MARK after navigation and does not send its remaining marks', async () => {
+  let release; const writes = [], oldReads = []
+  await attendanceCase(async (url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (options.method === 'POST') {
+      writes.push(JSON.parse(options.body).participantId)
+      await new Promise(resolve => { release = resolve })
+      return ok({ id: 'a-p1', revision: 2 })
+    }
+    if (String(url).endsWith('/new-session')) return ok(sheetValue({ sessionId: 'new-session', participants: [participant('new')] }))
+    oldReads.push(url); return ok(sheetValue({ participants: [participant('p1', null), participant('p2', null)] }))
+  }, async render => {
+    await chooseStatus('p1'); await chooseStatus('p2')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    await render({ selectedId: 'new-session' })
+    await act(async () => { release(); await pause() })
+    assert.deepEqual(writes, ['p1'])
+    assert.equal(oldReads.length, 1)
+    assert.match(document.body.textContent, /Học viên new/)
+    assert.doesNotMatch(document.body.textContent, /Học viên p1|Đã lưu và đọc lại/)
+  })
+})
+
+test('AT02 same-session query navigation applies read-only mode and clears the editable draft', async () => {
+  const original = window.location.href, writes = []
+  window.history.replaceState(null, '', '/app/tenant/sessions/x/attendance')
+  try {
+    await attendanceCase((url, options) => {
+      if (options.method !== 'GET') writes.push(url)
+      return ok(classReply(url) ? { className: 'Toán 8A' } : sheetValue())
+    }, async () => {
+      await chooseStatus('p1', 'UNEXCUSED')
+      await act(async () => {
+        window.history.replaceState(null, '', '/app/tenant/sessions/x/attendance?view=read&from=SC05')
+        window.dispatchEvent(new dom.window.PopStateEvent('popstate'))
+        await pause()
+      })
+      assert.match(document.body.textContent, /Chế độ xem/)
+      assert.equal(document.querySelector('select'), null)
+      assert.equal(findButton('Lưu nháp'), undefined)
+      assert.equal(findButton('Xác nhận đầy đủ'), undefined)
+      assert.match(document.body.textContent, /Có mặt/)
+      assert.deepEqual(writes, [])
+    })
+  } finally { window.history.replaceState(null, '', original) }
 })

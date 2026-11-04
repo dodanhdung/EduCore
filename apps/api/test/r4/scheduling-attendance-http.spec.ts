@@ -88,4 +88,51 @@ describe('R8 Scheduling and Attendance HTTP boundary', () => {
       .set('Idempotency-Key', 'leave-2').send({ participantId: other, reason: '' }).expect(400);
     expect(queries).toHaveLength(0);
   });
+
+  it('passes exact MARK/FINALIZE/CORRECT targets, revisions and operation keys to the transaction', async () => {
+    queries.length = 0;
+    const send = (path: string, key: string, body: object) => request(app.getHttpServer()).post(`${root}/attendance${path}`)
+      .set('Authorization', 'Bearer token').set('Idempotency-Key', key).send(body).expect(201);
+    await send(`/sessions/${session}/marks`, 'mark-1', { participantId: participant, status: 'UNEXCUSED', revision: 0, reason: 'Draft result' });
+    await send(`/sessions/${session}/finalize`, 'finalize-1', { reason: 'Reviewed roster' });
+    await send(`/records/${participant}/correct`, 'correct-1', { status: 'ATTENDED', revision: 2, reason: 'Authorized correction' });
+    expect(queries.map(q => q.sql)).toEqual(Array(3).fill('SELECT educore_r3.attendance($1::uuid,$2::jsonb) result'));
+    expect(queries.map(q => q.args[0])).toEqual([tenant, tenant, tenant]);
+    expect(queries.map(q => JSON.parse(q.args[1] as string))).toEqual([
+      { operation: 'MARK', key: 'mark-1', reason: 'Draft result', sessionId: session, participantId: participant, status: 'UNEXCUSED', revision: 0 },
+      { operation: 'FINALIZE', key: 'finalize-1', reason: 'Reviewed roster', sessionId: session },
+      { operation: 'CORRECT', key: 'correct-1', reason: 'Authorized correction', attendanceId: participant, status: 'ATTENDED', revision: 2 },
+    ]);
+  });
+
+  it('rejects missing credentials, another tenant and invalid attendance commands before querying', async () => {
+    queries.length = 0;
+    await request(app.getHttpServer()).get(`${root}/attendance/sessions/${session}`).expect(401);
+    await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize`).send({ reason: 'No session' }).expect(401);
+    await request(app.getHttpServer()).post(`/api/v1/tenants/${other}/attendance/sessions/${session}/finalize`)
+      .set('Authorization', 'Bearer token').set('Idempotency-Key', 'other-tenant').send({ reason: 'Wrong scope' }).expect(403);
+    const valid = { participantId: participant, status: 'ATTENDED', revision: 0, reason: 'Draft' };
+    for (const body of [{ ...valid, status: 'ABSENT' }, { ...valid, revision: -1 }, { ...valid, participantId: 'invalid' },
+      { ...valid, reason: '' }, { ...valid, tenantId: other }, { ...valid, records: [] }]) {
+      await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/marks`)
+        .set('Authorization', 'Bearer token').set('Idempotency-Key', 'invalid-mark').send(body).expect(400);
+    }
+    await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/marks`)
+      .set('Authorization', 'Bearer token').send(valid).expect(400);
+    await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize?view=read`)
+      .set('Authorization', 'Bearer token').set('Idempotency-Key', 'bad-query').send({ reason: 'No UI query at API' }).expect(400);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('preserves SQL error status and correlation without exposing business exception details', async () => {
+    for (const [sqlstate, expected] of [['28000', 401], ['42501', 403], ['P0002', 404], ['40001', 409], ['23514', 422], ['XX000', 500]] as const) {
+      queries.length = 0;
+      auth.repository.transaction.mockRejectedValueOnce(Object.assign(new Error('PRIVATE_DATABASE_DETAIL'), { meta: { code: sqlstate } }));
+      const response = await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize`)
+        .set('Authorization', 'Bearer token').set('Idempotency-Key', `failure-${sqlstate}`).send({ reason: 'Error mapping' }).expect(expected);
+      expect(response.body.correlationId).toMatch(/^[a-f0-9-]{36}$/);
+      expect(JSON.stringify(response.body)).not.toContain('PRIVATE_DATABASE_DETAIL');
+      expect(queries).toHaveLength(0);
+    }
+  });
 });

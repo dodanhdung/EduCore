@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ApiClient, ApiError, safeErrorMessage } from '../../api.ts'
 import { addDays, formatInstant, tenantLocalDate } from './SchedulingDates.ts'
 import './SchedulingScreens.css'
@@ -45,8 +45,14 @@ function navigateTo(tenantId: string, path: string, navigate: (path: string) => 
 function newKey() { return crypto.randomUUID() }
 
 type Props = { id: Id; tenantId: string; token: string; selectedId?: string; navigate: (path: string) => void; allowed?: readonly string[] }
+const currentSearch = () => window.location.search
+function watchSearch(changed: () => void) {
+  window.addEventListener('popstate', changed)
+  return () => window.removeEventListener('popstate', changed)
+}
 export function SchedulingAttendanceProduction(props: Props) {
-  return <AttendanceScope key={JSON.stringify([props.id, props.tenantId, props.token, props.selectedId])} {...props} />
+  const search = useSyncExternalStore(watchSearch, currentSearch, () => '')
+  return <AttendanceScope key={JSON.stringify([props.id, props.tenantId, props.token, props.selectedId, search])} {...props} />
 }
 function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = [] }: Props) {
   const [entry] = useState(() => new URLSearchParams(window.location.search))
@@ -59,6 +65,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   const [loadedRead, setLoadedRead] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [reconcileRequired, setReconcileRequired] = useState(false)
   const [zone, setZone] = useState('')
   const [month, setMonth] = useState(() => validMonth(entry.get('month')) ? entry.get('month')! : new Date().toISOString().slice(0, 7))
   const [calendar, setCalendar] = useState<Session[]>([])
@@ -154,7 +161,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
         } else if (id === 'AT02' && selectedId) {
           const s = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(selectedId)}`, abort.signal)
           if (abort.signal.aborted) return
-          setSheet(s); setZone(s.timeZone)
+          setSheet(s); setZone(s.timeZone); setReconcileRequired(false)
           const detail = await req<Session>('scheduling', `/sessions/${encodeURIComponent(selectedId)}`, abort.signal).catch(() => undefined)
           if (!abort.signal.aborted) setSheetClassName(detail?.className ?? '')
         } else if (id === 'AT03') {
@@ -197,51 +204,100 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   }
   const saveMarks = async () => {
     if (readOnly) return
-    if (!sheet || marking.current || busy || !active.current || !['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized) return
-    for (const p of sheet.participants) {
-      const value = form[`status:${p.id}`] ?? p.status
-      if (!value || (value === 'EXCUSED' && !p.approvedLeave)) { setError('Chọn kết quả hợp lệ cho mỗi học sinh.'); return }
+    if (!sheet || marking.current || busy || reconcileRequired || !active.current || !['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized || sheet.participants.some(p => p.billingSourceLocked)) return
+    const changes = sheet.participants.flatMap(p => {
+      const status = form[`status:${p.id}`]
+      return status && status !== p.status ? [{ participant: p, status }] : []
+    })
+    if (!changes.length) return
+    if (changes.some(({ participant: p, status }) => !['ATTENDED', 'UNEXCUSED', 'EXCUSED'].includes(status) || (status === 'EXCUSED' && !p.approvedLeave))) {
+      setError('Chọn kết quả hợp lệ; vắng có phép cần đơn nghỉ đã duyệt.'); return
     }
-    marking.current = true; setBusy(true); setError(''); setNotice('')
+    marking.current = true; setBusy(true); setError(''); setNotice(''); setReconcileRequired(true)
     try {
-      let complete = true
-      for (const p of sheet.participants) {
+      const acknowledged = new Map<string, CommandResult>()
+      let failure: unknown
+      for (const { participant: p, status } of changes) {
         if (!active.current) return
-        const value = form[`status:${p.id}`] ?? p.status
-        if (value === p.status) continue
-        const result = await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/marks`,
-          { participantId: p.id, status: value, revision: p.revision, reason: 'Lưu nháp điểm danh' }, 'POST', false)
-        if (!result) { complete = false; break }
+        try {
+          acknowledged.set(p.id, await writeAttendance(`/sessions/${encodeURIComponent(sheet.sessionId)}/marks`,
+            { participantId: p.id, status, revision: p.revision, reason: 'Lưu nháp điểm danh' }))
+        } catch (cause) { if (stopAttendanceRead(cause)) return; failure = cause; break }
       }
       if (!active.current) return
       const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
       if (!active.current) return
+      assertSameSheet(persisted, sheet)
       setSheet(persisted)
-      if (complete) { setForm({}); setNotice('Bản nháp đã lưu. Xác nhận là bước riêng.') }
-    } catch (cause) { if (active.current) { setError(phaseMessage(cause)); if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setSheet(null); setForm({}); setReadStatus(cause.status) } } }
+      const verified = changes.filter(({ participant: p, status }) => {
+        const row = persisted.participants.find(r => r.id === p.id), ack = acknowledged.get(p.id)
+        return row?.status === status && (ack ? row.attendanceId === ack.id && row.revision === ack.revision : row.revision > p.revision)
+      })
+      const unverifiedAck = changes.some(({ participant: p }) => acknowledged.has(p.id) && !verified.some(v => v.participant.id === p.id))
+      setReconcileRequired(unverifiedAck)
+      setForm(previous => {
+        const next = { ...previous }
+        for (const { participant: p } of verified) delete next[`status:${p.id}`]
+        return next
+      })
+      if (!failure && verified.length === changes.length) {
+        setNotice(`Đã lưu và đọc lại ${verified.length}/${changes.length} thay đổi. Xác nhận đầy đủ là bước riêng.`)
+      } else {
+        setNotice(`Đã đọc lại ${verified.length}/${changes.length} thay đổi dự kiến. Các lựa chọn chưa xác minh được giữ lại; bảng chưa được lưu đầy đủ.`)
+        setError(failure ? phaseMessage(failure) : 'Kết quả đọc lại không khớp phản hồi lưu. Đọc lại và kiểm tra trước khi thao tác tiếp.')
+      }
+    } catch (cause) { if (active.current && !stopAttendanceRead(cause)) setError('Chưa đọc lại được kết quả lưu. Giữ nguyên lựa chọn và đọc lại trước khi thao tác tiếp.') }
     finally { marking.current = false; if (active.current) setBusy(false) }
+  }
+  const writeAttendance = (path: string, body: Record<string, unknown>) => api.request<CommandResult>(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/attendance${path}`,
+    { method: 'POST', body, accessToken: token, idempotencyKey: newKey(), cache: 'no-store' })
+  function stopAttendanceRead(cause: unknown) {
+    if (!active.current) return true
+    if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+      setSheet(null); setForm({}); setReadStatus(cause.status); return true
+    }
+    return false
+  }
+  function assertSameSheet(persisted: Sheet, displayed: Sheet) {
+    if (persisted.sessionId !== displayed.sessionId || persisted.classId !== displayed.classId) throw Error('ATTENDANCE_TARGET_MISMATCH')
   }
   const hasUnsavedMarks = !!sheet && sheet.participants.some((p) => (form[`status:${p.id}`] ?? p.status) !== p.status)
   const finalize = async () => {
     if (readOnly) return
-    if (marking.current || busy || !active.current) return
+    if (marking.current || busy || reconcileRequired || !active.current) return
     if (!sheet || hasUnsavedMarks) { setError('Lưu thay đổi điểm danh trước khi xác nhận.'); return }
-    if (!['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now()) return
-    marking.current = true; setBusy(true)
+    if (!['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized || sheet.participants.some(p => p.billingSourceLocked)) return
+    marking.current = true; setBusy(true); setError(''); setNotice('')
     try {
       const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
       if (!active.current) return
+      assertSameSheet(persisted, sheet)
       const unchanged = persisted.participants.length === sheet.participants.length && persisted.participants.every((p) => {
         const displayed = sheet.participants.find((row) => row.id === p.id)
-        return displayed && displayed.status === p.status && displayed.revision === p.revision
+        return displayed && displayed.status === p.status && displayed.revision === p.revision && displayed.approvedLeave === p.approvedLeave && !p.billingSourceLocked
       })
       setSheet(persisted)
-      if (!unchanged || persisted.finalized) { setError('Điểm danh đã thay đổi. Kiểm tra lại trước khi xác nhận.'); return }
-      if (!persisted.participants.length || persisted.participants.some((p) => !p.status)) {
+      if (!unchanged || persisted.finalized || persisted.status !== sheet.status || persisted.startsAt !== sheet.startsAt || persisted.endsAt !== sheet.endsAt) { setError('Điểm danh đã thay đổi. Kiểm tra lại trước khi xác nhận.'); return }
+      if (!persisted.participants.length || persisted.participants.some((p) => !p.status || (p.status === 'EXCUSED' && !p.approvedLeave))) {
         setError('Cần lưu đủ kết quả trước khi xác nhận.'); return
       }
-      await command('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' })
-    } catch (cause) { if (active.current) { setError(phaseMessage(cause)); if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setSheet(null); setForm({}); setReadStatus(cause.status) } } } finally { marking.current = false; if (active.current) setBusy(false) }
+      setReconcileRequired(true)
+      let failure: unknown
+      try { await writeAttendance(`/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' }) }
+      catch (cause) { if (stopAttendanceRead(cause)) return; failure = cause }
+      if (!active.current) return
+      const result = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
+      if (!active.current) return
+      assertSameSheet(result, sheet)
+      setSheet(result)
+      setReconcileRequired(!result.finalized)
+      if (result.finalized) {
+        setForm({}); setNotice('Đã đọc lại kết quả xác nhận từ máy chủ.')
+        if (failure) setError('Phản hồi xác nhận bị gián đoạn; trạng thái hiển thị lấy từ lần đọc lại, không gửi lệnh lần nữa.')
+      } else setError(failure ? phaseMessage(failure) : 'Chưa đọc được trạng thái đã xác nhận. Đọc lại kết quả trước khi thao tác tiếp.')
+    } catch (cause) { if (active.current && !stopAttendanceRead(cause)) { setReconcileRequired(true); setError('Chưa kiểm chứng được kết quả xác nhận. Đọc lại dữ liệu trước khi thao tác tiếp.') } }
+    finally { marking.current = false; if (active.current) setBusy(false) }
   }
   const localDay = (iso: string) => tenantLocalDate(zone, new Date(iso)) ?? ''
   const filteredCalendar = calendar.filter((s) => (!classFilter || s.classId === classFilter)
@@ -257,7 +313,7 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
     if (!sheet) return <ResourceState kind="not-found" />
     const returnToSession = entry.get('from') === 'SC05' && allowed.includes('SC05')
     const listMonth = entry.get('month')
-    return <ManagerAttendanceSheet sheet={sheet} className={sheetClassName} busy={busy} values={form} hasUnsaved={hasUnsavedMarks} notice={notice} error={error} readOnly={readOnly} backLabel={returnToSession ? 'Về chi tiết buổi' : 'Về danh sách'}
+    return <ManagerAttendanceSheet sheet={sheet} className={sheetClassName} busy={busy} values={form} hasUnsaved={hasUnsavedMarks} notice={notice} error={error} readOnly={readOnly} reconcileRequired={reconcileRequired} onReload={() => setReload(n => n + 1)} backLabel={returnToSession ? 'Về chi tiết buổi' : 'Về danh sách'}
       onChoose={(participantId, value) => { update(`status:${participantId}`, value); setNotice('') }} onSave={saveMarks} onFinalize={finalize} onBack={returnToSession ? () => go(sessionPath(sheet.sessionId, calendarContext)) : allowed.includes('AT01') ? () => go(`/attendance${validMonth(listMonth) ? `?month=${listMonth}` : ''}`) : undefined}
       onCalendar={allowed.includes('SC01') ? () => go(calendarPath(calendarContext)) : undefined}
       onClass={allowed.includes('AC08') ? () => go(`/classes/${encodeURIComponent(sheet.classId)}`) : undefined}

@@ -2415,6 +2415,44 @@ describe('R3-C Attendance and leave', () => {
       ).rejects.toThrow();
     },
   );
+  native('R13 Manager late handling requires 48h, current permissions and an unfinalized source', async () => {
+    const recent = await historical(new Date(Date.now() - 48 * 3600000).toISOString());
+    // A one-hour session ends 47h ago: role/permission alone is insufficient.
+    await expect(recent.attendance.mark(recent.f.tenant, recent.f.session, recent.f.participant, 'ATTENDED', 0, intent()))
+      .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED/);
+    await expect(recent.attendance.finalize(recent.f.tenant, recent.f.session, intent()))
+      .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED/);
+    expect((await admin.unsafe('SELECT count(*)::int n FROM attendance_records WHERE tenant_id=$1', [recent.f.tenant]))[0].n).toBe(0);
+
+    const overdue = await historical(new Date(Date.now() - 50 * 3600000).toISOString());
+    const markIntent = intent(), finalizeIntent = intent();
+    const marked = await overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'ATTENDED', 0, markIntent);
+    expect(await overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'ATTENDED', 0, markIntent)).toEqual(marked);
+    expect(marked.revision).toBe(1);
+    const finalizedResult = await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, finalizeIntent);
+    expect(finalizedResult.status).toBe('FINALIZED');
+    expect(await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, finalizeIntent)).toEqual(finalizedResult);
+    expect((await admin.unsafe('SELECT count(*)::int n FROM attendance_finalizations WHERE session_id=$1', [overdue.f.session]))[0].n).toBe(1);
+    await expect(overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'UNEXCUSED', 1, intent()))
+      .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED|ALREADY_FINALIZED/);
+
+    const revoked = await historical(new Date(Date.now() - 50 * 3600000).toISOString());
+    await admin.unsafe("DELETE FROM role_permissions WHERE role_id=$1 AND permission_id=(SELECT id FROM permissions WHERE code='attendance.mark')", [revoked.f.role]);
+    await expect(revoked.attendance.mark(revoked.f.tenant, revoked.f.session, revoked.f.participant, 'ATTENDED', 0, intent())).rejects.toThrow();
+    expect((await admin.unsafe('SELECT count(*)::int n FROM attendance_records WHERE tenant_id=$1', [revoked.f.tenant]))[0].n).toBe(0);
+  });
+
+  native('R13 overdue Manager is blocked by draft billing evidence without changing financial history', async () => {
+    const c = await historical();
+    await finalized(c);
+    const period = await billingPeriod(c);
+    await c.generation.initial(c.f.tenant, c.f.student, period, intent());
+    const before = await sourceAndFinance(c);
+    await expect(c.attendance.mark(c.f.tenant, c.f.session, c.f.participant, 'UNEXCUSED', 1, intent())).rejects.toThrow();
+    await expect(c.attendance.correct(c.f.tenant, (await admin.unsafe('SELECT id FROM attendance_records WHERE participant_id=$1', [c.f.participant]))[0].id, 'UNEXCUSED', 1, intent()))
+      .rejects.toThrow(/BILLED_SOURCE_REQUIRES_FINANCIAL_CORRECTION_PATH/);
+    expect(await sourceAndFinance(c)).toEqual(before);
+  });
   native(
     'C06 approved leave permits EXCUSED; actual attendance overrides it',
     async () => {
