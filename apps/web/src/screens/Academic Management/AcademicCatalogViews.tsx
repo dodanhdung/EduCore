@@ -23,7 +23,7 @@ function displayDate(value: string | null | undefined, timezone: string) {
 }
 const statusText = (value: string) => ({ ACTIVE: 'Đang hoạt động', PLANNED: 'Dự kiến', COMPLETED: 'Đã hoàn tất', PENDING: 'Chờ xử lý', TRANSFERRED: 'Đã chuyển lớp', WITHDRAWN: 'Đã thôi học', INACTIVE: 'Ngừng hoạt động' })[value] ?? value
 const status = (value: string, domain: string) => <StatusBadge label={statusText(value)} domain={domain} tone={value === 'ACTIVE' ? 'success' : value === 'PENDING' || value === 'PLANNED' ? 'warning' : 'neutral'} />
-const panel = (title: string, body: ReactNode, hint?: string) => <section className={styles.panel}><div className={styles.panelHead}><h2>{title}</h2>{hint && <p>{hint}</p>}</div>{body}</section>
+const panel = (title: string, body: ReactNode, hint?: string, id?: string) => <section id={id} tabIndex={id ? -1 : undefined} className={styles.panel}><div className={styles.panelHead}><h2>{title}</h2>{hint && <p>{hint}</p>}</div>{body}</section>
 const action = (text: string, callback: (trigger: HTMLElement) => void) => <button className={`${styles.link} academic-link`} type="button" onClick={event => callback(event.currentTarget)}>{text}</button>
 const pagination = (page: { page: number; pageSize: number; total: number }, onPage?: (value: number) => void) => onPage ? { index: page.page, totalPages: Math.max(1, Math.ceil(page.total / page.pageSize)), onPageChange: onPage } : undefined
 const titles = { AC05: 'Danh mục môn học & trình độ', AC06: 'Danh sách khóa học', AC07: 'Danh sách lớp học', AC08: 'Chi tiết lớp học' } as const
@@ -52,7 +52,7 @@ export function AcademicCatalogView({ model, onQuery, onPage, onTab, onEnroll, o
       <div className={styles.metrics}><MetricCard label={model.tab === 'subjects' ? 'Môn học phù hợp' : 'Trình độ phù hợp'} value={{ kind: 'available', display: number(model.page.total) }} detail="Tổng từ nguồn đang mở" />
         <MetricCard label="Trạng thái hoạt động" value={{ kind: 'pending-api' }} detail="API chưa cấp tổng theo trạng thái" /></div>
     </>}
-    {(id === 'AC06' || id === 'AC07') && <div className={styles.metrics}><MetricCard label={id === 'AC06' ? 'Khóa học phù hợp' : 'Lớp học phù hợp'} value={{ kind: 'available', display: number(model.page.total) }} detail="Tổng từ API theo tìm kiếm hiện tại" />
+    {id === 'AC06' && <div className={styles.metrics}><MetricCard label="Khóa học phù hợp" value={{ kind: 'available', display: number(model.page.total) }} detail="Tổng từ API theo tìm kiếm hiện tại" />
       <MetricCard label="Theo trạng thái" value={{ kind: 'pending-api' }} detail="API chưa cấp tổng theo trạng thái" /></div>}
     {id !== 'AC08' && <>
       {panel('Tìm kiếm và lọc', <FilterToolbar label="Tìm kiếm" scope={model.sample ? 'loaded-page' : 'complete-result'} onReset={() => onQuery?.('')}><label>Tìm theo mã hoặc tên<input type="search" value={model.query} onChange={event => onQuery?.(event.target.value)} placeholder="Nhập mã hoặc tên…" /></label></FilterToolbar>)}
@@ -68,13 +68,13 @@ export function AcademicCatalogView({ model, onQuery, onPage, onTab, onEnroll, o
         { key: 'status', header: 'Trạng thái', cell: row => status(row.status, 'course') },
         { key: 'action', header: 'Thao tác', cell: row => model.canEdit && onEdit ? action('Chỉnh sửa', trigger => onEdit('course', row as unknown as Record<string, unknown>, trigger)) : '—' },
       ]} empty={<ResourceState kind={model.query ? 'filtered-empty' : 'empty'} title={model.query ? 'Không có khóa phù hợp' : 'Chưa có khóa học'} />} page={pagination(model.page, onPage)} /></>, 'Tên môn và trình độ lấy trực tiếp từ khóa học, gồm cả tham chiếu đã ngừng hoạt động.')}
-      {id === 'AC07' && panel('Lớp học', <><p className={styles.note}>{number(model.page.total)} lớp phù hợp · Trang {model.page.page}</p><DataTable caption="Danh sách lớp học" rows={model.page.items} rowKey={row => row.id} columns={[
+      {id === 'AC07' && panel('Lớp học', <><p className={styles.note}>{number(model.page.total)} lớp phù hợp · Trang {model.page.page}</p><p className={styles.mobileHint}>Vuốt ngang bảng để xem đủ thông tin và thao tác.</p><DataTable caption="Danh sách lớp học" rows={model.page.items} rowKey={row => row.id} columns={[
         { key: 'class', header: 'Lớp học', cell: (row: ClassRow) => <><strong>{row.name}</strong><br /><small>{row.code}</small></> },
         { key: 'course', header: 'Khóa học', cell: row => row.courseName },
         { key: 'capacity', header: 'Sĩ số / Sức chứa', cell: row => `${number(row.enrollmentCount)} / ${number(row.capacity)}` },
         { key: 'status', header: 'Trạng thái', cell: row => status(row.status, 'class') },
         { key: 'action', header: 'Thao tác', cell: row => onOpenClass && model.canOpen || model.canEdit && onEdit ? <>{onOpenClass && model.canOpen && action('Xem lớp', () => onOpenClass(row.id))}{model.canEdit && onEdit && action('Chỉnh sửa', trigger => onEdit('class', row as unknown as Record<string, unknown>, trigger))}</> : '—' },
-      ]} empty={<ResourceState kind={model.query ? 'filtered-empty' : 'empty'} title={model.query ? 'Không có lớp phù hợp' : 'Chưa có lớp học'} />} page={pagination(model.page, onPage)} /></>, 'Sĩ số và sức chứa từ API; màn danh sách chưa có trường giáo viên.')}
+      ]} empty={<ResourceState kind={model.query ? 'filtered-empty' : 'empty'} title={model.query ? 'Không có lớp phù hợp' : 'Chưa có lớp học'} />} page={pagination(model.page, onPage)} /></>, 'Mở lớp để xem ghi danh, phân công giáo viên và lịch học.')}
       {id === 'AC06' && !optionsComplete && panel('Lựa chọn tạo khóa', <ResourceState kind="partial" detail="Danh sách môn học hoặc trình độ chưa tải đủ. Form tạo khóa tạm khóa để tránh chọn từ tập dữ liệu thiếu." />)}
       {id === 'AC07' && !optionsComplete && panel('Lựa chọn khóa học', <ResourceState kind="partial" detail="Danh sách khóa học cho form tạo lớp chưa đủ hoặc không được cấp; danh sách lớp vẫn sử dụng bình thường." />)}
     </>}
@@ -85,23 +85,28 @@ export function AcademicCatalogView({ model, onQuery, onPage, onTab, onEnroll, o
 
 function ClassDetailSections({ model, onOpenStudent, operation, assignmentOperation, schedule }: { model: Extract<AcademicCatalogModel, { kind: 'AC08' }>; onOpenStudent?: (id: string) => void; operation?: ReactNode; assignmentOperation?: ReactNode; schedule?: ReactNode }) {
   const d = model.detail
-  return <><div className={styles.metrics}><MetricCard label="Sức chứa tối đa" value={{ kind: 'available', display: number(d.capacity) }} detail="Sức chứa lớp, không phải phòng" />
+  return <><nav className={styles.sectionNav} aria-label="Các phần của lớp học">
+    <a href="#class-information">Thông tin lớp</a><a href="#class-schedule">Lịch học & điểm danh</a>
+    {operation && <a href="#class-admission">Ghi danh / chuyển lớp</a>}
+    <a href="#class-enrollments">Học sinh ghi danh</a><a href="#class-teachers">Giáo viên</a>
+  </nav><p className={styles.mobileHint}>Vuốt ngang các bảng để xem đủ thông tin và thao tác.</p>
+    <div className={styles.metrics}><MetricCard label="Sức chứa tối đa" value={{ kind: 'available', display: number(d.capacity) }} detail="Sức chứa lớp, không phải phòng" />
     <MetricCard label="Sĩ số hiện tại" value={model.enrollmentCount === undefined ? { kind: 'pending-api' } : { kind: 'available', display: number(model.enrollmentCount) }} detail={model.enrollmentCount === undefined ? 'Chưa tải được sĩ số từ danh sách lớp' : 'Sĩ số từ API lớp học, không đếm lịch sử ghi danh'} />
     <MetricCard label="Trạng thái lớp" value={{ kind: 'available', display: statusText(d.status) }} /></div>
-    {panel('Thông tin lớp', <dl className={styles.details}><div><dt>Mã lớp</dt><dd>{d.code}</dd></div><div><dt>Khóa học</dt><dd>{d.courseName}</dd></div><div><dt>Trạng thái</dt><dd>{status(d.status, 'class')}</dd></div><div><dt>Thời gian</dt><dd>{displayDate(d.startDate, model.timezone)} – {displayDate(d.endDate, model.timezone)}</dd></div></dl>)}
-    {panel('Lịch học', schedule ?? <ResourceState kind="unavailable" title="Chưa có lịch buổi học trong API chi tiết lớp" detail="Chưa kết nối nguồn lịch riêng cho lớp." />)}
-    {operation && <details className={styles.operation}><summary>Ghi danh học viên / chuyển lớp</summary>{operation}</details>}
+    {panel('Thông tin lớp', <dl className={styles.details}><div><dt>Mã lớp</dt><dd>{d.code}</dd></div><div><dt>Khóa học</dt><dd>{d.courseName}</dd></div><div><dt>Trạng thái</dt><dd>{status(d.status, 'class')}</dd></div><div><dt>Thời gian</dt><dd>{displayDate(d.startDate, model.timezone)} – {displayDate(d.endDate, model.timezone)}</dd></div></dl>, undefined, 'class-information')}
+    {panel('Lịch học', schedule ?? <ResourceState kind="unavailable" title="Chưa có lịch buổi học trong API chi tiết lớp" detail="Chưa kết nối nguồn lịch riêng cho lớp." />, undefined, 'class-schedule')}
+    {operation && <details id="class-admission" tabIndex={-1} className={styles.operation}><summary>Ghi danh học viên / chuyển lớp</summary>{operation}</details>}
     <div className={styles.twoColumns}>
       {panel('Học sinh ghi danh', d.enrollments === undefined ? <ResourceState kind="unavailable" title="Chưa được cấp dữ liệu ghi danh" /> : <DataTable caption="Lịch sử ghi danh lớp" rows={d.enrollments} rowKey={(row: Enrollment) => row.id} columns={[
         { key: 'student', header: 'Học sinh', cell: row => <><strong>{row.studentName ?? 'Chưa có tên'}</strong><br /><small>{row.studentCode ?? '—'}</small></> },
         { key: 'window', header: 'Hiệu lực', cell: row => `${displayDate(row.effectiveFrom, model.timezone)} – ${row.effectiveTo ? displayDate(row.effectiveTo, model.timezone) : 'không đặt ngày kết thúc'}` },
         { key: 'status', header: 'Trạng thái', cell: row => <>{status(row.status, 'enrollment')}{row.priorEnrollmentId && <details><summary>Ghi danh trước</summary><small>{row.priorEnrollmentId}</small></details>}</> },
         { key: 'action', header: 'Thao tác', cell: row => row.studentId && onOpenStudent ? action('Xem hồ sơ', () => onOpenStudent(row.studentId!)) : '—' },
-      ]} empty={<ResourceState kind="empty" title="Chưa có ghi danh" />} />, 'Giữ cả lịch sử và trạng thái từng bản ghi.')}
+      ]} empty={<ResourceState kind="empty" title="Chưa có ghi danh" />} />, 'Giữ cả lịch sử và trạng thái từng bản ghi.', 'class-enrollments')}
       {panel('Phân công giáo viên', d.teacherAssignments === undefined ? <ResourceState kind="unavailable" title="Chưa được cấp dữ liệu phân công" /> : <DataTable caption="Lịch sử phân công giáo viên" rows={d.teacherAssignments} rowKey={(row: Assignment) => row.id} columns={[
         { key: 'teacher', header: 'Giáo viên', cell: row => <><strong>{row.teacherName ?? 'Chưa có tên'}</strong><br /><small>{row.teacherCode ?? '—'}</small></> },
         { key: 'window', header: 'Hiệu lực', cell: row => `${displayDate(row.validFrom, model.timezone)} – ${row.validTo ? displayDate(row.validTo, model.timezone) : 'không đặt ngày kết thúc'}` },
-      ]} empty={<ResourceState kind="empty" title="Chưa có phân công" />} />, 'Phân công lớp, không thay thế lịch sử buổi học.')}
+      ]} empty={<ResourceState kind="empty" title="Chưa có phân công" />} />, 'Phân công lớp, không thay thế lịch sử buổi học.', 'class-teachers')}
     </div>
     {assignmentOperation && <details className={styles.operation}><summary>Quản lý phân công giáo viên</summary>{assignmentOperation}</details>}
   </>

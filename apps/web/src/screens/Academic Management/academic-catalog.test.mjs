@@ -32,6 +32,84 @@ async function mount(id, extra = {}) {
 async function click(button) { assert.ok(button, 'expected button'); await act(async () => button.click()) }
 const find = (text) => [...dom.window.document.querySelectorAll('button')].find(button => button.textContent.trim() === text)
 
+async function enter(input, value) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, value)
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+  })
+}
+
+test('AC07 search resets server pagination, keeps API names and never invents teacher data', async () => {
+  calls.length = 0
+  const row = { id: 'class-a', code: 'TOAN8A', name: 'Toán 8A — Nâng cao', status: 'ACTIVE', courseName: 'Toán lớp 8', capacity: 16, enrollmentCount: 10 }
+  reply = url => url.includes('/permissions/') ? Response.json(caps) : url.includes('/courses') ? Response.json(page([])) : Response.json(page([row], 41, url.includes('page=2') ? 2 : 1))
+  const paths = []
+  await mount('AC07', { allowed: ['AC08'], navigate: path => paths.push(path) })
+  await click(find('Sau'))
+  await enter(document.querySelector('input[type=search]'), 'Toán')
+  assert.ok(calls.some(c => c.url.includes('/classes?page=1&q=To%C3%A1n')))
+  assert.match(document.querySelector('tbody').textContent, /Toán 8A — Nâng cao/)
+  assert.match(document.querySelector('tbody').textContent, /10 \/ 16/)
+  assert.doesNotMatch(document.querySelector('table').textContent, /Giáo viên|Chưa có dữ liệu từ API/)
+  await click(find('Xem lớp'))
+  assert.deepEqual(paths, ['/app/tenant-a/classes/class-a'])
+  await mount('AC07', { allowed: [] })
+  assert.equal(find('Xem lớp'), undefined)
+})
+
+test('AC07 handles loading, empty search, terminal denial and retry without stale rows', async () => {
+  let finish
+  reply = () => new Promise(resolve => { finish = resolve })
+  await mount('AC07')
+  assert.match(document.body.textContent, /Đang tải dữ liệu/)
+  assert.equal(document.querySelector('tbody'), null)
+  reply = url => Response.json(url.includes('/permissions/') ? caps : page([]))
+  await act(async () => { finish(Response.json(page([]))); await new Promise(resolve => setTimeout(resolve, 35)) })
+  assert.match(document.body.textContent, /Chưa có lớp học/)
+  await enter(document.querySelector('input[type=search]'), 'Không tồn tại')
+  assert.match(document.body.textContent, /Không có lớp phù hợp/)
+  for (const [status, expected] of [[401, /Cần đăng nhập/], [403, /Không có quyền/], [500, /Không tải được dữ liệu/]]) {
+    reply = () => Response.json({ code: 'FAILED' }, { status })
+    await mount('AC07')
+    assert.match(document.body.textContent, expected)
+    assert.equal(document.querySelector('tbody'), null)
+    if (status !== 500) assert.equal(find('Thử lại'), undefined)
+  }
+  reply = url => Response.json(url.includes('/permissions/') ? caps : page([]))
+  await click(find('Thử lại'))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 35)) })
+  assert.match(document.body.textContent, /Chưa có lớp học/)
+})
+
+test('AC08 clearing the calendar month reports validation without extra requests, then recovers', async () => {
+  calls.length = 0
+  reply = () => Response.json(page([]))
+  await act(async () => { root.render(React.createElement(AcademicClassSchedule, { key: ++seq, tenantId: 'tenant-a', token: 'token-a', classId: 'class-a', timezone: 'Asia/Ho_Chi_Minh', navigate() {} })); await new Promise(resolve => setTimeout(resolve, 35)) })
+  const month = document.querySelector('input[type=month]'), original = month.value, count = calls.length
+  await enter(month, '')
+  assert.equal(month.getAttribute('aria-invalid'), 'true')
+  assert.match(document.querySelector('[role=alert]').textContent, /Chọn tháng hợp lệ/)
+  assert.equal(document.querySelector('[aria-busy=true]'), null)
+  assert.equal(calls.length, count)
+  await enter(month, original)
+  assert.equal(month.hasAttribute('aria-invalid'), false)
+  assert.match(document.body.textContent, /Chưa có buổi học trong tháng này/)
+  assert.ok(calls.length > count)
+})
+
+test('AC08 section links target real sections and the live count stays separate from enrollment history', () => {
+  const detail = { id: 'class-a', code: 'T8', name: 'Toán 8A', status: 'ACTIVE', capacity: 16, courseName: 'Toán 8', enrollments: [{ id: 'old', studentName: 'Học sinh cũ', effectiveFrom: '2026-01-01', status: 'TRANSFERRED' }, { id: 'current', studentName: 'Học sinh mới', effectiveFrom: '2026-11-01', status: 'ACTIVE' }], teacherAssignments: [] }
+  const html = renderToStaticMarkup(React.createElement(AcademicCatalogView, { model: classModel(detail, false, false, false, 'Asia/Ho_Chi_Minh', 1), operation: React.createElement('p', null, 'Biểu mẫu được cấp') }))
+  const doc = new JSDOM(html).window.document
+  for (const link of doc.querySelectorAll('nav[aria-label="Các phần của lớp học"] a')) assert.ok(doc.querySelector(link.getAttribute('href')))
+  assert.match(doc.querySelector('#class-enrollments').textContent, /Đã chuyển lớp/)
+  const metric = [...doc.querySelectorAll('section')].find(s => s.querySelector('h2')?.textContent === 'Sĩ số hiện tại')
+  assert.equal(metric.querySelector('strong').textContent, '1')
+  const unavailable = new JSDOM(renderToStaticMarkup(React.createElement(AcademicCatalogView, { model: classModel(detail, false, false, false) }))).window.document
+  assert.equal(unavailable.querySelector('a[href="#class-admission"]'), null)
+})
+
 test('AC08 schedule filters the authorized calendar by class, deduplicates windows and navigates with class context', async () => {
   const stamp = new Date().toISOString()
   const session = { id: 'session-one', classId: 'class-a', className: 'Toán 8A', teacherName: 'Mai Phương', startsAt: stamp, endsAt: stamp, status: 'CONFIRMED' }
@@ -123,6 +201,7 @@ test('AC07 keeps class list when optional courses 403 and displays server count/
       : Response.json(page([{ id: 'class-a', code: 'CL-01', name: 'Class A', status: 'PLANNED', courseId: 'course-a', courseName: 'Course A', capacity: 18, enrollmentCount: 18 }], 41))
   await mount('AC07')
   assert.match(dom.window.document.body.textContent, /18 \/ 18/)
+  assert.doesNotMatch(dom.window.document.body.textContent, /Theo trạng thái|Chưa có dữ liệu từ API/)
   assert.match(dom.window.document.body.textContent, /chưa đủ hoặc không được cấp/)
   assert.ok(dom.window.document.querySelector('table'))
   await click(find('Sau'))

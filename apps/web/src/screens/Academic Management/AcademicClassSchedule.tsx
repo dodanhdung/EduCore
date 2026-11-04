@@ -13,12 +13,13 @@ export function AcademicClassSchedule({ tenantId, token, classId, timezone, navi
   const [month, setMonth] = useState(() => tenantLocalDate(timezone)?.slice(0, 7) ?? '')
   const [revision, setRevision] = useState(0)
   const [result, setResult] = useState<{ scope: string; kind: ResourceKind | 'ready'; sessions: ApiSession[] }>()
+  const validMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
   const scope = JSON.stringify([tenantId, token, classId, month, revision])
   useEffect(() => {
     const abort = new AbortController()
     void (async () => {
       try {
-        if (!/^\d{4}-\d{2}$/.test(month)) return
+        if (!validMonth) return
         // Two bounded UTC windows cover the tenant month including timezone edges.
         const first = new Date(`${month}-01T00:00:00Z`), next = new Date(first)
         next.setUTCMonth(next.getUTCMonth() + 1)
@@ -40,15 +41,16 @@ export function AcademicClassSchedule({ tenantId, token, classId, timezone, navi
       }
     })()
     return () => abort.abort()
-  }, [tenantId, token, classId, timezone, month, revision, scope])
+  }, [tenantId, token, classId, timezone, month, validMonth, revision, scope])
   const go = (suffix: string) => navigate(`/app/${encodeURIComponent(tenantId)}/${suffix}`)
   const kind = result?.scope === scope ? result.kind : 'loading'
   return <div className="academic-class-schedule">
-    <div className="academic-dialog-actions"><label className="academic-field">Tháng lịch học<input type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>
+    <div className="academic-dialog-actions"><label className="academic-field">Tháng lịch học<input type="month" value={month} aria-invalid={!validMonth || undefined} aria-describedby={!validMonth ? 'class-schedule-month-error' : undefined} onChange={e => setMonth(e.target.value)} /></label>
       {allowed.includes('SC03') && <button type="button" className="academic-primary" onClick={() => go(`schedule/create?classId=${encodeURIComponent(classId)}`)}>Tạo buổi cho lớp</button>}
       {allowed.includes('SC01') && <button type="button" onClick={() => go(`schedule?classId=${encodeURIComponent(classId)}`)}>Mở lịch trung tâm</button>}</div>
     <p>Thời gian theo {timezone}. Xác nhận điểm danh là bước riêng sau buổi học, theo quyền hiện hành.</p>
-    {kind !== 'ready' ? <ResourceState kind={kind} onRetry={kind === 'error' ? () => setRevision(v => v + 1) : undefined} />
+    {!validMonth ? <p id="class-schedule-month-error" role="alert">Chọn tháng hợp lệ để xem lịch học.</p>
+      : kind !== 'ready' ? <ResourceState kind={kind} onRetry={kind === 'error' ? () => setRevision(v => v + 1) : undefined} />
       : <DataTable caption="Lịch học của lớp trong tháng" rows={result!.sessions} rowKey={s => s.id} columns={[
         { key: 'time', header: 'Thời gian', cell: s => `${formatInstant(s.startsAt, timezone)} – ${formatInstant(s.endsAt, timezone)}` },
         { key: 'teacher', header: 'Giáo viên', cell: s => s.teacherName },

@@ -24,10 +24,40 @@
 .panelHead{margin:0 0 16px}.panelHead h2{font-size:17px;line-height:1.4;margin:0 0 4px}.panelHead p,.note{color:#5b6c7c;font-size:13px;line-height:1.5;margin:4px 0 12px}
 .twoColumns{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px}.twoColumns .panel{min-width:0}
 .root[data-screen-id="AC08"] .twoColumns{grid-template-columns:1fr}
+.root[data-screen-id="AC07"] table{min-width:760px}
+.root[data-screen-id="AC07"] th:first-child{width:28%}
+.root[data-screen-id="AC07"] th:nth-child(2){width:25%}
+.root[data-screen-id="AC07"] th:nth-child(3){width:17%}
+.root[data-screen-id="AC07"] th:nth-child(4){width:16%}
+.root[data-screen-id="AC07"] td{font-size:14px;line-height:1.5}
+.root[data-screen-id="AC07"] td small{color:var(--ec-muted);font-size:12px}
+.root[data-screen-id="AC07"] td:nth-child(3){font-variant-numeric:tabular-nums;white-space:nowrap}
+.sectionNav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.sectionNav a{display:inline-flex;align-items:center;min-height:44px;padding:8px 12px;border:1px solid var(--ec-border);border-radius:8px;background:var(--ec-surface);color:var(--ec-primary);font-size:14px;font-weight:600;text-decoration:none}
+.sectionNav a:hover{background:var(--ec-primary-soft)}
+.sectionNav a:focus-visible,.root section[id]:focus-visible,.root details[id]:focus-visible{outline:3px solid var(--ec-focus);outline-offset:2px}
+.root section[id],.root details[id]{scroll-margin-top:96px}
+.mobileHint{display:none}
+.root[data-screen-id="AC08"] table{min-width:760px}
+.root[data-screen-id="AC08"] td{font-size:14px;line-height:1.5}
+.root[data-screen-id="AC08"] td small{color:var(--ec-muted);font-size:12px}
+.root :global(.academic-class-schedule) :global(.academic-dialog-actions){flex-wrap:wrap;justify-content:flex-start;align-items:end;margin-top:0}
+.root :global(.academic-class-schedule) :global(.academic-dialog-actions)>label{flex:1 1 180px;min-width:0;max-width:100%}
+.root :global(.academic-class-schedule) input{width:100%;min-width:0;min-height:44px}
+.root :global(.academic-class-schedule) button{min-height:44px}
+.root :global(.academic-class-schedule) td:last-child button{display:inline-block;margin:4px 12px 4px 0}
+.root :global(.academic-class-schedule)>p{color:var(--ec-secondary);font-size:14px;line-height:1.5}
 .details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0}.details div{min-width:0}.details dt{color:#65788a;font-size:12px}.details dd{margin:5px 0 0;font-weight:650;overflow-wrap:anywhere}
 .editorOverlay{position:fixed;inset:0;z-index:100;background:#162f4488;display:grid;place-items:center;padding:20px}
 .editorDialog{width:min(560px,100%);max-height:min(90vh,850px);overflow:auto;background:#fff;border-radius:14px;padding:24px;box-shadow:0 24px 80px #0004}
 .editorHead{display:flex;justify-content:space-between;align-items:center;gap:12px}.editorHead h2{font-size:20px;margin:0}.editorFields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.editorFields label{display:grid;gap:6px;font-size:13px;font-weight:650}.editorFields input,.editorFields select{min-width:0;width:100%;padding:10px 12px;border:1px solid #bfccd7;border-radius:7px;font:inherit}.editorFields label:has(textarea){grid-column:1/-1}.editorFields textarea{min-height:76px;padding:10px 12px;border:1px solid #bfccd7;border-radius:7px;font:inherit}.editorActions{display:flex;justify-content:flex-end;gap:10px}.editorActions button{padding:9px 15px;border:1px solid #b5c6d6;border-radius:7px;background:#fff}.editorActions .primary{background:#1267b5;border-color:#1267b5}.error{color:#a93434}
 @media(max-width:900px){.twoColumns{grid-template-columns:1fr}}
 @media(max-width:600px){.root button{min-height:44px}.metrics,.metrics:has(> :nth-child(3)){grid-template-columns:1fr}.metrics>section{min-height:126px}.panel{padding:16px}.details,.editorFields{grid-template-columns:1fr}.editorDialog{padding:18px}.editorOverlay{padding:10px}}
+@media(max-width:600px){
+  .mobileHint{display:block;color:var(--ec-muted);font-size:13px;line-height:1.5;margin:0 0 12px}
+  .root[data-screen-id="AC08"] .metrics{gap:12px;margin:12px 0 20px}
+  .root[data-screen-id="AC08"] .metrics>section{min-height:0;gap:10px}
+  .root[data-screen-id="AC08"] .metrics strong{font-size:24px}
+  .root :global(.academic-class-schedule) :global(.academic-dialog-actions)>label,.root :global(.academic-class-schedule) :global(.academic-dialog-actions)>button{flex:1 1 100%;max-width:100%}
+}
 @media(prefers-reduced-motion:reduce){.root *{scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important}}

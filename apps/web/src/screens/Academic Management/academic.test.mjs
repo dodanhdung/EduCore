@@ -52,7 +52,8 @@ test('Academic routes retain parameters and AC09 stays embedded', () => {
   assert.equal(matchRoute('/app/tenant-a/teachers/GV-018')?.route.id, 'AC04')
   assert.equal(routes.some((route) => route.id === 'AC09'), false)
   const state = { status: 'authenticated', session: { expiresAt: Date.now() + 60000, principal: { tenantId: 'tenant-a', allowedTenants: [{ id: 'tenant-a', name: 'Mẫu' }] } } }
-  assert.equal(resolveRoute('/app/tenant-a/students', state).kind, 'forbidden')
+  assert.equal(resolveRoute('/app/tenant-a/students', state).kind, 'checking')
+  assert.equal(resolveRoute('/app/tenant-a/students', { ...state, session: { ...state.session, navigationStatus: 'denied' } }).kind, 'forbidden')
 })
 
 test('AC01 search, filter, empty state and preview navigation', async () => {
