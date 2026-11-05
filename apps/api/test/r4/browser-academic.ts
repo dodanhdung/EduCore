@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,7 +14,7 @@ export type BrowserDriver = {
   origin: string;
   apiOrigin: string;
   browserVersion: string;
-  network: { path: string; status: number; method: string }[];
+  network: { path: string; status: number; method: string; reviewedSheetVersion?: string }[];
   evaluate: <T>(expression: string) => Promise<T>;
   navigate: (path: string) => Promise<void>;
   route: (path: string) => Promise<void>;
@@ -25,6 +25,7 @@ export type BrowserDriver = {
   select: (selector: string, value: string) => Promise<void>;
   login: (email: string, password: string, tenantId: string) => Promise<void>;
   viewport: (width: number, height: number, mobile: boolean) => Promise<void>;
+  capture: (label: string) => Promise<void>;
   deferResponse: (path: string) => Promise<{
     waitPaused: () => Promise<number>;
     release: () => Promise<boolean>;
@@ -32,8 +33,8 @@ export type BrowserDriver = {
   }>;
 };
 
-// Every response is a real browser network response. Only method/path/status are retained.
-// No request headers, credentials, cookies, body, DOM dump or file contents enter evidence.
+// Real network only. Retain method/path/status and, only for FINALIZE, its av1
+// reviewed-resource version. Never retain headers, credentials or request bodies.
 export async function withAcademicBrowser<T>(app: INestApplication, run: (driver: BrowserDriver) => Promise<T>): Promise<T> {
   if (!existsSync(edgePath)) throw Error('EDGE_TEST_ENVIRONMENT_UNAVAILABLE');
   if (process.env.R4_TEST_DISPOSABLE !== 'I_OWN_THIS_DISPOSABLE_CLUSTER') throw Error('DISPOSABLE_REQUIRED');
@@ -73,16 +74,24 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
     const send = protocol.send;
     const network: BrowserDriver['network'] = [];
     const methods = new Map<string, string>();
+    const reviewedVersions = new Map<string, string>();
     protocol.onEvent((event) => {
       if (event.method === 'Network.requestWillBeSent') {
-        const x = event.params as { requestId: string; request: { method: string } };
+        const x = event.params as { requestId: string; request: { method: string; url: string; postData?: string } };
         methods.set(x.requestId, x.request.method);
+        if (x.request.method === 'POST' && /^\/api\/v1\/tenants\/[^/]+\/attendance\/sessions\/[^/]+\/finalize$/.test(new URL(x.request.url).pathname)) {
+          try {
+            const version: unknown = JSON.parse(x.request.postData ?? '{}').expectedSheetVersion;
+            if (typeof version === 'string' && /^av1:[0-9a-f]{64}$/.test(version)) reviewedVersions.set(x.requestId, version);
+          } catch { /* No payload or malformed input is never persisted. */ }
+        }
       }
       if (event.method === 'Network.responseReceived') {
         const x = event.params as { requestId: string; response: { url: string; status: number } };
         const url = new URL(x.response.url);
         if (url.origin === apiOrigin) network.push({ path: url.pathname, status: x.response.status,
-          method: methods.get(x.requestId) ?? 'UNKNOWN' });
+          method: methods.get(x.requestId) ?? 'UNKNOWN',
+          ...(reviewedVersions.has(x.requestId) ? { reviewedSheetVersion: reviewedVersions.get(x.requestId) } : {}) });
       }
     });
     const evaluate = async <R>(expression: string): Promise<R> => {
@@ -151,12 +160,16 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
     };
     await send('Page.enable', {}, sessionId);
     await send('Network.enable', {}, sessionId);
+    let viewport = { width: 1280, height: 800, mobile: false };
     const driver: BrowserDriver = {
       origin, apiOrigin, browserVersion: version.product, network, evaluate,
       deferResponse,
       navigate: async (path) => { await send('Page.navigate', { url: `${origin}${path}` }, sessionId); },
       route: async (path) => { await evaluate(`history.pushState(null, '', ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent('popstate'))`); },
-      wait: async (expression, label) => { await until(() => evaluate<boolean>(expression), label); },
+      wait: async (expression, label) => {
+        try { await until(() => evaluate<boolean>(expression), label); }
+        catch (error) { await driver.capture(`FAILED-${label}`).catch(() => undefined); throw error; }
+      },
       click: async (selector) => { await evaluate(`document.querySelector(${JSON.stringify(selector)})?.click()`); },
       fill: async (selector, value) => {
         await evaluate(`document.querySelector(${JSON.stringify(selector)})?.focus()`);
@@ -176,8 +189,35 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
           Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)});
           el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       },
-      viewport: async (width, height, mobile) => { await send('Emulation.setDeviceMetricsOverride',
-        { width, height, deviceScaleFactor: 1, mobile }, sessionId); },
+      viewport: async (width, height, mobile) => {
+        await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile }, sessionId);
+        viewport = { width, height, mobile };
+      },
+      capture: async (label) => {
+        const configured = process.env.R4_BROWSER_EVIDENCE_DIR;
+        if (!configured) return; // Optional evidence; all journey assertions still run.
+        const localRoot = resolve(fileURLToPath(new URL('../../../../.local/', import.meta.url)));
+        const destination = resolve(configured);
+        if (!/^[a-z0-9-]{1,80}$/i.test(label) || !destination.startsWith(localRoot + sep)) throw Error('UNSAFE_SCREENSHOT_TARGET');
+        const safe = await evaluate<boolean>(`location.origin === ${JSON.stringify(origin)} && location.pathname.startsWith('/app/')
+          && !Array.from(document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]')).some(x => x.value)`);
+        if (!safe) throw Error('UNSAFE_SCREENSHOT_STATE');
+        await mkdir(destination, { recursive: true });
+        const original = { ...viewport };
+        const shots = [];
+        try {
+          for (const [width, height] of [[1440, 900], [390, 844]]) {
+            await driver.viewport(width, height, width === 390);
+            await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+            const geometry = await evaluate<{ scrollWidth: number; innerWidth: number }>('({scrollWidth:document.documentElement.scrollWidth,innerWidth})');
+            const image = await send<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false }, sessionId);
+            const file = `${label}-${width}.png`;
+            await writeFile(join(destination, file), Buffer.from(image.data, 'base64'));
+            shots.push({ file, width, height, ...geometry, overflow: geometry.scrollWidth > geometry.innerWidth });
+          }
+          await writeFile(join(destination, `${label}.json`), JSON.stringify({ source: 'LOCAL_NATIVE_POSTGRES_REAL_HTTP', browser: version.product, shots }, null, 2));
+        } finally { await driver.viewport(original.width, original.height, original.mobile); }
+      },
       login: async (email, password, tenantId) => {
         await send('Page.navigate', { url: `${origin}/login` }, sessionId);
         await until(() => evaluate<boolean>('!!document.querySelector("#login-email")'), 'LOGIN_FORM');

@@ -2003,6 +2003,10 @@ describe('R4 native PostgreSQL', () => {
       FROM generate_series(0,1249) g`;
     const express = app.getHttpAdapter().getInstance() as { set: (key: string, value: unknown) => void };
     express.set('trust proxy', 'loopback');
+    // Measure a running HTTP service, not Supertest's per-wave listen/close
+    // lifecycle. Keep the registered sampling, bootstrap and equivalence gates.
+    if (!app.getHttpServer().address()) await app.listen(0, '127.0.0.1');
+    const timingOrigin = `http://127.0.0.1:${(app.getHttpServer().address() as { port: number }).port}`;
     let randomState = 0xD01C03;
     const random = () => ((randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0) / 2 ** 32);
     // Balance every concurrent slot across the run. The former independent shuffle
@@ -2033,14 +2037,14 @@ describe('R4 native PostgreSQL', () => {
     const call = async (address: string, block: number, range: number) => {
       const ip = `198.${range}.${Math.floor(block / 256)}.${block % 256}`;
       const start = process.hrtime.bigint();
-      const response = await request(app.getHttpServer()).post('/api/v1/auth/password/otp/request')
+      const response = await request(timingOrigin).post('/api/v1/auth/password/otp/request')
         .set('X-Forwarded-For', ip).send({ email: address });
       const ms = Number(process.hrtime.bigint() - start) / 1_000_000;
       expect(response.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/i);
       return { response, ms };
     };
     let reference: ReturnType<typeof responseShape> | undefined;
-    const results: Record<string, unknown> = { seed: 0xD01C03, samplesPerGroupPerCondition: 400,
+    const results: Record<string, unknown> = { seed: 0xD01C03, transport: 'persistent-loopback-http', actualConcurrencyPerWave: 4, samplesPerGroupPerCondition: 400,
       bootstrapResamples: 10_000, conditions: {} };
     try {
       for (let block = 0; block < 13; block++) {
@@ -2433,9 +2437,11 @@ describe('R4 native PostgreSQL', () => {
       expect(revokedList.body).toEqual([]);
       await b.route(`/app/${f.tenant}/teaching/assignments`);
       await b.wait(`(document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'
-        || (document.querySelector('.as-page .as-list')?.children.length === 0
-          && document.querySelector('.as-page')?.textContent.includes('Không có bài tập phù hợp')))
+        || (document.querySelector('.as-page table caption')?.textContent === 'Danh sách bài tập trong lớp phụ trách'
+          && document.querySelectorAll('.as-page table tbody tr').length === 0
+          && document.querySelector('.as-page [role="status"] h2')?.textContent === 'Chưa có bài tập'))
         && !document.body.textContent.includes(${JSON.stringify(title)})`, 'TEACHER_REVOKED_FINAL_STATE');
+      await b.capture('AS01-revoked-teacher');
       await request(app.getHttpServer()).get(`${base}/teaching/assignments/${assignment.id}/recipients`)
         .auth(teacher.accessToken, { type: 'bearer' }).expect(403);
       await b.route(`/app/${f.tenant}/teaching/assignments/${assignment.id}`);
@@ -2487,10 +2493,10 @@ describe('R4 native PostgreSQL', () => {
       await b.viewport(1280, 800, false);
       await b.login(manager.email, password, f.tenant);
       await b.route(`/app/${f.tenant}/schedule/sessions/${f.session}`);
-      await b.wait('Array.from(document.querySelectorAll(".attendance-primary")).some(x => x.textContent.includes("Xác nhận buổi") && !x.disabled)', 'SCHEDULE_PREVIEW_READY');
+      await b.wait('Array.from(document.querySelectorAll(".scheduling-primary")).some(x => x.textContent.includes("Xác nhận buổi") && !x.disabled)', 'SCHEDULE_PREVIEW_READY');
       expect((await admin`SELECT status FROM class_sessions WHERE id=${f.session}`)[0].status).toBe('DRAFT');
       expect(b.network.some(r => r.path === `${base}/scheduling/drafts/${f.session}/preview` && r.status === 200)).toBe(true);
-      await b.evaluate('Array.from(document.querySelectorAll(".attendance-primary")).find(x => x.textContent.includes("Xác nhận buổi"))?.click()');
+      await b.evaluate('Array.from(document.querySelectorAll(".scheduling-primary")).find(x => x.textContent.includes("Xác nhận buổi"))?.click()');
       await until(async () => b.network.some(r => r.path === `${base}/scheduling/sessions/${f.session}/confirm` && r.status === 201), 'SCHEDULE_CONFIRM_HTTP');
       expect((await admin`SELECT status FROM class_sessions WHERE id=${f.session}`)[0].status).toBe('CONFIRMED');
       expect((await admin`SELECT count(*)::int n FROM resource_bookings WHERE session_id=${f.session}`)[0].n).toBeGreaterThan(0);
@@ -2501,7 +2507,8 @@ describe('R4 native PostgreSQL', () => {
           deliveryMode: 'ONLINE', startsAt: times.starts_at, endsAt: times.ends_at,
           reason: 'R9 conflict fixture' }).expect(201);
       await b.route(`/app/${f.tenant}/schedule/sessions/${conflict.body.id}`);
-      await b.wait('Array.from(document.querySelectorAll(".attendance-primary")).some(x => x.textContent.includes("Xác nhận buổi") && x.disabled)', 'SCHEDULE_CONFLICT_PREVIEW');
+      await b.wait('Array.from(document.querySelectorAll(".scheduling-primary")).some(x => x.textContent.includes("Xác nhận buổi") && x.disabled)', 'SCHEDULE_CONFLICT_PREVIEW');
+      await b.capture('SC05-conflict');
       expect(b.network.some(r => r.path === `${base}/scheduling/drafts/${conflict.body.id}/preview` && r.status === 200)).toBe(true);
       await bearer(request(app.getHttpServer()).post(`${base}/scheduling/sessions/${conflict.body.id}/confirm`))
         .set('Idempotency-Key', randomUUID()).send({ reason: 'Expected conflict' }).expect(409);
@@ -2513,8 +2520,8 @@ describe('R4 native PostgreSQL', () => {
       await request(app.getHttpServer()).get(`${base}/scheduling/sessions/${unrelatedSession}`)
         .auth(teacher.accessToken, { type: 'bearer' }).expect(404);
       await b.route(`/app/${f.tenant}/schedule/sessions/${unrelatedSession}`);
-      await b.wait(`!!document.querySelector('.attendance-page [role="alert"]')
-        && !document.querySelector('.attendance-page')?.textContent.includes('Class Two')`,
+      await b.wait(`!!document.querySelector('.scheduling-page [role="alert"]')
+        && !document.querySelector('.scheduling-page')?.textContent.includes('Class Two')`,
         'TEACHER_UNRELATED_SESSION_DENIED');
       await b.viewport(390, 844, true);
       await b.login(student.email, password, f.tenant);
@@ -2522,7 +2529,7 @@ describe('R4 native PostgreSQL', () => {
       await b.wait(`document.querySelector('.portal-page')?.textContent.includes(${JSON.stringify(classRow.name)})`,
         'MOBILE_STUDENT_ASSIGNED_SCHEDULE');
       await b.route(`/app/${f.tenant}/my/schedule`);
-      await b.wait(`document.querySelector('.attendance-page')?.textContent.includes(${JSON.stringify(classRow.name)})`,
+      await b.wait(`document.querySelector('.scheduling-page')?.textContent.includes(${JSON.stringify(classRow.name)})`,
         'MOBILE_STUDENT_CALENDAR');
       return { browserVersion: b.browserVersion, responses: b.network.filter(r => r.path.startsWith(base)) };
     });
@@ -2570,11 +2577,22 @@ describe('R4 native PostgreSQL', () => {
       expect(b.network.filter(r => r.path === `${base}/attendance/sessions/${f.session}/marks` && r.method === 'POST')
         .map(r => r.status), JSON.stringify({ alert: await b.evaluate<boolean>('!!document.querySelector(".attendance-page [role=alert]")') })).toContain(201);
       await b.wait(`!!document.querySelector('.attendance-actions button:last-child:not([disabled])')`, 'FINALIZE_READY');
+      const reviewedSheet = await request(app.getHttpServer()).get(`${base}/attendance/sessions/${f.session}`)
+        .auth(manager.accessToken, { type: 'bearer' }).expect(200);
+      expect(reviewedSheet.body.sheetVersion).toMatch(/^av1:[0-9a-f]{64}$/);
       await b.click('.attendance-actions button:last-child');
+      await b.wait('!!document.querySelector("dialog[open] #manager-attendance-confirm-title")', 'FINALIZE_REVIEW_DIALOG');
+      expect(b.network.some(r => r.path === `${base}/attendance/sessions/${f.session}/finalize` && r.method === 'POST')).toBe(false);
+      expect((await admin`SELECT count(*)::int n FROM attendance_finalizations WHERE tenant_id=${f.tenant} AND session_id=${f.session}`)[0].n).toBe(0);
+      await b.capture('AT02-review-dialog');
+      await b.click('dialog[open] button.attendance-primary');
       await until(async () => b.network.some(r => r.path === `${base}/attendance/sessions/${f.session}/finalize`
         && r.method === 'POST' && r.status === 201), 'BROWSER_ATTENDANCE_FINALIZED');
+      expect(b.network.find(r => r.path === `${base}/attendance/sessions/${f.session}/finalize`
+        && r.method === 'POST' && r.status === 201)?.reviewedSheetVersion).toBe(reviewedSheet.body.sheetVersion);
       await b.wait(`!document.querySelector('select[aria-label^="Điểm danh"]')
-        && document.querySelector('.attendance-page')?.textContent.includes('EXCUSED')`, 'FINALIZED_READ_ONLY');
+        && document.querySelector('[data-screen-id="AT02"]')?.textContent.includes('Vắng có phép')`, 'FINALIZED_READ_ONLY');
+      await b.capture('AT02-finalized');
       const sheet = await request(app.getHttpServer()).get(`${base}/attendance/sessions/${f.session}`)
         .auth(manager.accessToken, { type: 'bearer' }).expect(200);
       expect(sheet.body.finalized).toBe(true);
@@ -2666,7 +2684,8 @@ describe('R4 native PostgreSQL', () => {
     const browser = await withAcademicBrowser(app, async (b) => {
       await b.login(manager.email, password, a.tenant);
       await b.route(`/app/${a.tenant}/classes`);
-      await b.wait(`document.querySelector('.academic-table tbody')?.textContent.includes('R9 A class')`, 'TENANT_A_CLASS');
+      await b.wait(`document.querySelector('[data-screen-id="AC07"] table caption')?.textContent === 'Danh sách lớp học'
+        && document.querySelector('[data-screen-id="AC07"] table tbody')?.textContent.includes('R9 A class')`, 'TENANT_A_CLASS');
       await b.route('/select-tenant');
       await b.wait(`document.querySelectorAll('.ec-tenant-choice').length === 2
         && !document.body.textContent.includes('R9 A class')`, 'TENANT_SWITCH_CHOICES');
@@ -2675,18 +2694,21 @@ describe('R4 native PostgreSQL', () => {
       await b.wait(`location.pathname.startsWith(${JSON.stringify(`/app/${bTenant.tenant}/`)})
         && !!document.querySelector('.app-shell')`, 'TENANT_B_SELECTED');
       await b.route(`/app/${bTenant.tenant}/classes`);
-      await b.wait(`document.querySelector('.academic-table tbody')?.textContent.includes('R9 B class')
+      await b.wait(`document.querySelector('[data-screen-id="AC07"] table caption')?.textContent === 'Danh sách lớp học'
+        && document.querySelector('[data-screen-id="AC07"] table tbody')?.textContent.includes('R9 B class')
         && !document.body.textContent.includes('R9 A class')`, 'TENANT_B_CLASS_ONLY');
+      await b.capture('AC07-tenant-B');
       await b.route(`/app/${a.tenant}/classes`);
       await b.wait(`document.querySelector('.ec-error-page .ec-error-card span')?.textContent === '403'
         && !document.body.textContent.includes('R9 A class')`, 'OLD_TENANT_FORBIDDEN');
+      await b.capture('AC07-old-tenant-denied');
       await b.route(`/app/${bTenant.tenant}/schedule`);
-      await b.wait(`document.querySelector('.attendance-page')?.textContent.includes('Không có buổi học')
-        && !document.querySelector('.attendance-page [role="status"]')`, 'EMPTY_CALENDAR_FINAL');
+      await b.wait(`document.querySelector('.scheduling-page .scheduling-empty')?.textContent.includes('Không có buổi học')
+        && !document.querySelector('.scheduling-page [role="status"]')`, 'EMPTY_CALENDAR_FINAL');
       await admin`UPDATE auth_sessions SET revoked_at=clock_timestamp() WHERE user_id=${a.user}
         AND active_tenant_id=${bTenant.tenant} AND revoked_at IS NULL`;
       await b.route(`/app/${bTenant.tenant}/classes`);
-      await b.wait(`!!document.querySelector('.academic-page [role="alert"]')
+      await b.wait(`!!document.querySelector('[data-screen-id="AC07"] [role="alert"]')
         && !document.body.textContent.includes('R9 B class')`, 'REVOKED_SESSION_FINAL_STATE');
       expect(b.network.some(r => r.path.startsWith(`/api/v1/tenants/${bTenant.tenant}/academic/classes`)
         && r.status === 401)).toBe(true);
@@ -3672,7 +3694,8 @@ describe('R4 native PostgreSQL', () => {
       const screen = async (id: string, route: string) => {
         await b.route(`/app/${f.tenant}${route}`);
         await b.wait(`document.querySelector('.billing-page[data-screen-id="${id}"]')
-          && !document.querySelector('.billing-page > .billing-state')`, id);
+          && !document.querySelector('.billing-page > .billing-state')
+          && (${JSON.stringify(id)} !== 'BL03' || document.querySelector('.billing-page table caption')?.textContent === 'Các kỳ học phí trong trang')`, id);
       };
       const action = async (card: number, button = 0) => {
         // Buttons need not be direct siblings of the card; choose by DOM order.
@@ -3682,11 +3705,13 @@ describe('R4 native PostgreSQL', () => {
       await screen('BL01', '/finance/pricing');
       expect(await b.evaluate<boolean>(`document.querySelector('.billing-card')?.textContent.includes('800.000')`)).toBe(true);
       await screen('BL03', '/finance/billing-periods');
-      expect(await b.evaluate<boolean>(`document.querySelector('.billing-card')?.textContent.includes('2025-09-01')`)).toBe(true);
-      await b.select('.billing-card:nth-of-type(2) select', period);
-      await b.select('.billing-card:nth-of-type(2) .billing-form-grid label:nth-child(2) select', f.student);
-      await b.value('.billing-card:nth-of-type(2) textarea', 'Browser source review');
-      await action(1);
+      expect(await b.evaluate<boolean>(`document.querySelector('.billing-page table caption')?.textContent === 'Các kỳ học phí trong trang'
+        && document.querySelector('.billing-page table tbody')?.textContent.includes('2025-09-01')`)).toBe(true);
+      await b.select('.billing-page label select', period);
+      await b.select('.billing-generation-form select', f.student);
+      await b.value('.billing-generation-form textarea', 'Browser source review');
+      await b.capture('BL03-reviewed-generation-source');
+      await b.click('.billing-generation-form button.billing-button');
       await b.wait(`document.querySelector('.billing-page[data-screen-id="BL05"]')?.textContent.includes('DRAFT')`, 'DRAFT');
       const [draft] = await admin`SELECT id,status,total_vnd::text amount FROM invoices
         WHERE tenant_id=${f.tenant} AND student_id=${f.student} AND period_id=${period}`;
@@ -3755,6 +3780,7 @@ describe('R4 native PostgreSQL', () => {
       await action(1);
       await b.wait(`document.querySelector('.billing-page[data-screen-id="OP05"]')?.textContent.includes('COMPLETED')
         && !!document.querySelector('.billing-page [role="status"]')`, 'COMPLETED_WITH_RECEIPT');
+      await b.capture('OP05-completed-finance');
       const [effect] = await admin`SELECT
         (SELECT count(*)::int FROM invoice_adjustments WHERE approval_request_id=${asked.id}) adjustments,
         (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=${f.tenant}
