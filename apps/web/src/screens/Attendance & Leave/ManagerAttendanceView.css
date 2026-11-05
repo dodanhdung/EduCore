@@ -10,7 +10,7 @@
 .manager-attendance .attendance-card{margin-bottom:20px}
 .manager-attendance select{min-width:180px;min-height:44px}
 .manager-attendance-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.manager-attendance-confirm{border:1px solid var(--ec-border);border-radius:16px;padding:24px;max-width:560px;width:calc(100% - 32px);color:var(--ec-foreground);box-shadow:0 16px 48px #0f172a30}
+.manager-attendance-confirm{border:1px solid var(--ec-border);border-radius:16px;padding:24px;max-width:560px;width:calc(100% - 32px);max-height:calc(100dvh - 32px);overflow-y:auto;color:var(--ec-foreground);box-shadow:0 16px 48px #0f172a30}
 .manager-attendance-confirm::backdrop{background:#0f172a80}
 .manager-attendance-confirm p{line-height:1.6;margin:16px 0 24px}
 /* Clear the shell's 44px mobile menu, its 1px border and safe-area padding. */

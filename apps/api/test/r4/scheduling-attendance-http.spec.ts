@@ -13,6 +13,7 @@ const tenant = '00000000-0000-4000-8000-000000000001';
 const other = '00000000-0000-4000-8000-000000000002';
 const session = '00000000-0000-4000-8000-000000000003';
 const participant = '00000000-0000-4000-8000-000000000004';
+const expectedSheetVersion = 'av1:' + '0'.repeat(64);
 const root = `/api/v1/tenants/${tenant}`;
 
 describe('R8 Scheduling and Attendance HTTP boundary', () => {
@@ -94,13 +95,13 @@ describe('R8 Scheduling and Attendance HTTP boundary', () => {
     const send = (path: string, key: string, body: object) => request(app.getHttpServer()).post(`${root}/attendance${path}`)
       .set('Authorization', 'Bearer token').set('Idempotency-Key', key).send(body).expect(201);
     await send(`/sessions/${session}/marks`, 'mark-1', { participantId: participant, status: 'UNEXCUSED', revision: 0, reason: 'Draft result' });
-    await send(`/sessions/${session}/finalize`, 'finalize-1', { reason: 'Reviewed roster' });
+    await send(`/sessions/${session}/finalize`, 'finalize-1', { reason: 'Reviewed roster', expectedSheetVersion });
     await send(`/records/${participant}/correct`, 'correct-1', { status: 'ATTENDED', revision: 2, reason: 'Authorized correction' });
     expect(queries.map(q => q.sql)).toEqual(Array(3).fill('SELECT educore_r3.attendance($1::uuid,$2::jsonb) result'));
     expect(queries.map(q => q.args[0])).toEqual([tenant, tenant, tenant]);
     expect(queries.map(q => JSON.parse(q.args[1] as string))).toEqual([
       { operation: 'MARK', key: 'mark-1', reason: 'Draft result', sessionId: session, participantId: participant, status: 'UNEXCUSED', revision: 0 },
-      { operation: 'FINALIZE', key: 'finalize-1', reason: 'Reviewed roster', sessionId: session },
+      { operation: 'FINALIZE', key: 'finalize-1', reason: 'Reviewed roster', sessionId: session, expectedSheetVersion },
       { operation: 'CORRECT', key: 'correct-1', reason: 'Authorized correction', attendanceId: participant, status: 'ATTENDED', revision: 2 },
     ]);
   });
@@ -125,23 +126,23 @@ describe('R8 Scheduling and Attendance HTTP boundary', () => {
   });
 
   it('preserves SQL error status and correlation without exposing business exception details', async () => {
-    for (const [sqlstate, expected] of [['28000', 401], ['42501', 403], ['P0002', 404], ['40001', 409], ['23514', 422], ['XX000', 500]] as const) {
+    for (const [sqlstate, expected] of [['28000', 401], ['42501', 403], ['P0002', 404], ['40001', 409], ['P1301', 409], ['23514', 422], ['XX000', 500]] as const) {
       queries.length = 0;
       auth.repository.transaction.mockRejectedValueOnce(Object.assign(new Error('PRIVATE_DATABASE_DETAIL'), { meta: { code: sqlstate } }));
       const response = await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize`)
-        .set('Authorization', 'Bearer token').set('Idempotency-Key', `failure-${sqlstate}`).send({ reason: 'Error mapping' }).expect(expected);
+        .set('Authorization', 'Bearer token').set('Idempotency-Key', `failure-${sqlstate}`).send({ reason: 'Error mapping', expectedSheetVersion }).expect(expected);
       expect(response.body.correlationId).toMatch(/^[a-f0-9-]{36}$/);
       expect(JSON.stringify(response.body)).not.toContain('PRIVATE_DATABASE_DETAIL');
       expect(queries).toHaveLength(0);
     }
   });
 
-  it('current FINALIZE contract rejects unapproved reviewed-version fields instead of silently trusting them', async () => {
+  it('FINALIZE requires a valid av1 version and rejects legacy or malformed requests before querying', async () => {
     queries.length = 0;
-    for (const field of ['expectedSheetVersion', 'sheetVersion', 'rosterVersion']) {
+    for (const value of [undefined, null, '', 1, 'av1:short', 'av2:' + '0'.repeat(64), 'av1:' + 'A'.repeat(64)]) {
       await request(app.getHttpServer()).post(`${root}/attendance/sessions/${session}/finalize`)
-        .set('Authorization', 'Bearer token').set('Idempotency-Key', `proposed-${field}`)
-        .send({ reason: 'Version proposal is not implemented', [field]: 'untrusted-client-value' }).expect(400);
+        .set('Authorization', 'Bearer token').set('Idempotency-Key', 'invalid-version')
+        .send({ reason: 'Review required', expectedSheetVersion: value }).expect(400);
     }
     expect(queries).toHaveLength(0);
   });

@@ -194,6 +194,30 @@ Do not infer sibling discount solely from common phone/surname; verification in 
 
 ### 3.5. Attendance & leave — UC-15–16 (P0)
 
+#### R13 approved implementation amendment — 04/11/2026 (CAP-01, CON-02, EMP-03)
+
+The following routes describe the checked-in R3/R4 controller contract, superseding the attendance read/mark/finalize examples below. This records owner approval and implementation; it does not assert deployment to Render. `T=/api/v1/tenants/{tenantId}`.
+
+| Method & path | Contract | Authority / result |
+|---|---|---|
+| `GET T/attendance/sessions/{sessionId}` | Existing sheet fields plus `sheetVersion`, sheet/participant `capabilities` | Existing write-scoped read gate: `attendance.mark` OR `attendance.finalize`; no generic read/Parent/Student expansion |
+| `POST T/attendance/sessions/{sessionId}/marks` | `{participantId,status,revision,reason}`, `Idempotency-Key` | Existing independent MARK permission, resource scope, assignment/time and source-lock checks; persisted draft |
+| `POST T/attendance/sessions/{sessionId}/finalize` | **Required** `{reason,expectedSheetVersion}`, `Idempotency-Key` | Fresh FINALIZE permission/scope and domain guards; matching reviewed version, nonempty complete active roster |
+
+`sheetVersion` is an opaque `av1:` + 64 lowercase hexadecimal SHA-256 digest, not an authorization token. Sheet capabilities contain `protocolVersion:1`, one server UTC `evaluatedAt`, `canMark/markReasons`, `canFinalize/finalizeReasons`, `canCorrect/correctReasons`. Every participant contains `canMark/markReasons` and `canCorrect/correctReasons`. Booleans are authoritative UI guidance only: all commands recheck authorization and current domain state. Root MARK/CORRECT is true iff at least one row permits that operation; FINALIZE is independent of MARK. Reasons are empty for an allowed action, otherwise stable codes from:
+
+`NOT_AUTHORIZED`, `SESSION_NOT_ELIGIBLE`, `SESSION_NOT_STARTED`, `ASSIGNMENT_OR_LATE_STAFF_REQUIRED`, `STAFF_WINDOW_NOT_REACHED`, `ALREADY_FINALIZED`, `SOURCE_LOCKED`, `RESULTS_INCOMPLETE`, `APPROVED_LEAVE_REQUIRED`, `NO_RECORD_TO_CORRECT`, `EMPTY_ROSTER`.
+
+No invoice identifiers or other actors' permissions are exposed. Per-row decisions use existing student/resource scope. Input-specific new attendance status, expected record revision and reason remain independently validated by MARK/CORRECT. Empty root MARK/CORRECT is disabled even with operation permission. AT02 navigation projection accepts existing MARK **or FINALIZE** scope, matching the unchanged sheet read gate so finalize-only actors can reach the screen; other navigation predicates and all data gates are retained.
+
+FINALIZE validates the version inside the existing tenant-serialized transaction after fresh authorization and valid idempotent replay lookup. A stale new command raises SQLSTATE `P1301` (`ATTENDANCE_SHEET_CHANGED`) mapped by the real controller to the standard sanitized HTTP `409 CONFLICT`; no records/finalization/corrections/audit/receipt/source links are added. Same key + same entire body (including expected version) replays its prior result after current authorization; changed body conflicts. Missing/malformed version is 400 (SQL `22023` internally); authorized matching-version empty roster is 422 (`EMPTY_ROSTER`, SQL `23514` internally). HTTP 422 retains the standard sanitized envelope rather than disclosing raw database errors; GET provides the specific UI reason. Denied scope/permission remains 403. Incomplete/invalid EXCUSED and existing session/time/source guards remain enforced.
+
+AT02 must capture the persisted sheet and its token when opening review. No preflight GET may silently replace that token. Unsaved local marks block FINALIZE. On stale 409, close/reset old review, require explicit reload and another review; never retry FINALIZE automatically. Missing/invalid protocol, version or row capabilities preserves authorized viewing but disables all writes. Client clock crossing 48h cannot enable actions; reload server capabilities. Existing readonly URL and 401/403 roster clearing remain intact.
+
+**Coordinated cutover required:** the FINALIZE body is a breaking contract. Under an owner-controlled maintenance/write freeze, apply the new forward-only function migration, deploy matching API and frontend, verify additive GET and required-version rejection, then reopen attendance writes. SQL and HTTP already require the version; there is no legacy bypass or trusted-client exception. Older frontend/backend combinations fail closed. Monitor 400/409/422 and permission failures; repair compatibility by deploying a matching build or a reviewed forward fix, never editing old migrations or deleting attendance/audit history. No deployment is authorized by this document.
+
+#### Earlier design examples (historical attendance routes)
+
 | Method & path | Input → output | P / invariants |
 |---|---|---|
 | `GET T/sessions/{id}/attendance` | participants + draft/finalization/lock info | `attendance.read`, class/child scope |

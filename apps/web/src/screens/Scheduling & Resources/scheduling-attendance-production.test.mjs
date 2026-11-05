@@ -3,6 +3,24 @@ import { after, test } from 'node:test'
 import { JSDOM } from 'jsdom'
 import React, { act } from 'react'
 import { createServer } from 'vite'
+import { createHash } from 'node:crypto'
+
+// Test API responses only. Production capabilities are never synthesized.
+function withContract(s) {
+  const stateReason = !['CONFIRMED', 'COMPLETED'].includes(s.status) ? 'SESSION_NOT_ELIGIBLE'
+    : Date.parse(s.startsAt) > Date.now() ? 'SESSION_NOT_STARTED' : s.finalized ? 'ALREADY_FINALIZED' : null
+  const participants = s.participants.map(p => {
+    const reason = stateReason ?? (p.billingSourceLocked ? 'SOURCE_LOCKED' : null)
+    return { ...p, capabilities: p.capabilities ?? { canMark: !reason, markReasons: reason ? [reason] : [], canCorrect: false, correctReasons: ['NOT_AUTHORIZED'] } }
+  })
+  const reason = stateReason ?? (!participants.length ? 'EMPTY_ROSTER' : participants.some(p => p.billingSourceLocked) ? 'SOURCE_LOCKED'
+    : participants.some(p => !p.status) ? 'RESULTS_INCOMPLETE' : participants.some(p => p.status === 'EXCUSED' && !p.approvedLeave) ? 'APPROVED_LEAVE_REQUIRED' : null)
+  const canMark = participants.some(p => p.capabilities.canMark), canCorrect = participants.some(p => p.capabilities.canCorrect)
+  return { ...s, participants, sheetVersion: s.sheetVersion ?? 'av1:' + createHash('sha256').update(JSON.stringify(s)).digest('hex'), capabilities: s.capabilities ?? {
+    protocolVersion: 1, evaluatedAt: new Date().toISOString(), canMark, markReasons: canMark ? [] : [stateReason ?? 'SOURCE_LOCKED'],
+    canFinalize: !reason, finalizeReasons: reason ? [reason] : [], canCorrect, correctReasons: canCorrect ? [] : ['NOT_AUTHORIZED'],
+  } }
+}
 
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/app/tenant/schedule' })
 globalThis.window = dom.window
@@ -70,13 +88,13 @@ test('AT02 blocks finalization until changed marks are saved and confirmed by th
     const path = String(url)
     const response = (body, status = 200) => new Response(JSON.stringify(body),
       { status, headers: { 'content-type': 'application/json' } })
-    if (path.endsWith(`/attendance/sessions/${session}`) && options.method === 'GET') return response({
+    if (path.endsWith(`/attendance/sessions/${session}`) && options.method === 'GET') return response(withContract({
       sessionId: session, classId: 'class', startsAt, endsAt, status: 'CONFIRMED',
       timeZone: 'Asia/Ho_Chi_Minh', finalized: false,
       participants: [{ id: 'participant', studentId: 'student', name: 'Learner', enrollmentId: 'enrollment',
         attendanceId: 'record', status: persistedStatus, revision, approvedLeave: false,
         billingSourceLocked: false, invoiceIssued: false }],
-    })
+    }))
     if (path.endsWith(`/attendance/sessions/${session}/marks`)) {
       writes.push('mark')
       if (failFirstSave) { failFirstSave = false; return response({ code: 'REVISION_STALE' }, 409) }
@@ -120,7 +138,7 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 35))
 const findButton = label => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === label)
 const participant = (id = 'p1', status = 'ATTENDED') => ({ id, studentId: id, name: `Học viên ${id}`, enrollmentId: `e-${id}`, attendanceId: `a-${id}`, status, revision: 1, approvedLeave: false, billingSourceLocked: false, invoiceIssued: false })
 const fixtureStartsAt = new Date(Date.now() - 4 * 86400000).toISOString(), fixtureEndsAt = new Date(Date.now() - 4 * 86400000 + 3600000).toISOString()
-const sheetValue = (patch = {}) => ({ sessionId: session, classId: 'class', startsAt: fixtureStartsAt, endsAt: fixtureEndsAt, status: 'CONFIRMED', timeZone: 'Asia/Ho_Chi_Minh', finalized: false, participants: [participant()], ...patch })
+const sheetValue = (patch = {}) => withContract({ sessionId: session, classId: 'class', startsAt: fixtureStartsAt, endsAt: fixtureEndsAt, status: 'CONFIRMED', timeZone: 'Asia/Ho_Chi_Minh', finalized: false, participants: [participant()], ...patch })
 async function attendanceCase(handler, run, props = {}) {
   const root = createRoot(document.getElementById('root'))
   responseOverride = handler
@@ -272,12 +290,12 @@ test('AT02 saves a batch sequentially, suppresses double click and reconciles pa
   })
 })
 
-test('AT02 rechecks revisions before finalize and never posts when another actor changed a row', async () => {
+test('AT02 sends the reviewed version and never retries after a server stale-version conflict', async () => {
   let reads = 0
   const writes = []
   await attendanceCase((url, options) => {
     if (String(url).includes('/scheduling/')) return Response.json({ className: 'Toán 8A' })
-    if (options.method !== 'GET') writes.push(url)
+    if (options.method !== 'GET') { writes.push(JSON.parse(options.body)); return Response.json({ code: 'CONFLICT' }, { status: 409 }) }
     const value = sheetValue(); value.participants[0].revision = ++reads
     return Response.json(value)
   }, async () => {
@@ -285,7 +303,10 @@ test('AT02 rechecks revisions before finalize and never posts when another actor
     assert.ok(document.querySelector('dialog[open]'))
     await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
     assert.match(document.body.textContent, /đã thay đổi/)
-    assert.deepEqual(writes, [])
+    assert.equal(writes.length, 1)
+    assert.match(writes[0].expectedSheetVersion, /^av1:[a-f0-9]{64}$/)
+    assert.equal(reads, 1)
+    assert.ok(findButton('Đọc lại kết quả'))
   })
 })
 
@@ -443,7 +464,7 @@ test('AT02 does not claim FINALIZE success from an ACK when the persisted sheet 
   })
 })
 
-test('AT02 rechecks session state, roster, approved leave and billing locks immediately before finalize', async () => {
+test('AT02 reloads changed session/roster/leave/lock data only after explicit stale-conflict recovery', async () => {
   for (const patch of [
     { status: 'CANCELLED' }, { participants: [] },
     { participants: [{ ...participant(), billingSourceLocked: true }] },
@@ -453,13 +474,17 @@ test('AT02 rechecks session state, roster, approved leave and billing locks imme
     let reads = 0; const writes = []
     await attendanceCase((url, options) => {
       if (classReply(url)) return ok({ className: 'Toán 8A' })
-      if (options.method !== 'GET') writes.push(url)
+      if (options.method !== 'GET') { writes.push(url); return Response.json({ code: 'CONFLICT' }, { status: 409 }) }
       return ok(sheetValue(++reads > 1 ? patch : {}))
     }, async () => {
       await act(async () => findButton('Xác nhận đầy đủ').click())
       await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
-      assert.deepEqual(writes, [])
+      assert.equal(writes.length, 1)
       assert.ok(document.querySelector('[role=alert]'))
+      assert.equal(reads, 1)
+      await act(async () => { findButton('Đọc lại kết quả').click(); await pause() })
+      assert.equal(reads, 2)
+      assert.equal(writes.length, 1)
     })
   }
 })
@@ -528,7 +553,7 @@ test('AT02 rejects finalize 401/403/404 without reading the denied roster again'
     }, async () => {
       await act(async () => findButton('Xác nhận đầy đủ').click())
       await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
-      assert.deepEqual(ops, ['GET', 'GET', 'POST'])
+      assert.deepEqual(ops, ['GET', 'POST'])
       assert.doesNotMatch(document.body.textContent, /Học viên p1/)
       assert.equal(findButton('Xác nhận đầy đủ'), undefined)
     })
@@ -580,4 +605,123 @@ test('AT02 same-session query navigation applies read-only mode and clears the e
       assert.deepEqual(writes, [])
     })
   } finally { window.history.replaceState(null, '', original) }
+})
+
+test('AT02 capability/version parsing fails closed while preserving authorized visible data', async () => {
+  for (const mutate of [
+    s => { delete s.capabilities }, s => { delete s.sheetVersion },
+    s => { s.sheetVersion = 'av2:' + '0'.repeat(64) }, s => { s.capabilities.protocolVersion = 2 },
+    s => { s.capabilities.evaluatedAt = 'invalid' }, s => { s.capabilities.canMark = 'true' },
+    s => { s.capabilities = {} }, s => { s.capabilities.finalizeReasons = null },
+    s => { s.capabilities.markReasons = 'NOT_AUTHORIZED' },
+    s => { delete s.participants[0].capabilities }, s => { s.participants[0].capabilities.markReasons = ['UNKNOWN'] },
+  ]) {
+    const sheet = sheetValue(), writes = []; mutate(sheet)
+    await attendanceCase((url, options) => {
+      if (options.method !== 'GET') writes.push(url)
+      return ok(classReply(url) ? { className: 'Toán 8A' } : sheet)
+    }, async () => {
+      assert.match(document.body.textContent, /Học viên p1/)
+      assert.match(document.body.textContent, /Chưa xác minh được phiên bản quyền thao tác/)
+      assert.ok(document.querySelector('select').disabled)
+      assert.ok(findButton('Lưu nháp').disabled)
+      assert.ok(findButton('Xác nhận đầy đủ').disabled)
+      assert.deepEqual(writes, [])
+    })
+  }
+})
+
+test('AT02 per-row denial cannot inherit another row capability and never sends a forbidden choice', async () => {
+  const writes = [], sheet = sheetValue({ participants: [participant('p1', null), { ...participant('p2', null),
+    capabilities: { canMark: false, markReasons: ['NOT_AUTHORIZED'], canCorrect: false, correctReasons: ['NOT_AUTHORIZED'] } }] })
+  await attendanceCase((url, options) => {
+    if (options.method !== 'GET') writes.push(JSON.parse(options.body))
+    return ok(classReply(url) ? { className: 'Toán 8A' } : sheet)
+  }, async () => {
+    const selects = document.querySelectorAll('select')
+    assert.equal(selects[0].disabled, false); assert.equal(selects[1].disabled, true)
+    await chooseStatus('p1'); await chooseStatus('p2')
+    await act(async () => { findButton('Lưu nháp').click(); await pause() })
+    assert.deepEqual(writes, [])
+    assert.match(document.querySelector('[role=alert]').textContent, /chưa được cấp quyền/)
+  })
+})
+
+test('AT02 finalize-only server capability enables review without enabling MARK', async () => {
+  const sheet = sheetValue(), writes = []
+  sheet.participants[0].capabilities = { canMark: false, markReasons: ['NOT_AUTHORIZED'], canCorrect: false, correctReasons: ['NOT_AUTHORIZED'] }
+  sheet.capabilities = { ...sheet.capabilities, canMark: false, markReasons: ['NOT_AUTHORIZED'], canFinalize: true, finalizeReasons: [] }
+  await attendanceCase((url, options) => {
+    if (options.method !== 'GET') { writes.push(JSON.parse(options.body)); return ok({ id: 'final', status: 'FINALIZED' }) }
+    return ok(classReply(url) ? { className: 'Toán 8A' } : sheet)
+  }, async () => {
+    assert.ok(document.querySelector('select').disabled)
+    assert.ok(findButton('Lưu nháp').disabled)
+    assert.equal(findButton('Xác nhận đầy đủ').disabled, false)
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    assert.match(document.querySelector('dialog').textContent, /Học viên p1.*Có mặt/)
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0].expectedSheetVersion, sheet.sheetVersion)
+  })
+})
+
+test('AT02 explicit reload closes the old review and requires a new review before finalizing', async () => {
+  let sheet = sheetValue(); const writes = []
+  await attendanceCase((url, options) => {
+    if (options.method !== 'GET') writes.push(JSON.parse(options.body))
+    return ok(classReply(url) ? { className: 'Toán 8A' } : sheet)
+  }, async () => {
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    sheet = sheetValue({ participants: [{ ...participant('p1', 'UNEXCUSED'), revision: 2 }] })
+    await act(async () => { findButton('Đọc lại quyền thao tác').click(); await pause() })
+    assert.equal(document.querySelector('dialog'), null)
+    assert.deepEqual(writes, [])
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    assert.match(document.querySelector('dialog').textContent, /Vắng không phép/)
+    assert.equal(findButton('Xác nhận điểm danh').disabled, false)
+  })
+})
+
+test('AT02 stale409 requires explicit reload and new review, never silently adopts a fresh token', async () => {
+  let sheet = sheetValue(), first = true; const writes = [], seenVersions = []
+  await attendanceCase((url, options) => {
+    if (classReply(url)) return ok({ className: 'Toán 8A' })
+    if (options.method === 'POST') {
+      const body = JSON.parse(options.body); writes.push(body)
+      if (first) { first = false; sheet = sheetValue({ participants: [{ ...participant('p1', 'UNEXCUSED'), revision: 2 }] }); return Response.json({ code: 'CONFLICT' }, { status: 409 }) }
+      sheet = sheetValue({ ...sheet, finalized: true, capabilities: undefined, sheetVersion: undefined,
+        participants: sheet.participants.map(p => ({ ...p, capabilities: undefined })) })
+      return ok({ id: 'final', status: 'FINALIZED' })
+    }
+    seenVersions.push(sheet.sheetVersion); return ok(sheet)
+  }, async () => {
+    const reviewed = sheet.sheetVersion
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.equal(document.querySelector('dialog'), null)
+    assert.match(document.querySelector('[role=alert]').textContent, /Vui lòng tải lại và kiểm tra/)
+    assert.equal(writes.length, 1); assert.equal(writes[0].expectedSheetVersion, reviewed)
+    assert.equal(seenVersions.length, 1)
+    await act(async () => { findButton('Đọc lại kết quả').click(); await pause() })
+    assert.equal(writes.length, 1)
+    await act(async () => findButton('Xác nhận đầy đủ').click())
+    assert.match(document.querySelector('dialog').textContent, /Vắng không phép/)
+    const next = sheet.sheetVersion
+    await act(async () => { findButton('Xác nhận điểm danh').click(); await pause() })
+    assert.equal(writes.length, 2); assert.equal(writes[1].expectedSheetVersion, next); assert.notEqual(next, reviewed)
+    assert.match(document.body.textContent, /Kết quả đã xác nhận trên máy chủ/)
+  })
+})
+
+test('AT02 server waiting-window reason remains disabled until a fresh GET confirms eligibility', async () => {
+  const sheet = sheetValue()
+  sheet.participants[0].capabilities = { canMark: false, markReasons: ['STAFF_WINDOW_NOT_REACHED'], canCorrect: false, correctReasons: ['NO_RECORD_TO_CORRECT'] }
+  sheet.capabilities = { ...sheet.capabilities, canMark: false, markReasons: ['STAFF_WINDOW_NOT_REACHED'], canFinalize: false, finalizeReasons: ['STAFF_WINDOW_NOT_REACHED'], canCorrect: false }
+  await attendanceCase(url => ok(classReply(url) ? { className: 'Toán 8A' } : sheet), async () => {
+    assert.match(document.body.textContent, /48 giờ sau khi buổi học kết thúc/)
+    assert.ok(document.querySelector('select').disabled)
+    assert.ok(findButton('Xác nhận đầy đủ').disabled)
+    assert.ok(findButton('Đọc lại quyền thao tác'))
+  })
 })

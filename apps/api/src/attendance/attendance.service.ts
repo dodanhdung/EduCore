@@ -25,11 +25,13 @@ export class AttendanceService {
       revision,
     });
   }
-  finalize(tenant: string, sessionId: string, input: R3Intent) {
+  finalize(tenant: string, sessionId: string, expectedSheetVersion: string, input: R3Intent) {
+    if (!/^av1:[0-9a-f]{64}$/.test(expectedSheetVersion)) throw new Error('INVALID_SHEET_VERSION');
     return this.repository.command('attendance', tenant, {
       ...intent(input),
       operation: 'FINALIZE',
       sessionId,
+      expectedSheetVersion,
     });
   }
   correct(

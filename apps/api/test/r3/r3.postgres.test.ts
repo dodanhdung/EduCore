@@ -724,8 +724,17 @@ async function finalized(c: Context) {
     0,
     intent(),
   );
-  await c.attendance.finalize(c.f.tenant, c.f.session, intent());
+  await c.attendance.finalize(c.f.tenant, c.f.session, await reviewVersion(c), intent());
   return ar;
+}
+async function reviewVersion(c: Context) {
+  const [available] = await admin.unsafe("SELECT to_regprocedure('educore_r3.attendance_review_version(uuid,uuid)') IS NOT NULL ready");
+  // The existing upgrade test deliberately starts at recorded checkpoint007.
+  // That historical SQL has no reviewed-version protocol. Final deployed SQL
+  // always computes a real version; production has no compatibility fallback.
+  if (!available.ready) return 'av1:' + '0'.repeat(64);
+  const [row] = await admin.unsafe('SELECT educore_r3.attendance_review_version($1::uuid,$2::uuid) version', [c.f.tenant, c.f.session]);
+  return row.version as string;
 }
 async function command(
   q: Query,
@@ -2318,7 +2327,7 @@ describe('R3-C Attendance and leave', () => {
     async () => {
       const c = await historical();
       await expect(
-        c.attendance.finalize(c.f.tenant, c.f.session, intent()),
+        c.attendance.finalize(c.f.tenant, c.f.session, await reviewVersion(c), intent()),
       ).rejects.toThrow();
       await expect(
         c.attendance.mark(
@@ -2411,7 +2420,7 @@ describe('R3-C Attendance and leave', () => {
         [teacher.f.membershipRole],
       );
       await expect(
-        teacher.attendance.finalize(c.f.tenant, c.f.session, intent()),
+        teacher.attendance.finalize(c.f.tenant, c.f.session, await reviewVersion(c), intent()),
       ).rejects.toThrow();
     },
   );
@@ -2420,7 +2429,7 @@ describe('R3-C Attendance and leave', () => {
     // A one-hour session ends 47h ago: role/permission alone is insufficient.
     await expect(recent.attendance.mark(recent.f.tenant, recent.f.session, recent.f.participant, 'ATTENDED', 0, intent()))
       .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED/);
-    await expect(recent.attendance.finalize(recent.f.tenant, recent.f.session, intent()))
+    await expect(recent.attendance.finalize(recent.f.tenant, recent.f.session, await reviewVersion(recent), intent()))
       .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED/);
     expect((await admin.unsafe('SELECT count(*)::int n FROM attendance_records WHERE tenant_id=$1', [recent.f.tenant]))[0].n).toBe(0);
 
@@ -2429,9 +2438,10 @@ describe('R3-C Attendance and leave', () => {
     const marked = await overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'ATTENDED', 0, markIntent);
     expect(await overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'ATTENDED', 0, markIntent)).toEqual(marked);
     expect(marked.revision).toBe(1);
-    const finalizedResult = await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, finalizeIntent);
+    const overdueVersion = await reviewVersion(overdue);
+    const finalizedResult = await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, overdueVersion, finalizeIntent);
     expect(finalizedResult.status).toBe('FINALIZED');
-    expect(await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, finalizeIntent)).toEqual(finalizedResult);
+    expect(await overdue.attendance.finalize(overdue.f.tenant, overdue.f.session, overdueVersion, finalizeIntent)).toEqual(finalizedResult);
     expect((await admin.unsafe('SELECT count(*)::int n FROM attendance_finalizations WHERE session_id=$1', [overdue.f.session]))[0].n).toBe(1);
     await expect(overdue.attendance.mark(overdue.f.tenant, overdue.f.session, overdue.f.participant, 'UNEXCUSED', 1, intent()))
       .rejects.toThrow(/ASSIGNED_TEACHER_OR_OVERDUE_STAFF_REQUIRED|ALREADY_FINALIZED/);
@@ -2448,10 +2458,34 @@ describe('R3-C Attendance and leave', () => {
     const period = await billingPeriod(c);
     await c.generation.initial(c.f.tenant, c.f.student, period, intent());
     const before = await sourceAndFinance(c);
+    const [source] = await admin.unsafe('SELECT count(*)::int n FROM invoice_lines WHERE tenant_id=$1 AND participant_id=$2', [c.f.tenant,c.f.participant]);
+    expect(source.n).toBeGreaterThan(0);
     await expect(c.attendance.mark(c.f.tenant, c.f.session, c.f.participant, 'UNEXCUSED', 1, intent())).rejects.toThrow();
     await expect(c.attendance.correct(c.f.tenant, (await admin.unsafe('SELECT id FROM attendance_records WHERE participant_id=$1', [c.f.participant]))[0].id, 'UNEXCUSED', 1, intent()))
       .rejects.toThrow(/BILLED_SOURCE_REQUIRES_FINANCIAL_CORRECTION_PATH/);
     expect(await sourceAndFinance(c)).toEqual(before);
+  });
+
+  native('R13 concurrent MARK and versioned FINALIZE serialize in both writer orders without lost updates', async () => {
+    for (const markFirst of [true, false]) {
+      const c = await historical(new Date(Date.now() - 2 * 3_600_000).toISOString());
+      const teacher = await actor(c, 'TEACHER');
+      await admin.unsafe('UPDATE teacher_profiles SET membership_id=$2 WHERE id=$1', [c.f.teacher,teacher.f.member]);
+      await teacher.attendance.mark(c.f.tenant,c.f.session,c.f.participant,'ATTENDED',0,intent());
+      const expectedSheetVersion = await reviewVersion(c);
+      const mark = (q: Query) => command(q,teacher,'attendance',{...intent(),operation:'MARK',sessionId:c.f.session,participantId:c.f.participant,status:'UNEXCUSED',revision:1});
+      const finalize = (q: Query) => command(q,teacher,'attendance',{...intent(),operation:'FINALIZE',sessionId:c.f.session,expectedSheetVersion});
+      const outcome = await race(teacher, markFirst ? 'R13 MARK wins before FINALIZE' : 'R13 FINALIZE wins before MARK', markFirst ? mark : finalize, markFirst ? finalize : mark);
+      expect(outcome.code).toBe(markFirst ? 'P1301' : '23514');
+      const [row] = await admin.unsafe(`SELECT a.attendance_status,a.revision,a.finalization_id,
+        (SELECT count(*)::int FROM attendance_finalizations WHERE session_id=$1) finalizations,
+        (SELECT count(*)::int FROM audit_logs WHERE tenant_id=$2 AND event_type='R3:FINALIZE') audits,
+        (SELECT count(*)::int FROM idempotency_records WHERE tenant_id=$2 AND operation_type='R3:FINALIZE') receipts
+        FROM attendance_records a WHERE a.session_id=$1`,[c.f.session,c.f.tenant]);
+      expect(row).toMatchObject(markFirst ? {attendance_status:'UNEXCUSED',revision:2,finalization_id:null,finalizations:0,audits:0,receipts:0}
+        : {attendance_status:'ATTENDED',revision:1,finalizations:1,audits:1,receipts:1});
+      if (!markFirst) expect(row.finalization_id).toBeTruthy();
+    }
   });
   native(
     'C06 approved leave permits EXCUSED; actual attendance overrides it',
@@ -2490,7 +2524,7 @@ describe('R3-C Attendance and leave', () => {
         intent(),
       );
       expect(actual.id).toBe(ar.id);
-      await c.attendance.finalize(c.f.tenant, c.f.session, intent());
+      await c.attendance.finalize(c.f.tenant, c.f.session, await reviewVersion(c), intent());
     },
   );
 });
@@ -2532,7 +2566,7 @@ describe('R3-D real Billing integration', () => {
           0,
           intent(),
         );
-        await c.attendance.finalize(c.f.tenant, c.f.session, intent());
+        await c.attendance.finalize(c.f.tenant, c.f.session, await reviewVersion(c), intent());
         expect(
           (
             await c.generation.initial(
@@ -2688,6 +2722,7 @@ describe('R3-D observed independent-connection concurrency', () => {
         0,
         intent(),
       );
+      const expectedSheetVersion = await reviewVersion(c);
       const outcome = await race(
         teacher,
         'Teacher permission revoke vs finalize',
@@ -2701,6 +2736,7 @@ describe('R3-D observed independent-connection concurrency', () => {
             ...intent(),
             operation: 'FINALIZE',
             sessionId: c.f.session,
+            expectedSheetVersion,
           }),
         true,
         true,
@@ -3056,6 +3092,7 @@ describe('R3-D observed independent-connection concurrency', () => {
         0,
         intent(),
       );
+      const expectedSheetVersion = await reviewVersion(c);
       const outcome = await race(
         c,
         'finalize vs G2 ISSUE',
@@ -3064,6 +3101,7 @@ describe('R3-D observed independent-connection concurrency', () => {
             ...intent(),
             operation: 'FINALIZE',
             sessionId: c.f.session,
+            expectedSheetVersion,
           }),
         async (q) => {
           const result = await command(q, c, 'billing', {
@@ -3195,11 +3233,13 @@ describe('R3-D observed independent-connection concurrency', () => {
             enrollment_id: enrollment,
             participant_kind: 'REGULAR',
           });
+        const expectedSheetVersion = await reviewVersion(c);
         const finalize = (q: Query) =>
           command(q, c, 'attendance', {
             ...intent(),
             operation: 'FINALIZE',
             sessionId: c.f.session,
+            expectedSheetVersion,
           });
         const outcome = await race(
           c,
@@ -3210,7 +3250,7 @@ describe('R3-D observed independent-connection concurrency', () => {
           rosterFirst,
           !rosterFirst,
         );
-        expect(outcome.code).toBe('23514');
+        expect(outcome.code).toBe(rosterFirst ? 'P1301' : '23514');
       }
     },
   );

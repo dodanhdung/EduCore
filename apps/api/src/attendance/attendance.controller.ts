@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Get, Headers, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from '../identity-access/auth.service.js';
 import { bearer, field, object, uuid } from '../identity-access/http.js';
@@ -59,10 +59,18 @@ export class AttendanceController {
       participantId: uuid(body.participantId), status: status(body.status), revision: revision(body.revision) });
   }
   @Post('sessions/:id/finalize')
-  finalize(@Param('tenantId') t: string, @Param('id') id: string, @Body() input: unknown,
+  async finalize(@Param('tenantId') t: string, @Param('id') id: string, @Body() input: unknown,
     @Headers('authorization') a: string | undefined, @Headers('idempotency-key') key: string | undefined, @Req() req: Request) {
-    noQuery(req); const { reason, key: operationKey } = commandInput(input, ['reason'], key);
-    return this.command(t, a, { operation: 'FINALIZE', key: operationKey, reason, sessionId: uuid(id) });
+    noQuery(req); const { body, reason, key: operationKey } = commandInput(input, ['reason','expectedSheetVersion'], key);
+    const expectedSheetVersion = field(body, 'expectedSheetVersion', 68);
+    if (!/^av1:[0-9a-f]{64}$/.test(expectedSheetVersion)) throw new BadRequestException('INVALID_SHEET_VERSION');
+    try {
+      return await this.command(t, a, { operation: 'FINALIZE', key: operationKey, reason, sessionId: uuid(id), expectedSheetVersion });
+    } catch (cause) {
+      const meta = (cause as { meta?: { code?: string; driverAdapterError?: { cause?: { originalCode?: string } } } }).meta;
+      if ((meta?.code ?? meta?.driverAdapterError?.cause?.originalCode) === 'P1301') throw new ConflictException('CONFLICT');
+      throw cause;
+    }
   }
   @Post('records/:id/correct')
   correct(@Param('tenantId') t: string, @Param('id') id: string, @Body() input: unknown,

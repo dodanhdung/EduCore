@@ -1,5 +1,11 @@
 # EduCore — Class Design: Attendance & Leave
 
+> R13 implementation amendment, approved by owner 04/11/2026: CAP-01 / CON-02 / EMP-03. Existing domain classes remain; no persisted schema column or new permission is introduced. Actual NestJS routes/DTOs superseding earlier design examples are documented in API §3.5.
+>
+> `AttendanceService.finalize(tenant, sessionId, expectedSheetVersion, intent)` and the public HTTP controller both forward the reviewed version. Private PostgreSQL `attendance_review_version` canonicalizes the whole active roster and relevant session/leave/source state. `attendance_reasons` reuses existing command authorization and mirrors domain predicates with parity regression tests; `attendance_sheet_contract` projects sheet/row capabilities and captures one server timestamp. Helpers are SECURITY DEFINER under the existing R3 owner, fixed search_path, no PUBLIC/runtime execute grant; only the read owner receives the projection helper. Existing command/read signatures and their ACLs are retained.
+>
+> FINALIZE: fresh authorization → required version syntax → valid same-body replay → compare canonical version under existing tenant lock → retained business guards plus nonempty active roster → existing finalization/audit/receipt transaction. New stale commands fail 409 without effects; authorized matching-version empty commands fail 422. Capabilities never replace command checks. AT02 freezes reviewed persisted results/token in the confirmation dialog, requires reload and explicit re-review after conflict, and fails closed for unsupported contracts. No claim of Render deployment or live business acceptance is made.
+
 **Trạng thái:** Proposed for review · **Version:** 1.0 · **Ngày:** 12/10/2026 · **Phạm vi:** P0 + P1 (đã thể hiện theo lớp).
 
 **Nguồn:** `requirements_analysis(7).md`, `specification(1).md`, `architectural_design(1).md`, `database_design.md` (Database Design v1.0 vẫn *proposed*). Truy vết: **FR-18–FR-19, FR-26**, **UC-15–UC-16**, **BR-04, BR-08**.

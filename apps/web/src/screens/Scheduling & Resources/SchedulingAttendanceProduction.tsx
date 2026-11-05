@@ -6,6 +6,8 @@ import '../Attendance & Leave/AttendanceScreens.css'
 import { ManagerAttendanceList, ManagerAttendanceSheet } from '../Attendance & Leave/ManagerAttendanceView.tsx'
 import { ResourceState } from '../../shared/ui/SharedUI.tsx'
 import { attendanceViewPath, calendarPath, readCalendarContext, sessionPath, validMonth } from './ScheduleNavigation.ts'
+import { attendanceReasonText, validAttendanceContract } from '../Attendance & Leave/AttendanceContract.ts'
+import type { AttendanceSheet as Sheet } from '../Attendance & Leave/AttendanceContract.ts'
 
 type Id = 'SC01' | 'SC02' | 'SC03' | 'SC05' | 'SC06' | 'AT01' | 'AT02' | 'AT03' | 'AT04'
 type Page<T> = { items: T[]; page: number; pageSize: number; total: number; timeZone: string }
@@ -18,8 +20,6 @@ type Choices = { timeZone: string; classes: Choice[]; teachers: Choice[]; rooms:
   assignments: { classId: string; teacherId: string; validFrom: string; validTo: string | null }[] }
 type Caps = { scheduleCreate: boolean; scheduleConfirm: boolean; scheduleUpdate: boolean; scheduleCancel: boolean; roomManage: boolean; resourceManage: boolean }
 type Due = { id: string; classId: string; className: string; startsAt: string; endsAt: string; teacherName: string; expectedCount: number; finalized: boolean }
-type Participant = { id: string; studentId: string; name: string; enrollmentId: string | null; attendanceId: string | null; status: 'ATTENDED' | 'UNEXCUSED' | 'EXCUSED' | null; revision: number; approvedLeave: boolean; billingSourceLocked: boolean; invoiceIssued: boolean }
-type Sheet = { sessionId: string; classId: string; startsAt: string; endsAt: string; status: string; timeZone: string; finalized: boolean; participants: Participant[] }
 type Leave = { id: string; participantId: string; studentId: string; sessionId: string; reason: string; submittedAt: string;
   late: boolean; status: string; decisionReason: string | null; canDecide: boolean; canApproveLate: boolean }
 type Eligible = { id: string; studentId: string; studentName: string; sessionId: string; startsAt: string; className: string; lateNotice: boolean }
@@ -204,12 +204,14 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
   }
   const saveMarks = async () => {
     if (readOnly) return
-    if (!sheet || marking.current || busy || reconcileRequired || !active.current || !['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized || sheet.participants.some(p => p.billingSourceLocked)) return
+    if (!sheet || marking.current || busy || reconcileRequired || !active.current || !validAttendanceContract(sheet) || sheet.capabilities?.canMark !== true || sheet.finalized) return
     const changes = sheet.participants.flatMap(p => {
       const status = form[`status:${p.id}`]
       return status && status !== p.status ? [{ participant: p, status }] : []
     })
     if (!changes.length) return
+    const denied = changes.find(({ participant }) => participant.capabilities?.canMark !== true)
+    if (denied) { setError(attendanceReasonText(denied.participant.capabilities?.markReasons)); return }
     if (changes.some(({ participant: p, status }) => !['ATTENDED', 'UNEXCUSED', 'EXCUSED'].includes(status) || (status === 'EXCUSED' && !p.approvedLeave))) {
       setError('Chọn kết quả hợp lệ; vắng có phép cần đơn nghỉ đã duyệt.'); return
     }
@@ -263,29 +265,27 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
     if (persisted.sessionId !== displayed.sessionId || persisted.classId !== displayed.classId) throw Error('ATTENDANCE_TARGET_MISMATCH')
   }
   const hasUnsavedMarks = !!sheet && sheet.participants.some((p) => (form[`status:${p.id}`] ?? p.status) !== p.status)
-  const finalize = async () => {
+  const finalize = async (reviewedVersion: string) => {
     if (readOnly) return
     if (marking.current || busy || reconcileRequired || !active.current) return
     if (!sheet || hasUnsavedMarks) { setError('Lưu thay đổi điểm danh trước khi xác nhận.'); return }
-    if (!['CONFIRMED', 'COMPLETED'].includes(sheet.status) || Date.parse(sheet.startsAt) > Date.now() || sheet.finalized || sheet.participants.some(p => p.billingSourceLocked)) return
+    if (!validAttendanceContract(sheet) || sheet.capabilities?.canFinalize !== true || sheet.finalized) return
+    if (sheet.sheetVersion !== reviewedVersion) { setReconcileRequired(true); setError('Dữ liệu điểm danh đã thay đổi. Vui lòng tải lại và kiểm tra trước khi xác nhận.'); return }
     marking.current = true; setBusy(true); setError(''); setNotice('')
     try {
-      const persisted = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
-      if (!active.current) return
-      assertSameSheet(persisted, sheet)
-      const unchanged = persisted.participants.length === sheet.participants.length && persisted.participants.every((p) => {
-        const displayed = sheet.participants.find((row) => row.id === p.id)
-        return displayed && displayed.status === p.status && displayed.revision === p.revision && displayed.approvedLeave === p.approvedLeave && !p.billingSourceLocked
-      })
-      setSheet(persisted)
-      if (!unchanged || persisted.finalized || persisted.status !== sheet.status || persisted.startsAt !== sheet.startsAt || persisted.endsAt !== sheet.endsAt) { setError('Điểm danh đã thay đổi. Kiểm tra lại trước khi xác nhận.'); return }
-      if (!persisted.participants.length || persisted.participants.some((p) => !p.status || (p.status === 'EXCUSED' && !p.approvedLeave))) {
+      if (!sheet.participants.length || sheet.participants.some((p) => !p.status || (p.status === 'EXCUSED' && !p.approvedLeave))) {
         setError('Cần lưu đủ kết quả trước khi xác nhận.'); return
       }
       setReconcileRequired(true)
       let failure: unknown
-      try { await writeAttendance(`/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ' }) }
-      catch (cause) { if (stopAttendanceRead(cause)) return; failure = cause }
+      try { await writeAttendance(`/sessions/${encodeURIComponent(sheet.sessionId)}/finalize`, { reason: 'Xác nhận điểm danh đầy đủ', expectedSheetVersion: reviewedVersion }) }
+      catch (cause) {
+        if (stopAttendanceRead(cause)) return
+        if (cause instanceof ApiError && cause.status === 409) {
+          setError('Dữ liệu điểm danh đã thay đổi. Vui lòng tải lại và kiểm tra trước khi xác nhận.'); return
+        }
+        failure = cause
+      }
       if (!active.current) return
       const result = await req<Sheet>('attendance', `/sessions/${encodeURIComponent(sheet.sessionId)}`)
       if (!active.current) return
@@ -317,11 +317,12 @@ function AttendanceScope({ id, tenantId, token, selectedId, navigate, allowed = 
       onChoose={(participantId, value) => { update(`status:${participantId}`, value); setNotice('') }} onSave={saveMarks} onFinalize={finalize} onBack={returnToSession ? () => go(sessionPath(sheet.sessionId, calendarContext)) : allowed.includes('AT01') ? () => go(`/attendance${validMonth(listMonth) ? `?month=${listMonth}` : ''}`) : undefined}
       onCalendar={allowed.includes('SC01') ? () => go(calendarPath(calendarContext)) : undefined}
       onClass={allowed.includes('AC08') ? () => go(`/classes/${encodeURIComponent(sheet.classId)}`) : undefined}
-      corrections={!readOnly && sheet.finalized && <section className="attendance-card"><h2>Đề nghị điều chỉnh</h2><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>{sheet.participants.filter(p => p.attendanceId).map(p => <details key={p.id}><summary>{p.name}</summary>
+      corrections={!readOnly && validAttendanceContract(sheet) && sheet.finalized && <section className="attendance-card"><h2>Đề nghị điều chỉnh</h2><p>Chỉ người có quyền điều chỉnh mới lưu được. Nguồn đã tính phí sẽ bị chặn.</p>{sheet.participants.filter(p => p.attendanceId).map(p => <details key={p.id}><summary>{p.name}</summary>
+        {!p.capabilities?.canCorrect && <p>{attendanceReasonText(p.capabilities?.correctReasons)}</p>}
         {p.billingSourceLocked && <p>{p.invoiceIssued ? 'Hóa đơn đã phát hành: cần điều chỉnh tài chính riêng.' : 'Nguồn đã dùng trong bản nháp tính phí, điều chỉnh trực tiếp đang khóa.'}</p>}
-        <select aria-label={`Trạng thái mới ${p.name}`} disabled={busy || p.billingSourceLocked} value={form[`correct:${p.id}`] ?? ''} onChange={e => update(`correct:${p.id}`, e.target.value)}>
+        <select aria-label={`Trạng thái mới ${p.name}`} disabled={busy || p.capabilities?.canCorrect !== true} value={form[`correct:${p.id}`] ?? ''} onChange={e => update(`correct:${p.id}`, e.target.value)}>
           <option value="">Chọn kết quả</option><option value="ATTENDED">Có mặt</option><option value="UNEXCUSED">Vắng không phép</option><option value="EXCUSED" disabled={!p.approvedLeave}>Vắng có phép</option></select>
-        {input(`reason:${p.id}`, 'Lý do điều chỉnh')}{action('Gửi điều chỉnh', () => { void command('attendance', `/records/${p.attendanceId}/correct`, { status: form[`correct:${p.id}`], revision: p.revision, reason: form[`reason:${p.id}`] }) }, p.billingSourceLocked || !form[`correct:${p.id}`] || !form[`reason:${p.id}`]?.trim())}</details>)}</section>} />
+        {input(`reason:${p.id}`, 'Lý do điều chỉnh')}{action('Gửi điều chỉnh', () => { if (p.capabilities?.canCorrect === true) void command('attendance', `/records/${p.attendanceId}/correct`, { status: form[`correct:${p.id}`], revision: p.revision, reason: form[`reason:${p.id}`] }) }, p.capabilities?.canCorrect !== true || !form[`correct:${p.id}`] || !form[`reason:${p.id}`]?.trim())}</details>)}</section>} />
   }
   return <section className="scheduling-page attendance-page">
     <h1>{({ SC01: 'Lịch học trung tâm', SC02: 'Phòng học và lịch bận', SC03: 'Tạo lịch học', SC05: 'Chi tiết buổi học', SC06: 'Lịch cá nhân',

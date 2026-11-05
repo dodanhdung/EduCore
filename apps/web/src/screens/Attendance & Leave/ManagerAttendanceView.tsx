@@ -3,10 +3,11 @@ import type { ReactNode } from 'react'
 import { DataTable, MetricCard, PageHeader, PageLayout, ResourceState, StatusBadge } from '../../shared/ui/SharedUI.tsx'
 import { formatInstant } from '../Scheduling & Resources/SchedulingDates.ts'
 import './ManagerAttendanceView.css'
+import { attendanceReasonText, validAttendanceContract } from './AttendanceContract.ts'
+import type { AttendanceSheet, SheetParticipant } from './AttendanceContract.ts'
+export type { AttendanceSheet, SheetParticipant } from './AttendanceContract.ts'
 
 export type DueSession = { id: string; classId: string; className: string; startsAt: string; endsAt: string; teacherName: string; expectedCount: number; finalized: boolean }
-export type SheetParticipant = { id: string; studentId: string; name: string; enrollmentId: string | null; attendanceId: string | null; status: 'ATTENDED' | 'UNEXCUSED' | 'EXCUSED' | null; revision: number; approvedLeave: boolean; billingSourceLocked: boolean; invoiceIssued: boolean }
-export type AttendanceSheet = { sessionId: string; classId: string; startsAt: string; endsAt: string; status: string; timeZone: string; finalized: boolean; participants: SheetParticipant[] }
 type Result = NonNullable<SheetParticipant['status']>
 const labels: Record<Result, string> = { ATTENDED: 'Có mặt', UNEXCUSED: 'Vắng không phép', EXCUSED: 'Vắng có phép' }
 
@@ -27,15 +28,14 @@ export function ManagerAttendanceList({ sessions, zone, month, onMonth, onOpen }
 
 export function ManagerAttendanceSheet({ sheet, className, busy, values, hasUnsaved, notice, error, onChoose, onSave, onFinalize, onBack, onClass, onCalendar, backLabel = 'Về danh sách', readOnly = false, reconcileRequired = false, onReload, corrections }: {
   sheet: AttendanceSheet; className?: string; busy: boolean; values: Record<string, string>; hasUnsaved: boolean; notice: string; error: string;
-  onChoose: (id: string, value: Result) => void; onSave: () => Promise<void>; onFinalize: () => Promise<void>; onBack?: () => void; onClass?: () => void; onCalendar?: () => void; backLabel?: string; readOnly?: boolean
+  onChoose: (id: string, value: Result) => void; onSave: () => Promise<void>; onFinalize: (reviewedVersion: string) => Promise<void>; onBack?: () => void; onClass?: () => void; onCalendar?: () => void; backLabel?: string; readOnly?: boolean
   reconcileRequired?: boolean; onReload?: () => void; corrections?: ReactNode
 }) {
-  const [confirm, setConfirm] = useState(false)
-  const [now] = useState(() => Date.now())
+  const [review, setReview] = useState<{ version: string; participants: SheetParticipant[] } | null>(null)
   const dialog = useRef<HTMLDialogElement | null>(null)
   const trigger = useRef<HTMLButtonElement | null>(null)
-  useEffect(() => { if (confirm) { dialog.current?.showModal(); dialog.current?.querySelector<HTMLButtonElement>('button')?.focus() } }, [confirm])
-  function close() { if (busy) return; dialog.current?.close(); setConfirm(false); trigger.current?.focus() }
+  useEffect(() => { if (review) { dialog.current?.showModal(); dialog.current?.querySelector<HTMLButtonElement>('button')?.focus() } }, [review])
+  function close() { if (busy) return; dialog.current?.close(); setReview(null); trigger.current?.focus() }
   function leave(callback: () => void) { if (!busy && (!hasUnsaved || window.confirm('Có kết quả chưa lưu. Rời bảng điểm danh và bỏ các lựa chọn này?'))) callback() }
   useEffect(() => {
     if (!hasUnsaved) return
@@ -43,14 +43,17 @@ export function ManagerAttendanceSheet({ sheet, className, busy, values, hasUnsa
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [hasUnsaved])
-  const eligible = ['CONFIRMED', 'COMPLETED'].includes(sheet.status) && Date.parse(sheet.startsAt) <= now
+  const protocolReady = validAttendanceContract(sheet)
+  const eligible = !protocolReady || !sheet.capabilities!.finalizeReasons.some(r => ['SESSION_NOT_ELIGIBLE', 'SESSION_NOT_STARTED'].includes(r))
   const locked = sheet.participants.some(p => p.billingSourceLocked)
-  const editable = !readOnly && eligible && !locked && !sheet.finalized && !reconcileRequired
+  const actionReady = protocolReady && !readOnly && !sheet.finalized && !reconcileRequired
+  const editable = actionReady && sheet.capabilities?.canMark === true
   const current = (p: SheetParticipant) => values[`status:${p.id}`] ?? p.status
   const marked = sheet.participants.filter(p => current(p)).length
   const persisted = sheet.participants.filter(p => p.status).length
   const lockAt = new Date(Date.parse(sheet.endsAt) + 48 * 3600000).toISOString()
-  const canFinalize = editable && !busy && !hasUnsaved && sheet.participants.length > 0 && persisted === sheet.participants.length
+  const canFinalize = actionReady && sheet.capabilities?.canFinalize === true && !busy && !hasUnsaved && sheet.participants.length > 0 && persisted === sheet.participants.length
+  const reviewCurrent = !!review && review.version === sheet.sheetVersion
   return <div className="manager-attendance" data-screen-id="AT02"><PageLayout header={<PageHeader title={className ? `Điểm danh · ${className}` : 'Bảng điểm danh buổi học'} description={`${formatInstant(sheet.startsAt, sheet.timeZone)} – ${formatInstant(sheet.endsAt, sheet.timeZone)} · ${sheet.timeZone}`}
     action={onBack && <button type="button" className="attendance-secondary" disabled={busy} onClick={() => leave(onBack)}>{backLabel}</button>} context={<>{onClass && <button type="button" className="attendance-link" disabled={busy} onClick={() => leave(onClass)}>← Chi tiết lớp học</button>}{onCalendar && <button type="button" className="attendance-link" disabled={busy} onClick={() => leave(onCalendar)}>← Lịch trung tâm</button>}</>} />} feedback={<>
       {notice && <p role="status" className="attendance-callout">{notice}</p>}{error && <p role="alert" className="attendance-error">{error}</p>}
@@ -59,8 +62,14 @@ export function ManagerAttendanceSheet({ sheet, className, busy, values, hasUnsa
     <div className="attendance-meta"><StatusBadge domain="attendance" label={sheet.finalized ? 'Đã xác nhận' : 'Chưa xác nhận'} tone={sheet.finalized ? 'success' : 'warning'} />
       <span>Mốc khóa sửa thường: {formatInstant(lockAt, sheet.timeZone)} hoặc khi phát hành hóa đơn.</span></div>
     {readOnly && <p className="attendance-callout" role="status">Chế độ xem · Quyền xem bảng điểm danh không đồng nghĩa quyền lưu hoặc xác nhận kết quả.</p>}
+    {!protocolReady && <div className="attendance-callout" role="status">Chưa xác minh được phiên bản quyền thao tác của hệ thống. Bạn vẫn có thể xem dữ liệu; các thao tác ghi đang khóa. {onReload && <button type="button" className="attendance-secondary" disabled={busy} onClick={onReload}>Đọc lại dữ liệu</button>}</div>}
+    {protocolReady && !readOnly && !sheet.finalized && <div className="attendance-callout" role="status">
+      {!sheet.capabilities?.canMark && <p>Lưu nháp: {attendanceReasonText(sheet.capabilities?.markReasons)}</p>}
+      {!sheet.capabilities?.canFinalize && <p>Xác nhận: {attendanceReasonText(sheet.capabilities?.finalizeReasons)}</p>}
+      {onReload && <button type="button" className="attendance-secondary" disabled={busy} onClick={onReload}>Đọc lại quyền thao tác</button>}
+    </div>}
     {!eligible && <ResourceState kind="unavailable" title="Buổi học chưa đủ điều kiện điểm danh" detail="Chỉ thao tác khi buổi đã bắt đầu và lịch đã xác nhận. Máy chủ kiểm tra quyền và điều kiện ở mỗi lần lưu." />}
-    {locked && <ResourceState kind="unavailable" title="Nguồn điểm danh đã được tính phí" detail="Không sửa nguồn trực tiếp; cần quy trình điều chỉnh được cấp quyền." />}
+    {locked && <ResourceState kind="unavailable" title="Có nguồn điểm danh đã được tính phí" detail="Các dòng đã khóa cần quy trình điều chỉnh được cấp quyền. Khả năng thao tác từng học viên do máy chủ xác nhận." />}
     {sheet.finalized && <p className="attendance-callout">Kết quả đã xác nhận trên máy chủ. Bảng hiện ở chế độ xem.</p>}
     <div className="manager-attendance-metrics"><MetricCard label="Học viên trong buổi" value={{ kind: 'available', display: String(sheet.participants.length) }} />
       <MetricCard label={readOnly ? 'Đã có kết quả' : 'Đã chọn kết quả'} value={{ kind: 'available', display: `${marked}/${sheet.participants.length}` }} detail={hasUnsaved ? 'Có lựa chọn chưa lưu' : 'Khớp dữ liệu vừa đọc từ máy chủ'} />
@@ -70,21 +79,24 @@ export function ManagerAttendanceSheet({ sheet, className, busy, values, hasUnsa
         { key: 'name', header: 'Họ và tên', cell: p => <strong>{p.name}</strong> },
         { key: 'leave', header: 'Đơn nghỉ', cell: p => p.approvedLeave ? <StatusBadge label="Đã duyệt nghỉ" domain="leave" tone="info" /> : <span>Chưa có đơn được duyệt</span> },
         { key: 'result', header: 'Kết quả điểm danh', cell: p => sheet.finalized || readOnly ? <StatusBadge label={p.status ? labels[p.status] : 'Chưa có kết quả'} domain="attendance-result" tone={p.status === 'ATTENDED' ? 'success' : 'neutral'} />
-          : <label className="attendance-field"><span className="manager-attendance-sr">Điểm danh {p.name}</span><select aria-label={`Điểm danh ${p.name}`} disabled={!editable || busy} value={current(p) ?? ''} onChange={e => onChoose(p.id, e.target.value as Result)}>
-            <option value="" disabled>Chọn kết quả</option>{(Object.entries(labels) as [Result, string][]).map(([value, text]) => <option key={value} value={value} disabled={value === 'EXCUSED' && !p.approvedLeave}>{text}</option>)}</select></label> },
+          : <label className="attendance-field"><span className="manager-attendance-sr">Điểm danh {p.name}</span><select aria-label={`Điểm danh ${p.name}`} disabled={!editable || busy || p.capabilities?.canMark !== true} value={current(p) ?? ''} onChange={e => onChoose(p.id, e.target.value as Result)}>
+            <option value="" disabled>Chọn kết quả</option>{(Object.entries(labels) as [Result, string][]).map(([value, text]) => <option key={value} value={value} disabled={value === 'EXCUSED' && !p.approvedLeave}>{text}</option>)}</select>
+            {protocolReady && !p.capabilities?.canMark && <small>{attendanceReasonText(p.capabilities?.markReasons)}</small>}</label> },
       ]} empty={<ResourceState kind="empty" title="Danh sách tham gia trống" detail="Không thể xác nhận khi chưa có học viên hợp lệ trong buổi." />} />
     </section>
     {!sheet.finalized && !readOnly && <div className="attendance-actions manager-attendance-actions"><button type="button" disabled={busy || !editable || !hasUnsaved || !sheet.participants.length} onClick={() => { void onSave() }}>{busy ? 'Đang xử lý…' : 'Lưu nháp'}</button>
-      <button ref={trigger} type="button" className="attendance-primary" disabled={!canFinalize} onClick={() => setConfirm(true)}>Xác nhận đầy đủ</button></div>}
+      <button ref={trigger} type="button" className="attendance-primary" disabled={!canFinalize} onClick={() => setReview({ version: sheet.sheetVersion!, participants: sheet.participants.map(p => ({ ...p })) })}>Xác nhận đầy đủ</button></div>}
     {corrections}
-    {confirm && <dialog ref={dialog} className="manager-attendance-confirm" aria-labelledby="manager-attendance-confirm-title" onCancel={event => { event.preventDefault(); close() }} onKeyDown={event => {
+    {review && <dialog ref={dialog} className="manager-attendance-confirm" aria-labelledby="manager-attendance-confirm-title" onCancel={event => { event.preventDefault(); close() }} onKeyDown={event => {
       if (event.key !== 'Tab') return
       const buttons = [...(dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
       if (!buttons.length) { event.preventDefault(); return }
       const first = buttons[0], last = buttons[buttons.length - 1]
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }}><h2 id="manager-attendance-confirm-title">Xác nhận toàn bộ điểm danh?</h2><p>{persisted}/{sheet.participants.length} học viên đã lưu. Kết quả xác nhận sẽ là nguồn nghiệp vụ; máy chủ kiểm tra lại dữ liệu và quyền trước khi chốt.</p>
-      <div className="attendance-actions"><button type="button" disabled={busy} onClick={close}>Kiểm tra lại</button><button type="button" className="attendance-primary" disabled={!canFinalize} onClick={() => { dialog.current?.close(); setConfirm(false); void onFinalize() }}>Xác nhận điểm danh</button></div></dialog>}
+    }}><h2 id="manager-attendance-confirm-title">Xác nhận toàn bộ điểm danh?</h2><p>{review.participants.length} học viên đã lưu. Kiểm tra kết quả dưới đây; máy chủ chỉ chốt đúng phiên bản này.</p>
+      <ul>{review.participants.map(p => <li key={p.id}>{p.name}: <strong>{p.status ? labels[p.status] : 'Chưa có kết quả'}</strong></li>)}</ul>
+      {!reviewCurrent && <p role="alert">Dữ liệu đã thay đổi. Đóng bảng xác nhận và kiểm tra lại kết quả.</p>}
+      <div className="attendance-actions"><button type="button" disabled={busy} onClick={close}>Kiểm tra lại</button><button type="button" className="attendance-primary" disabled={!canFinalize || !reviewCurrent} onClick={() => { const version = review.version; dialog.current?.close(); setReview(null); void onFinalize(version) }}>Xác nhận điểm danh</button></div></dialog>}
   </PageLayout></div>
 }
