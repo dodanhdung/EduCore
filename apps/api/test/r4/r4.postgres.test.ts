@@ -51,6 +51,7 @@ import { registerOtpDiagnostic } from './otp-diagnostic.cases.js';
 import { registerB0BrowserTests } from './b0-browser.cases.js';
 import { registerB1Rehearsal } from './b1-rehearsal.cases.js';
 import { registerClassLifecycleTests } from './class-lifecycle.cases.js';
+import { registerClassActivationCharacterization } from './class-activation-characterization.cases.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
@@ -142,6 +143,8 @@ registerB0BrowserTests({ admin: () => admin, repository: () => repository, app: 
 registerB1Rehearsal({ admin: () => admin, app: () => app, operatorUrl: () => operatorConnection,
   activationCode: address => delivery.messages.findLast(message => message.email === address && message.purpose === 'ACTIVATION')?.otp });
 registerClassLifecycleTests({ admin: () => admin, repository: () => repository, app: () => app,
+  apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor, password: () => password });
+registerClassActivationCharacterization({ admin: () => admin, repository: () => repository, app: () => app,
   apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor, password: () => password });
 const connect = (url: string) => {
   const q = postgres(url, {
