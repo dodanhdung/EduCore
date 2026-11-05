@@ -73,6 +73,17 @@ test('PO04 từ chối ID ngoài scope, không lộ nháp điểm và không có
   const html = renderToStaticMarkup(React.createElement(ChildLearningScreen, { ...props, studentId: 'student-minh-anh' }))
   assert.doesNotMatch(html, /Cần bổ sung bước giải|Chấm bài|Sửa điểm/)
 })
+test('PO04 danh sách lớp ACTIVE rỗng không khẳng định học sinh không có enrollment ACTIVE', () => {
+  const empty = { ...data, activeClasses: { ...data.activeClasses, 'student-minh-anh': [] } }
+  const html = renderToStaticMarkup(React.createElement(ChildLearningScreen, { ...props, data: empty, studentId: 'student-minh-anh' }))
+  assert.match(html, /Chưa có lớp đang hoạt động trong phạm vi được cấp/)
+  assert.doesNotMatch(html, /Chưa có ghi danh đang hoạt động/)
+  const forbidden = renderToStaticMarkup(React.createElement(ChildLearningScreen, {
+    ...props, data: { ...empty, availability: { ...empty.availability, schedule: false } }, studentId: 'student-minh-anh',
+  }))
+  assert.match(forbidden, /Chưa có quyền xem lớp học/)
+  assert.doesNotMatch(forbidden, /trong phạm vi được cấp/)
+})
 test('PO04 tab bài tập chỉ hiện điểm đã công bố trên cùng React root', async () => {
   const view = mount(ChildLearningScreen, { ...props, studentId: 'student-minh-anh' })
   try { await view.render(); const tab = [...view.document.querySelectorAll('[role=tab]')].find((item) => item.textContent.includes('Bài tập'))
