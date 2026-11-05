@@ -200,7 +200,7 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
         const destination = resolve(configured);
         if (!/^[a-z0-9-]{1,80}$/i.test(label) || !destination.startsWith(localRoot + sep)) throw Error('UNSAFE_SCREENSHOT_TARGET');
         const safe = await evaluate<boolean>(`location.origin === ${JSON.stringify(origin)} && !location.search
-          && (location.pathname.startsWith('/app/') || (['/activate-account','/login'].includes(location.pathname)
+          && (location.pathname.startsWith('/app/') || (['/activate-account','/login','/select-tenant'].includes(location.pathname)
             && !Array.from(document.querySelectorAll('input')).some(x => x.value)))
           && !Array.from(document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete="new-password"],input[autocomplete="current-password"]')).some(x => x.value)`);
         if (!safe) throw Error('UNSAFE_SCREENSHOT_STATE');
