@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Headers, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Headers, HttpCode, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from '../identity-access/auth.service.js';
 import { bearer, field, object, uuid } from '../identity-access/http.js';
@@ -39,6 +39,27 @@ function profile(kind: string, input: unknown, creating: boolean) {
 @UseGuards(SessionGuard)
 export class AcademicProfileController {
   constructor(@Inject(AuthService) private readonly auth: AuthService) {}
+
+  /** Link-only candidate: eligibility, fresh permissions, CAS and receipt are
+   * enforced atomically by the existing restricted PostgreSQL command boundary. */
+  @Post(':kind/:id/membership-link')
+  @HttpCode(200)
+  linkMembership(@Param('tenantId') tenantId: string, @Param('kind') kind: string,
+    @Param('id') id: string, @Body() input: unknown,
+    @Headers('idempotency-key') key: string | undefined,
+    @Headers('authorization') authorization: string | undefined, @Req() req: Request) {
+    if (Object.keys(req.query).length || !['teachers', 'students'].includes(kind)
+      || typeof key !== 'string' || !key.trim() || key.length > 200)
+      throw new BadRequestException('INVALID_INPUT');
+    const body = object(input, ['membershipId', 'expectedMembershipId', 'reason', 'confirmed']);
+    if (body.expectedMembershipId !== null || body.confirmed !== true)
+      throw new BadRequestException('INVALID_INPUT');
+    const command = { membershipId: uuid(body.membershipId), expectedMembershipId: null,
+      reason: field(body, 'reason', 2000), confirmed: true, key };
+    return this.auth.repository.transaction(bearer(authorization), (tx) =>
+      result(tx, 'SELECT educore_r4.profile_membership_link($1::uuid,$2::text,$3::uuid,$4::jsonb) result',
+        uuid(tenantId), kind === 'teachers' ? 'TEACHER' : 'STUDENT', uuid(id), JSON.stringify(command)));
+  }
 
   @Post(':kind')
   create(@Param('tenantId') tenantId: string, @Param('kind') kind: string,

@@ -46,6 +46,9 @@ import { decryptRecovery, parseRecoveryKey } from '../../src/identity-access/rec
 import { encryptRecovery } from '../../src/identity-access/recovery-envelope.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../src/generated/prisma/client.js';
+import { registerProfileLinkTests } from './profile-link.cases.js';
+import { registerOtpDiagnostic } from './otp-diagnostic.cases.js';
+import { registerB0BrowserTests } from './b0-browser.cases.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
@@ -127,6 +130,13 @@ const native = (name: string, fn: () => Promise<void>) =>
   });
 registerNavigationProposalTests({ admin: () => admin, repository: () => repository, auth: () => auth,
   apiUrl: () => apiConnection, fresh: () => fresh(), actor });
+registerProfileLinkTests({ admin: () => admin, repository: () => repository, app: () => app,
+  apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor });
+registerOtpDiagnostic({ admin: () => admin, app: () => app, auth: () => auth, repository: () => repository,
+  authUrl: () => authConnection, workerDb: () => recoveryDb, key: () => recoveryKey, evidence });
+registerB0BrowserTests({ admin: () => admin, repository: () => repository, app: () => app,
+  apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor, password: () => password,
+  activationCode: address => delivery.messages.find(message => message.email === address && message.purpose === 'ACTIVATION')?.otp });
 const connect = (url: string) => {
   const q = postgres(url, {
     max: 1,
@@ -2682,7 +2692,7 @@ describe('R4 native PostgreSQL', () => {
       WHERE tenant_id=${bTenant.tenant} AND id=${bTenant.student}`;
     const manager = await sessionFor(a);
     const browser = await withAcademicBrowser(app, async (b) => {
-      await b.login(manager.email, password, a.tenant);
+      await b.login(manager.email, password, a.tenant, 'R9 Tenant A');
       await b.route(`/app/${a.tenant}/classes`);
       await b.wait(`document.querySelector('[data-screen-id="AC07"] table caption')?.textContent === 'Danh sách lớp học'
         && document.querySelector('[data-screen-id="AC07"] table tbody')?.textContent.includes('R9 A class')`, 'TENANT_A_CLASS');
@@ -3868,7 +3878,7 @@ describe('R4 native PostgreSQL', () => {
           evidence: 'Synthetic', reason: 'Unauthorized role', confirmed: true }).expect(403);
     }
     const browser = await withAcademicBrowser(app, async (b) => {
-      await b.login(a.s.email, password, a.f.tenant);
+      await b.login(a.s.email, password, a.f.tenant, 'R9 Finance Tenant A');
       await b.route(`/app/${a.f.tenant}/finance/invoices/${a.invoice}`);
       await b.wait(`document.querySelector('.billing-page[data-screen-id="BL07"]')?.textContent.includes('R9 Finance Student A')`, 'A_FINANCE_VISIBLE');
       await b.route('/select-tenant');

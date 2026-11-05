@@ -641,3 +641,15 @@ No standalone otp/verify endpoint. OTP expires in 15 min, hashed one-use with at
 ---
 
 **Versioning/change control:** When v5 requirements is checked into the repo and contract is reviewed, keep group A as approved and finish per-slice contract review before full implementation and generate matching OpenAPI JSON. New FR/Q changes require traceability update, acceptance tests and explicit API version compatibility review.
+
+## R13 B0.2 — profile membership link (local review candidate, 2026-11-05)
+
+Authority: owner explicitly authorized local implementation in COMPLETE ALL REMAINING B0 WORK. This is **not staging contract/deployment approval**. FR-02/03/04/07, Q-01/02/05; no role catalog or authentication changes.
+
+`POST T/academic/profiles/teachers/{profileId}/membership-link` and `POST T/academic/profiles/students/{profileId}/membership-link`; bearer session, no query parameters, required `Idempotency-Key` (nonblank, <=200 characters).
+
+Input is exactly `{membershipId:UUID, expectedMembershipId:null, reason:string(1..2000), confirmed:true}`. Output200 is exactly `{profileId,profileKind:"TEACHER"|"STUDENT",membershipId,tenantId,operation:"PROFILE_MEMBERSHIP_LINKED",correlationId}`; no identity credentials/contact fields. Same-key exact replay returns original output only after fresh authorization and target eligibility checks. Changed intent, already claimed profile/membership, or ineligible target409; malformed input400, missing/current-invalid session401, missing combined permission/self-link403, tenant-invisible profile/member404. Existing error envelope/correlation/no-store behavior remains.
+
+Actor must hold current TENANT-scoped `member.update AND role.assign AND teacher.update/student.update`. Target membership/User ACTIVE, membership not left, activation timestamp present and credential in the format accepted by the current password verifier; no password verification/OTP bypass is performed by linking. Profile ACTIVE, same tenant, unclaimed. Matching unrevoked seeded Teacher/Student role required. Student scope must name the exact student. Teacher TENANT or active/planned CLASS scope is accepted; when the profile has current assignments, a CLASS grant must intersect a current assignment. A valid CLASS grant may link a profile with no current assignment, but does not create one or unlock Teacher portal access. Other assignments remain limited by existing resource scope checks.
+
+LINK only; no unlink/rebind/ownership transfer, account/role/profile/assignment/Parent creation. Existing imported ownership cannot be claimed. No frontend profile-link UI is added in this candidate. Existing authorized API callers and the future approved B1 runbook are the call sites; readers consume the association on their next current-authority request.

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
 
-// Migration history through the owner-approved R13 attendance integrity addition. Update only with an intentionally reviewed
+// Migration history plus the R13 B0.2 local profile-link candidate. Update only with an intentionally reviewed
 // migration addition; editing an applied migration must remain visible in CI.
 it('matches the reviewed ordered migration manifest and SQL', () => {
   const root = resolve('prisma/migrations');
@@ -11,7 +11,7 @@ it('matches the reviewed ordered migration manifest and SQL', () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
-  expect(names).toHaveLength(51);
+  expect(names).toHaveLength(52);
   expect(names.every((name) => /^[0-9]{12}_[a-z0-9_]+$/.test(name))).toBe(true);
   expect(readFileSync(resolve(root, 'migration_lock.toml'), 'utf8')).toContain(
     'provider = "postgresql"',
@@ -30,6 +30,6 @@ it('matches the reviewed ordered migration manifest and SQL', () => {
     hash.update('\0');
   }
   expect(hash.digest('hex')).toBe(
-    '3d71aa8bd4c3cb225c7645bab9fe94c9f4f1bdc49b42a61b781111ca7895cc1a',
+    '3e3ef67adc7f95d3991f6fe8bc48ec3c6e186eb8e89ae04edb4134ac2936f9ff',
   );
 });

@@ -23,7 +23,7 @@ export type BrowserDriver = {
   fill: (selector: string, value: string) => Promise<void>;
   value: (selector: string, value: string) => Promise<void>;
   select: (selector: string, value: string) => Promise<void>;
-  login: (email: string, password: string, tenantId: string) => Promise<void>;
+  login: (email: string, password: string, tenantId: string, tenantName?: string) => Promise<void>;
   viewport: (width: number, height: number, mobile: boolean) => Promise<void>;
   capture: (label: string) => Promise<void>;
   deferResponse: (path: string) => Promise<{
@@ -168,7 +168,7 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
       route: async (path) => { await evaluate(`history.pushState(null, '', ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent('popstate'))`); },
       wait: async (expression, label) => {
         try { await until(() => evaluate<boolean>(expression), label); }
-        catch (error) { await driver.capture(`FAILED-${label}`).catch(() => undefined); throw error; }
+        catch (error) { await driver.capture(`FAILED-${label.replace(/[^a-z0-9-]/gi, '-').slice(0, 60)}`).catch(() => undefined); throw error; }
       },
       click: async (selector) => { await evaluate(`document.querySelector(${JSON.stringify(selector)})?.click()`); },
       fill: async (selector, value) => {
@@ -199,8 +199,10 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
         const localRoot = resolve(fileURLToPath(new URL('../../../../.local/', import.meta.url)));
         const destination = resolve(configured);
         if (!/^[a-z0-9-]{1,80}$/i.test(label) || !destination.startsWith(localRoot + sep)) throw Error('UNSAFE_SCREENSHOT_TARGET');
-        const safe = await evaluate<boolean>(`location.origin === ${JSON.stringify(origin)} && location.pathname.startsWith('/app/')
-          && !Array.from(document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"]')).some(x => x.value)`);
+        const safe = await evaluate<boolean>(`location.origin === ${JSON.stringify(origin)} && !location.search
+          && (location.pathname.startsWith('/app/') || (['/activate-account','/login'].includes(location.pathname)
+            && !Array.from(document.querySelectorAll('input')).some(x => x.value)))
+          && !Array.from(document.querySelectorAll('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete="new-password"],input[autocomplete="current-password"]')).some(x => x.value)`);
         if (!safe) throw Error('UNSAFE_SCREENSHOT_STATE');
         await mkdir(destination, { recursive: true });
         const original = { ...viewport };
@@ -218,14 +220,18 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
           await writeFile(join(destination, `${label}.json`), JSON.stringify({ source: 'LOCAL_NATIVE_POSTGRES_REAL_HTTP', browser: version.product, shots }, null, 2));
         } finally { await driver.viewport(original.width, original.height, original.mobile); }
       },
-      login: async (email, password, tenantId) => {
+      login: async (email, password, tenantId, tenantName) => {
         await send('Page.navigate', { url: `${origin}/login` }, sessionId);
         await until(() => evaluate<boolean>('!!document.querySelector("#login-email")'), 'LOGIN_FORM');
         await driver.fill('#login-email', email);
         await driver.fill('#login-password', password);
         await driver.click('form button[type="submit"]');
         await until(() => evaluate<boolean>('location.pathname === "/select-tenant" && !!document.querySelector(".ec-tenant-choice")'), 'TENANT_SELECTION');
-        await driver.click('.ec-tenant-choice');
+        const chosen = await evaluate<boolean>(`(() => { const choices=Array.from(document.querySelectorAll('.ec-tenant-choice'));
+          const label=${JSON.stringify(tenantName ?? null)};
+          const matches=label ? choices.filter(x=>x.querySelector('strong')?.textContent===label) : choices;
+          if(matches.length!==1)return false; matches[0].click();return true; })()`);
+        if(!chosen)throw Error('BROWSER_TARGET_TENANT_NOT_UNIQUE');
         await until(() => evaluate<boolean>(`location.pathname.startsWith(${JSON.stringify(`/app/${tenantId}/`)}) && !!document.querySelector('.app-shell')`), 'AUTHORIZED_LANDING');
       },
     };
