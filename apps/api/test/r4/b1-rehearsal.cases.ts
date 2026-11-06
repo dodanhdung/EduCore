@@ -7,6 +7,8 @@ import request from 'supertest';
 import { expect, it } from 'vitest';
 import { browserAvailable, until } from './browser-auth.js';
 import { withAcademicBrowser, type BrowserDriver } from './browser-academic.js';
+import { AuthService } from '../../src/identity-access/auth.service.js';
+import { pairedRecovery } from './master-recovery.js';
 
 type Context = { admin: () => postgres.Sql; app: () => INestApplication;
   operatorUrl: () => string; activationCode: (email: string) => string | undefined };
@@ -34,6 +36,18 @@ export function registerB1Rehearsal(ctx: Context) {
       const ledger: { method: string; path: string; status: number; expected: number; key?: string }[] = [];
       const checkpoints: string[] = [], blockers: string[] = [];
       const accounts: Actor[] = [];
+      // A full sequential suite shares this app/IP with B0 onboarding. Observe
+      // the existing LOCAL throttle window expire naturally before inviting
+      // nine synthetic identities. Never clear counters or relax auth limits.
+      const throttleDeadline = Date.now() + 65_000;
+      for (;;) {
+        const [window] = await ctx.admin()`SELECT COALESCE(max(extract(epoch FROM
+          (reset_at-clock_timestamp()))),0)::float8 remaining FROM educore_r4.auth_throttles`;
+        if (Number(window.remaining) <= 0) break;
+        if (Date.now() >= throttleDeadline) throw Error('LOCAL_THROTTLE_WINDOW_NOT_QUIET');
+        await new Promise(resolve => setTimeout(resolve, Math.min(1000, Number(window.remaining) * 1000 + 50)));
+      }
+      checkpoints.push('EXISTING_LOCAL_THROTTLE_WINDOW_EXPIRED_NATURALLY');
       const save = (phase: string) => writeFileSync(resolve(directory, 'execution.json'), JSON.stringify({
         source: 'ISOLATED_PG16_REAL_NEST_HTTP_LOCAL_CAPTURE_REAL_BROWSER', run, phase,
         checkpoints, blockers, accounts: accounts.map(({ alias, name, role, scope, member, grant, profile, classId, navigation }) =>
@@ -354,6 +368,11 @@ export function registerB1Rehearsal(ctx: Context) {
           confirmed_sessions: 2, verified_links: 2, published_assignments: 2, invoices: 0, finalizations: 0 });
         writeFileSync(resolve(directory, 'inventory.json'), JSON.stringify({ tenant, foreignTenant: foreign.tenant, course: course.id,
           subject: subject.id, level: level.id, room: room.id, classIds: classes, teachers, students, sessions, assignments, links, validFrom, ...inventory[0] }, null, 2));
+        if (process.env.R13_MASTER_RECOVERY === 'LOCAL_PAIRED_RESTORE_ONLY') {
+          await pairedRecovery({ directory, tenant, foreignTenant: foreign.tenant, accounts,
+            managerEmail: manager.email, password, config: ctx.app().get(AuthService).config });
+          checkpoints.push('PAIRED_DB_PRIVATE_FILE_RESTORE_BUILT_API_AND_NINE_ORIGINAL_PASSWORD_LOGINS');
+        }
         save('PASS');
       } catch (error) { save('FAIL'); throw error; }
       finally { await operator.end(); }

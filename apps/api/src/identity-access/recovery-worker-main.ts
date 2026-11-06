@@ -1,6 +1,8 @@
 import { localWorkerFromEnv } from './recovery-worker.js';
+import { admissionFromEnv } from '../operations/write-admission.js';
 
 async function main() {
+  if (admissionFromEnv(process.env).snapshot().mode === 'closed') throw Error('MAINTENANCE');
   const worker = localWorkerFromEnv(process.env);
   await worker.assertRuntime();
   let lastSweep = 0;

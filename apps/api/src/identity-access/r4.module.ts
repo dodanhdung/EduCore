@@ -29,6 +29,7 @@ import { AcademicCatalogController } from '../academic/academic-catalog.controll
 import { SchedulingController } from '../scheduling/scheduling.controller.js';
 import { AttendanceController } from '../attendance/attendance.controller.js';
 import { BillingHttpController } from '../billing/billing-http.controller.js';
+import { AdmissionInterceptor, WriteAdmission } from '../operations/write-admission.js';
 
 @Module({})
 export class R4Module {
@@ -38,6 +39,7 @@ export class R4Module {
     delivery: OtpDeliveryPort,
     workerEnabled = false,
     storage?: FileStoragePort,
+    admission?: WriteAdmission,
   ): DynamicModule {
     return {
       module: R4Module,
@@ -71,7 +73,7 @@ export class R4Module {
         },
         {
           provide: R4Worker,
-          useFactory: () => new R4Worker(repository, workerEnabled),
+          useFactory: () => new R4Worker(repository, workerEnabled, admission),
         },
         SessionGuard,
         {
@@ -105,7 +107,11 @@ export class R4Module {
     };
   }
 }
-export function configureR4Http(app: INestApplication, config: AuthConfig) {
+export function configureR4Http(app: INestApplication, config: AuthConfig, admission?: WriteAdmission) {
+  if (admission) {
+    app.use(admission.middleware.bind(admission));
+    app.useGlobalInterceptors(new AdmissionInterceptor(admission));
+  }
   app.useGlobalFilters(new R4ErrorFilter());
   app.enableCors({
     origin: config.origins,

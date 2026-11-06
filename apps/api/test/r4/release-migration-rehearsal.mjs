@@ -6,11 +6,12 @@
  */
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, sep } from 'node:path';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import postgres from 'postgres';
 
 const api = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -107,6 +108,47 @@ async function main() {
   try { await repository.assertRuntime(); } finally { await repository.close(); }
   report.baselineCurrentRuntimeACLCheck = 'PASS_WITHOUT_R13_FUNCTIONS; NOT_A_SCHEMA_VERSION_GUARD';
   report.checks.roleStartupAloneInsufficient = 'VERIFIED';
+
+  // A CLOSED bridge can safely replace the old API BEFORE migrations: prove
+  // actual production entry starts on baseline50, and no request reaches DB.
+  report.phase = 'CLOSED_PRODUCTION_BRIDGE_ON_50';
+  const probe = createServer();
+  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port;
+  await new Promise(resolve => probe.close(resolve));
+  const privateLog = openSync(join(output, 'closed-bridge-private.log'), 'wx');
+  const osEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    ['path','systemroot','windir','comspec','temp','tmp','localappdata','userprofile','systemdrive','pathext'].includes(key.toLowerCase())));
+  const bridge = spawn(process.execPath, [join(api, 'dist/main.js')], { cwd: api, windowsHide: true,
+    env: { ...osEnv, NODE_ENV:'production', PORT:String(port), R4_BIND_HOST:'127.0.0.1',
+      R4_AUTH_URL:connections[0], R4_API_URL:connections[1], R4_WORKER_ENABLED:'0',
+      R4_OTP_MODE:'unavailable', R4_JWT_SECRET:randomBytes(32).toString('hex'),
+      R4_OTP_PEPPER:randomBytes(32).toString('hex'), R4_JWT_ISSUER:'local-release-bridge',
+      R4_JWT_AUDIENCE:'local-release-web', R4_WEB_ORIGINS:'https://release.invalid',
+      R5_PRIVATE_STORAGE_ROOT:join(output,'bridge-private-files'), R13_ADMISSION_MODE:'closed' },
+    stdio:['ignore',privateLog,privateLog] });
+  try {
+    const deadline = Date.now() + 15_000; let ready = false;
+    while (Date.now() < deadline) {
+      if (bridge.exitCode !== null) throw Error('CLOSED_BRIDGE_STARTUP_FAILED');
+      try { const r = await fetch(`http://127.0.0.1:${port}/`, { redirect:'error',signal:AbortSignal.timeout(1000) }); ready = r.status===200 && await r.text()==='Hello World!'; } catch { /* Startup only. */ }
+      if (ready) break;
+      await new Promise(resolve => setTimeout(resolve,100));
+    }
+    assert.ok(ready);
+    for (const [method,path] of [['POST','/api/v1/auth/login'],['GET','/api/v1/tenants/00000000-0000-4000-8000-000000000001/academic/classes']]) {
+      const r = await fetch(`http://127.0.0.1:${port}${path}`, { method,redirect:'error',signal:AbortSignal.timeout(3000) });
+      assert.equal(r.status,503); assert.equal((await r.json()).code,'MAINTENANCE');
+    }
+    assert.equal((await db`SELECT count(*)::int n FROM educore_r4.transaction_principals`)[0].n,0);
+    assert.equal((await ledger()).filter(row=>row.finished).length,50);
+    report.closedProductionBridge={status:'PASS',databaseMigrations:50,health:200,auth:503,protectedGet:503,principalRows:0,externalOTP:'NOT_REQUESTED'};
+    report.checks.closedBridgeBeforeMigrations='PASS';
+  } finally {
+    if(bridge.exitCode===null&&bridge.signalCode===null)bridge.kill();
+    await new Promise(resolve => { if(bridge.exitCode!==null||bridge.signalCode!==null)resolve();else bridge.once('exit',resolve); });
+    closeSync(privateLog);
+  }
 
   // Deliberately fail the first pending migration AFTER its DDL, before COMMIT,
   // on a disposable COPY. This is not an altered production migration artifact.

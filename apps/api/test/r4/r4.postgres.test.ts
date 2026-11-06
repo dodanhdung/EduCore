@@ -53,6 +53,7 @@ import { registerB1Rehearsal } from './b1-rehearsal.cases.js';
 import { registerClassLifecycleTests } from './class-lifecycle.cases.js';
 import { registerClassActivationCharacterization } from './class-activation-characterization.cases.js';
 import { registerClassActivationTests } from './class-activation.cases.js';
+import { registerMaintenanceTests } from './maintenance.cases.js';
 
 let admin: postgres.Sql;
 let repository: R4Repository;
@@ -149,6 +150,9 @@ registerClassActivationCharacterization({ admin: () => admin, repository: () => 
   apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor, password: () => password });
 registerClassActivationTests({ admin: () => admin, repository: () => repository, app: () => app,
   apiUrl: () => apiConnection, fresh: () => fresh(), actor, sessionFor });
+registerMaintenanceTests({ admin: () => admin, repository: () => repository, app: () => app,
+  apiUrl: () => apiConnection, authUrl: () => authConnection, workerUrl: () => firstWorkerConnection,
+  config: () => auth.config, delivery: () => delivery, fresh: () => fresh(), actor, sessionFor });
 const connect = (url: string) => {
   const q = postgres(url, {
     max: 1,

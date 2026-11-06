@@ -1,4 +1,5 @@
 import { R4Repository, result } from '../identity-access/r4-repository.js';
+import type { WriteAdmission } from '../operations/write-admission.js';
 export interface Claim {
   id: string;
   tenantId: string;
@@ -13,19 +14,21 @@ export class R4Worker {
   constructor(
     private readonly repository: R4Repository,
     private readonly enabled = false,
+    private readonly admission?: WriteAdmission,
   ) {}
   private get client() {
     if (!this.repository.worker) throw Error('WORKER_CONNECTION_REQUIRED');
     return this.repository.worker;
   }
   claim() {
-    return result<Claim | null>(
+    const execute = () => result<Claim | null>(
       this.client,
       'SELECT educore_r4.claim_job() result',
     );
+    return this.admission ? this.admission.run(execute) : execute();
   }
   perform(claim: Claim) {
-    return this.client.$transaction(
+    const execute = () => this.client.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL lock_timeout='3s'");
         await tx.$executeRawUnsafe("SET LOCAL statement_timeout='20s'");
@@ -40,17 +43,22 @@ export class R4Worker {
       },
       { isolationLevel: 'ReadCommitted', timeout: 25_000 },
     );
+    return this.admission ? this.admission.run(execute) : execute();
   }
   dispatch() {
-    return result(this.client, 'SELECT educore_r4.dispatch_event() result');
+    const execute = () => result(this.client, 'SELECT educore_r4.dispatch_event() result');
+    return this.admission ? this.admission.run(execute) : execute();
   }
   async tick() {
-    const claim = await this.claim();
-    if (claim) await this.perform(claim);
-    await this.dispatch();
+    const execute = async () => {
+      const claim = await this.claim();
+      if (claim) await this.perform(claim);
+      await this.dispatch();
+    };
+    return this.admission ? this.admission.run(execute) : execute();
   }
   onModuleInit() {
-    if (!this.enabled) return;
+    if (!this.enabled || this.admission?.snapshot().mode === 'closed') return;
     const run = async () => {
       try {
         await this.tick();

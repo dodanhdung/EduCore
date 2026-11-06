@@ -1,6 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Prisma } from '../generated/prisma/client.js';
 import { requestTrace } from './request-context.js';
+import type { WriteAdmission } from '../operations/write-admission.js';
 export type R4Tx = Prisma.TransactionClient;
 export async function result<T>(
   tx: R4Tx | PrismaClient,
@@ -16,7 +17,7 @@ export class R4Repository {
   readonly auth: PrismaClient;
   readonly api: PrismaClient;
   readonly worker?: PrismaClient;
-  constructor(authUrl: string, apiUrl: string, workerUrl?: string) {
+  constructor(authUrl: string, apiUrl: string, workerUrl?: string, private readonly admission?: WriteAdmission) {
     if (!authUrl || !apiUrl) throw Error('R4_CONNECTIONS_REQUIRED');
     const client = (url: string) =>
       new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
@@ -69,7 +70,7 @@ export class R4Repository {
     if (!recovery[0]?.safe) throw Error('UNSAFE_R8_RECOVERY');
   }
   transaction<T>(token: string, action: (tx: R4Tx) => Promise<T>) {
-    return this.api.$transaction(
+    const execute = () => this.api.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL lock_timeout='3s'");
         await tx.$executeRawUnsafe("SET LOCAL statement_timeout='15s'");
@@ -87,8 +88,13 @@ export class R4Repository {
       },
       { isolationLevel: 'ReadCommitted', timeout: 20_000, maxWait: 5_000 },
     );
+    return this.admission ? this.admission.run(execute) : execute();
   }
   async close() {
+    if (this.admission) {
+      try { await this.admission.closeAndDrain(); console.log('R13_ADMISSION_DRAINED'); }
+      catch (error) { console.error('R13_ADMISSION_DRAIN_FAILED'); throw error; }
+    }
     await Promise.all([
       this.auth.$disconnect(),
       this.api.$disconnect(),
