@@ -40,8 +40,19 @@ $baseline=$before | ConvertFrom-Json
 if ($baseline.members -ne 9 -or $baseline.activated -ne 9 -or $baseline.verifiedLinks -ne 2) { throw 'COMPLETED_B1_SOURCE_REQUIRED' }
 $roles=(Q $SourceContainer $sourceDb "SELECT jsonb_agg(jsonb_build_object('name',rolname,'super',rolsuper,'inherit',rolinherit,'createRole',rolcreaterole,'createDb',rolcreatedb,'bypass',rolbypassrls) ORDER BY rolname) FROM pg_roles WHERE rolname NOT LIKE 'pg_%' AND rolname<>'r4_test_admin';") | ConvertFrom-Json
 $memberships=(Q $SourceContainer $sourceDb "SELECT jsonb_agg(jsonb_build_object('role',r.rolname,'member',m.rolname) ORDER BY r.rolname,m.rolname) FROM pg_auth_members a JOIN pg_roles r ON r.oid=a.roleid JOIN pg_roles m ON m.oid=a.member WHERE r.rolname NOT LIKE 'pg_%' AND m.rolname NOT LIKE 'pg_%';") | ConvertFrom-Json
-$metadataSql="SELECT jsonb_agg(jsonb_build_object('schema',n.nspname,'name',p.proname,'signature',pg_get_function_identity_arguments(p.oid),'owner',r.rolname,'acl',p.proacl::text,'config',p.proconfig,'volatile',p.provolatile,'body',md5(p.prosrc)) ORDER BY n.nspname,p.proname,p.oid::regprocedure::text) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner WHERE n.nspname IN ('educore_r3','educore_r4') AND p.proname IN ('attendance','attendance_review_version','attendance_sheet_contract','attendance_mvp_read','profile_membership_link');"
+$metadataSql="SELECT jsonb_agg(jsonb_build_object('schema',n.nspname,'name',p.proname,'signature',pg_get_function_identity_arguments(p.oid),'owner',r.rolname,'acl',p.proacl::text,'config',p.proconfig,'volatile',p.provolatile,'body',md5(p.prosrc)) ORDER BY n.nspname,p.proname,p.oid::regprocedure::text) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner WHERE n.nspname IN ('educore_r3','educore_r4') AND p.proname IN ('attendance','attendance_review_version','attendance_reasons','attendance_sheet_contract','attendance_mvp_read','profile_membership_link','class_activate');"
 $metadataBefore=Q $SourceContainer $sourceDb $metadataSql
+# Quiescent local source only: compare every application table, including audit,
+# receipts, credentials and migration history, without exporting rows to logs.
+# These hashes are not a live Render backup or an encryption mechanism.
+$tables=(Q $SourceContainer $sourceDb "SELECT jsonb_agg(jsonb_build_object('schema',schemaname,'table',tablename) ORDER BY schemaname,tablename) FROM pg_tables WHERE schemaname='public' OR schemaname LIKE 'educore_%';") | ConvertFrom-Json
+$digestParts=@(foreach ($table in $tables) {
+  if ($table.schema -notmatch '^[a-z][a-z0-9_]+$' -or $table.table -notmatch '^[a-z_][a-z0-9_]+$') { throw 'UNSAFE_TABLE_METADATA' }
+  "SELECT '$($table.schema).$($table.table)' name,count(*)::bigint rows,encode(sha256(convert_to(COALESCE(jsonb_agg(to_jsonb(x) ORDER BY to_jsonb(x)::text)::text,'[]'),'UTF8')),'hex') digest FROM $($table.schema).$($table.table) x"
+})
+$digestSql="SELECT jsonb_agg(to_jsonb(d) ORDER BY d.name) FROM ($($digestParts -join ' UNION ALL ')) d;"
+$dataBefore=Q $SourceContainer $sourceDb $digestSql
+$drillWatch=[Diagnostics.Stopwatch]::StartNew()
 # No host dump: byte-preserving cmd pipe between two Docker CLI processes;
 # never decode binary in PowerShell. All command identifiers are allowlisted.
 $dump='/tmp/educore-b1-recovery.dump'
@@ -76,13 +87,15 @@ try {
   $null=D @('exec',$dest,'pg_restore','--exit-on-error','--no-password','-U','r4_test_admin','-d',$destDb,$dump)
   $after=Q $dest $destDb $countSql
   $metadataAfter=Q $dest $destDb $metadataSql
-  if ($before -ne $after -or $metadataBefore -ne $metadataAfter) { throw 'RESTORE_READBACK_MISMATCH' }
+  $dataAfter=Q $dest $destDb $digestSql
+  if ($before -ne $after -or $metadataBefore -ne $metadataAfter -or $dataBefore -ne $dataAfter) { throw 'RESTORE_READBACK_MISMATCH' }
   # Exercise a transaction abort as the only rollback; no destructive rollback
   # of forward migrations or existing cohort history is attempted.
   $rollback=Q $dest $destDb "BEGIN; CREATE TABLE public.b1_rollback_probe(id int); ROLLBACK; SELECT to_regclass('public.b1_rollback_probe') IS NULL;"
   if (-not $rollback.EndsWith('t')) { throw 'ROLLBACK_PROBE_FAILED' }
   $null=New-Item -ItemType Directory -Force -Path $evidence
-  [ordered]@{status='PASS';sourceContainer=$SourceContainer;destinationContainer=$dest;sourceDatabase=$sourceDb;destinationDatabase=$destDb;capturedAt=[DateTime]::UtcNow.ToString('o');admission=$environment.admission;counts=($after|ConvertFrom-Json);functionMetadataMatch=$true;rolesRestoredNoLogin=$roles.Count;externalDelivery='NOT_STARTED';dumpLocation='ONLY_INSIDE_TWO_TASK_OWNED_CONTAINERS';transactionRollback='PASS';limitations='Local synthetic checkpoint only; does not prove Render backup provider privileges or live recovery timing.'} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $evidence 'recovery.json') -Encoding UTF8
+  $drillWatch.Stop()
+  [ordered]@{status='PASS';sourceContainer=$SourceContainer;destinationContainer=$dest;sourceDatabase=$sourceDb;destinationDatabase=$destDb;capturedAt=[DateTime]::UtcNow.ToString('o');admission=$environment.admission;counts=($after|ConvertFrom-Json);functionMetadataMatch=$true;allApplicationTableFingerprintsMatch=$true;tableFingerprints=($dataAfter|ConvertFrom-Json);drillDurationSeconds=$drillWatch.Elapsed.TotalSeconds;rolesRestoredNoLogin=$roles.Count;externalDelivery='NOT_STARTED';dumpLocation='ONLY_INSIDE_TWO_TASK_OWNED_CONTAINERS';transactionRollback='PASS';limitations='Local synthetic checkpoint only; does not prove Render backup provider privileges, private-file recovery, runtime login after restore, or live recovery timing.'} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $evidence 'recovery.json') -Encoding UTF8
   Write-Host 'B1_ISOLATED_RESTORE: PASS; private dump was not written to host or packaged.'
 } finally {
   $env:R4_TEST_URL=$previousUrl; $env:R4_TEST_DISPOSABLE=$previousAdmission
