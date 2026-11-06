@@ -117,3 +117,16 @@ On 2026-10-17 repo `main` read-only inventory showed `apps/api`/`apps/web` scaff
 | Q8 / O-10/H-01/API | Exact VND/precision range/source lineage/backfill, reviewed wallet/recompute transport/permissions | **RECOMMENDED / PENDING TECHNICAL SIGN-OFF / PENDING API REVIEW**; R1b minimum history, R2 precision/source/API |
 
 **Gate:** chỉ **business B1–B5** và **simplification principle** được phê duyệt ở đây. O-12 §F không đổi; Q1–Q8/O-01/O-04/O-13 không TECHNICALLY APPROVED. Wallet schema/API/runtime **NOT IMPLEMENTED**, R1b/R2 chưa triển khai/không tự được authorize; H-04 **OPEN**. Phase2 là documentation-only, W01–W36 **DESIGNED**, không migrations/SQL/PG/runtime PASS. Dừng sau docs review; next phase cần authorization mới và technical sign-off phần thực sự phụ thuộc.
+
+
+## H. R13 B1.3 — Class activation (owner business approval, 2026-11-05)
+
+Owner explicitly approved implementation in “Implement Approved Class Activation — B1.3”. This supersedes only the missing/proposed Class.PLANNED → ACTIVE contract recorded in B1.1/B1.2. Other transitions, deployment and Render writes remain unauthorized.
+
+- Manual confirmation, bounded reason and required idempotency key; current class.update in valid tenant/resource scope, rechecked in the transaction. Effective immediately at server-controlled time.
+- PLANNED Class; same-tenant active course/subject/level; positive consistent capacity; startDate <= endDate when both exist. No added date-versus-today restriction.
+- At least one current valid Teacher assignment and one legitimate current ACTIVE enrollment. Ordinary P0 assignment currently requires an ACTIVE same-tenant Teacher profile and [validFrom,validTo); profiles may exist without accounts. P1 substitute-teacher/automatic competency-rubric rules are not imported. Enrollment uses ACTIVE Student profile and [effectiveFrom,effectiveTo); future/expired/inactive/withdrawn/transferred sources do not qualify.
+- No CONFIRMED session prerequisite. Only Class.status and ordinary updatedAt metadata change; no enrollment/scheduling/attendance/billing/assignment/notification effects. Real audit and receipt atomic with mutation.
+- Expected-status CAS, current authorization on replay, exact-intent replay, changed intent/stale conflict and concurrency protection required. Technical implementation is a local review candidate, not deployed approval.
+
+See the B1.3 sections in API Specifications and Detailed Design. FIGMA_REFERENCE: NOT_PROVIDED. VISUAL_CHANGES: NONE. No activation UI or permission catalog/auth/OTP changes authorized.

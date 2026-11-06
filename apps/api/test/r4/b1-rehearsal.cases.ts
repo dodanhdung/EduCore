@@ -29,6 +29,7 @@ export function registerB1Rehearsal(ctx: Context) {
       if (!directory.startsWith(root + sep)) throw Error('LOCAL_EVIDENCE_PATH_REQUIRED');
       mkdirSync(directory, { recursive: true });
       const run = randomUUID(), reason = 'R13 B1 synthetic local rehearsal';
+      const activationReview = process.env.R13_B13_ACTIVATION_REHEARSAL === 'APPROVED_LOCAL_ONLY';
       const password = 'Aa1!' + randomBytes(24).toString('base64url');
       const ledger: { method: string; path: string; status: number; expected: number; key?: string }[] = [];
       const checkpoints: string[] = [], blockers: string[] = [];
@@ -38,7 +39,7 @@ export function registerB1Rehearsal(ctx: Context) {
         checkpoints, blockers, accounts: accounts.map(({ alias, name, role, scope, member, grant, profile, classId, navigation }) =>
           ({ alias, name, role, scope, member, grant, profile, classId, navigation })), ledger,
       }, null, 2));
-      const call = async (method: 'get' | 'post', path: string, token = '', body?: unknown, expected = 200, key?: string, match?: number) => {
+      const call = async (method: 'get' | 'post', path: string, token = '', body?: object, expected = 200, key?: string, match?: number) => {
         let req = request(ctx.app().getHttpServer())[method](path);
         if (token) req = req.auth(token, { type: 'bearer' });
         if (key) req = req.set('Idempotency-Key', key);
@@ -76,7 +77,7 @@ export function registerB1Rehearsal(ctx: Context) {
         };
         const manager = await bootstrap('demo');
         const tenant = manager.tenant, base = `/api/v1/tenants/${tenant}`;
-        const post = (path: string, body: unknown, key?: string, token = manager.token, status = 201) =>
+        const post = (path: string, body: object, key?: string, token = manager.token, status = 201) =>
           call('post', base + path, token, body, status, key);
         const get = (path: string, token = manager.token, status = 200) => call('get', base + path, token, undefined, status);
         const subject = await post('/academic/catalog/subjects', { code: 'B1-TOAN', name: 'Toán tư duy', reason });
@@ -174,6 +175,49 @@ export function registerB1Rehearsal(ctx: Context) {
             const relation = await createRelationship(`P${i + 1}`, students[i]);
             await get(`/portal/children/${students[i]}`, by(`P${i + 1}`).token, 404);
             await post(`/parent-student-links/${relation.id}/verify`, { reason }); links.push(relation.id);
+          }
+          if (activationReview) {
+            const snapshot = async () => (await ctx.admin()`SELECT
+              (SELECT md5(jsonb_agg(to_jsonb(x) ORDER BY id)::text) FROM enrollments x WHERE tenant_id=${tenant}) enrollments,
+              (SELECT md5(jsonb_agg(to_jsonb(x) ORDER BY id)::text) FROM class_teacher_assignments x WHERE tenant_id=${tenant}) assignments,
+              (SELECT md5(jsonb_agg(to_jsonb(x) ORDER BY id)::text) FROM class_sessions x WHERE tenant_id=${tenant}) sessions,
+              (SELECT count(*)::int FROM invoices WHERE tenant_id=${tenant}) invoices,
+              (SELECT count(*)::int FROM payments WHERE tenant_id=${tenant}) payments,
+              (SELECT count(*)::int FROM attendance_finalizations WHERE tenant_id=${tenant}) finalizations`)[0];
+            const before = await snapshot();
+            expect((await get('/portal/overview')).classes).toBe(0);
+            for (const phase of ['BEFORE', 'AFTER']) {
+              if (phase === 'AFTER') {
+                for (const i of [0, 1]) {
+                  const body = { expectedStatus: 'PLANNED', confirmed: true, reason: 'B13 authorized synthetic local class activation' };
+                  const key = `B13:${run}:activate:${i}`, token = i ? manager.token : by('AS1').token;
+                  const result = await post(`/academic/classes/${classes[i]}/activate`, body, key, token);
+                  expect(result).toMatchObject({ id: classes[i], status: 'ACTIVE' });
+                  expect(await post(`/academic/classes/${classes[i]}/activate`, body, key, token)).toEqual(result);
+                  expect((await get(`/academic/classes/${classes[i]}`)).status).toBe('ACTIVE');
+                  expect((await get(`/portal/children/${students[i]}`, by(`P${i + 1}`).token)).classes.map((c: { id: string }) => c.id)).toContain(classes[i]);
+                }
+                expect(await snapshot()).toEqual(before);
+                expect((await get('/portal/overview')).classes).toBe(2);
+              }
+              await b.login(manager.email, password, tenant);
+              for (const [suffix, screen, expected] of [['/classes', 'AC07', 'Toán 6'], [`/classes/${classes[0]}`, 'AC08', 'Lê Khánh An'], ['/overview', 'G01', 'Tổng quan']]) {
+                await b.route(`/app/${tenant}${suffix}`);
+                await b.wait(`document.querySelector('main')?.textContent.includes(${JSON.stringify(expected)}) && !document.body.textContent.includes('Đang tải') && !document.body.textContent.includes('Đang kiểm tra')`, 'B13_' + screen);
+                await b.capture(`B13-${phase}-${screen}`);
+                if (screen === 'AC07') await b.capture(`B13-${phase}-AC07-STATUS`, '[data-screen-id="AC07"] tbody tr:first-child td:nth-child(4)');
+                if (screen === 'AC08') await b.capture(`B13-${phase}-AC08-STATUS`, '#class-information');
+              }
+              await b.login(by('P1').email, password, tenant);
+              await capturePage(b, tenant, `/parent/children/${students[0]}`, '.portal-page', `B13-${phase}-PO04`);
+              await b.wait(phase === 'BEFORE' ? `document.body.textContent.includes('Chưa có lớp đang hoạt động trong phạm vi được cấp.')`
+                : `document.querySelector('.portal-list')?.textContent.includes('Toán 6 – Nhóm 1')`, 'B13_PARENT_' + phase);
+              await b.capture(`B13-${phase}-PO04`);
+            }
+            writeFileSync(resolve(directory, 'class-activation.json'), JSON.stringify({ source: 'B13_NEW_TASK_OWNED_COHORT_REAL_ONBOARDING_AND_HTTP',
+              classes, primaryTenant: tenant, beforeActiveClasses: 0, afterActiveClasses: 2, preservedSources: before,
+              actors: ['ACADEMIC_STAFF', 'MANAGER'], replay: 'EXACT', noDirectStatusUpdate: true }, null, 2));
+            checkpoints.push('B13_REAL_ACTIVATION_TWO_CLASSES_CURRENT_PREREQUISITES_ATOMIC_REPLAY_PARENT_VISIBLE');
           }
           // P1 is STUDENT-scoped to S1, so a pending extra link to S2 must
           // remain inaccessible even before verification and after revocation.
@@ -293,7 +337,8 @@ export function registerB1Rehearsal(ctx: Context) {
         const child = await get(`/portal/children/${students[0]}`, by('P1').token);
         expect(JSON.stringify(child)).toContain(assignments[0]);
         expect(JSON.stringify(child)).toContain(sessions[0]);
-        if (!child.classes?.length) blockers.push('PO04_ACTIVE_CLASS_LIST: catalog creates PLANNED; no supported status transition API found. Do not update status by SQL.');
+        if (activationReview) expect(child.classes.map((c: { id: string }) => c.id)).toContain(classes[0]);
+        else if (!child.classes?.length) blockers.push('PO04_ACTIVE_CLASS_LIST: PLANNED cohort has not invoked the approved activation command.');
         const inventory = await ctx.admin()`SELECT
           (SELECT count(*)::int FROM tenant_memberships WHERE tenant_id=${tenant}) memberships,
           (SELECT count(*)::int FROM tenant_memberships m JOIN users u ON u.id=m.user_id JOIN credentials c ON c.user_id=u.id WHERE m.tenant_id=${tenant} AND m.status='ACTIVE' AND u.activated_at IS NOT NULL) activated_credentials,

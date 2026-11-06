@@ -8,8 +8,8 @@ import type { ProfileLinkContext } from './profile-link.cases.js';
 import { browserAvailable } from './browser-auth.js';
 import { withAcademicBrowser } from './browser-academic.js';
 
-// Characterization only: no proposed activation policy, function or controller
-// is installed. An initial ACTIVE fixture never proves an activation workflow.
+// Preserve B1.2 read characterization; B1.3 now implements the approved route.
+// Initial ACTIVE fixtures still do not prove an activation workflow.
 export function registerClassActivationCharacterization(ctx: ProfileLinkContext & { password: () => string }) {
   const evidence: unknown[] = [];
   const record = (value: unknown) => {
@@ -33,33 +33,33 @@ export function registerClassActivationCharacterization(ctx: ProfileLinkContext 
     return state;
   };
 
-  it('B12 CA01 exact candidate activation route is absent, including concurrent requests; persisted sources unchanged', async () => {
+  it('B12 CA01 upgraded B13 activation boundary rejects invalid or already ACTIVE requests without effects', async () => {
     const f = await ctx.fresh(), manager = await ctx.sessionFor(f);
     const path = `/api/v1/tenants/${f.tenant}/academic/classes/${f.classId}/activate`;
     const candidate = { expectedStatus: 'PLANNED', reason: 'B12 proposal characterization', confirmed: true };
     const before = await snapshot(f.tenant), key = randomUUID();
     const probes = [
-      { label: 'candidate', body: candidate, key },
-      { label: 'exact-repeat', body: candidate, key },
-      { label: 'changed-intent', body: { ...candidate, reason: 'Different intent' }, key },
-      { label: 'already-active-expected', body: { ...candidate, expectedStatus: 'ACTIVE' }, key },
-      { label: 'missing-confirmation', body: { reason: candidate.reason, expectedStatus: 'PLANNED' }, key },
-      { label: 'missing-reason', body: { confirmed: true, expectedStatus: 'PLANNED' }, key },
-      { label: 'missing-key', body: candidate, key: '' },
-      { label: 'body-tenant-override', body: { ...candidate, tenantId: randomUUID() }, key },
+      { label: 'already-active', body: candidate, key, expected: 409 },
+      { label: 'repeat-rejected-request', body: candidate, key, expected: 409 },
+      { label: 'changed-rejected-request', body: { ...candidate, reason: 'Different intent' }, key, expected: 409 },
+      { label: 'invalid-expected-status', body: { ...candidate, expectedStatus: 'ACTIVE' }, key, expected: 400 },
+      { label: 'missing-confirmation', body: { reason: candidate.reason, expectedStatus: 'PLANNED' }, key, expected: 400 },
+      { label: 'missing-reason', body: { confirmed: true, expectedStatus: 'PLANNED' }, key, expected: 400 },
+      { label: 'missing-key', body: candidate, key: '', expected: 400 },
+      { label: 'body-tenant-override', body: { ...candidate, tenantId: randomUUID() }, key, expected: 400 },
     ];
     for (const probe of probes) {
       const req = request(ctx.app().getHttpServer()).post(path).auth(manager.accessToken, { type: 'bearer' });
       if (probe.key) req.set('Idempotency-Key', probe.key);
-      await req.send(probe.body).expect(404);
+      await req.send(probe.body).expect(probe.expected);
     }
-    await request(ctx.app().getHttpServer()).post(path).send(candidate).expect(404);
+    await request(ctx.app().getHttpServer()).post(path).send(candidate).expect(401);
     await Promise.all([1, 2].map(() => request(ctx.app().getHttpServer()).post(path)
-      .auth(manager.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID()).send(candidate).expect(404)));
+      .auth(manager.accessToken, { type: 'bearer' }).set('Idempotency-Key', randomUUID()).send(candidate).expect(409)));
     expect(await snapshot(f.tenant)).toEqual(before);
-    record({ case: 'CA01', contract: 'NOT_IMPLEMENTED', route: path, probes: probes.map(p => p.label),
-      concurrentHttpRequests: 2, status: 404, snapshot: before, businessStateUnchanged: true,
-      limitation: '404 is absence characterization, not validation, authorization, replay or concurrency implementation proof' });
+    record({ case: 'CA01', contract: 'B13_IMPLEMENTED', route: path, probes: probes.map(p => ({ label: p.label, status: p.expected })),
+      concurrentHttpRequests: 2, status: 409, snapshot: before, businessStateUnchanged: true,
+      limitation: 'Already-ACTIVE rejection; real competing PLANNED activations are covered by B13 native tests' });
   });
 
   it('B12 CA02 existing class metadata update obeys CLASS scope and current grant revocation without status effects', async () => {
@@ -86,10 +86,10 @@ export function registerClassActivationCharacterization(ctx: ProfileLinkContext 
     expect(await snapshot(f.tenant)).toEqual(after);
     record({ case: 'CA02', existingOperation: 'CLASS_UPDATE_NAME_ONLY', exactClassScope: true,
       outOfScope: 403, revokedGrant: 403, auditDelta: 1, classStatus: 'PLANNED', otherSourcesUnchanged: true,
-      limitation: 'Existing update authorization evidence only; activation authorization remains proposed' });
+      limitation: 'Existing metadata authorization evidence; activation is independently tested in B13' });
   });
 
-  it('B12 CA03 creation guards are implemented, while teacher/enrollment/session requirements for activation remain undecided', async () => {
+  it('B12 CA03 preserves creation guards independently of approved B13 activation prerequisites', async () => {
     const f = await ctx.fresh(), foreign = await ctx.fresh(), manager = await ctx.sessionFor(f);
     const path = `/api/v1/tenants/${f.tenant}/academic/catalog/classes`;
     const body = { code: 'B12-EMPTY', name: 'Lớp dự kiến chưa có học viên', courseId: f.course, capacity: 2,
@@ -108,8 +108,8 @@ export function registerClassActivationCharacterization(ctx: ProfileLinkContext 
       FROM classes c WHERE c.tenant_id=${f.tenant} AND c.id=${created.id}`;
     expect(state).toEqual({ status: 'PLANNED', start_date: body.startDate, enrollments: 0, assignments: 0, sessions: 0 });
     record({ case: 'CA03', creationState: state, invalidCapacity: 400, foreignCourse: 422, invertedDates: 400,
-      activationTeacherRule: 'OWNER_DECISION', activationEnrollmentRule: 'OWNER_DECISION', activationSessionRule: 'OWNER_DECISION',
-      limitation: 'Creation guards and future date storage do not approve activation prerequisites or automatic activation' });
+      activationTeacherRule: 'B13_CURRENT_REQUIRED', activationEnrollmentRule: 'B13_CURRENT_ACTIVE_REQUIRED', activationSessionRule: 'NOT_REQUIRED',
+      limitation: 'Creation remains PLANNED; B13 activation is manual, never automatic from date storage' });
   });
 
   it.skipIf(!browserAvailable)('B12 CA04 native ACTIVE/PENDING enrollment and linked unassigned Teacher remain truthful in actual browser', async () => {

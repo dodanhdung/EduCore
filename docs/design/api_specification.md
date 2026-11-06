@@ -653,3 +653,26 @@ Input is exactly `{membershipId:UUID, expectedMembershipId:null, reason:string(1
 Actor must hold current TENANT-scoped `member.update AND role.assign AND teacher.update/student.update`. Target membership/User ACTIVE, membership not left, activation timestamp present and credential in the format accepted by the current password verifier; no password verification/OTP bypass is performed by linking. Profile ACTIVE, same tenant, unclaimed. Matching unrevoked seeded Teacher/Student role required. Student scope must name the exact student. Teacher TENANT or active/planned CLASS scope is accepted; when the profile has current assignments, a CLASS grant must intersect a current assignment. A valid CLASS grant may link a profile with no current assignment, but does not create one or unlock Teacher portal access. Other assignments remain limited by existing resource scope checks.
 
 LINK only; no unlink/rebind/ownership transfer, account/role/profile/assignment/Parent creation. Existing imported ownership cannot be claimed. No frontend profile-link UI is added in this candidate. Existing authorized API callers and the future approved B1 runbook are the call sites; readers consume the association on their next current-authority request.
+
+
+## R13 B1.3 — Approved Class Activation (local implementation candidate, 2026-11-05)
+
+Authority: owner B1.3 explicitly approves the business rule; see Decision Register §H. This section supersedes only historical proposed class status editing for PLANNED → ACTIVE. No other state editor/transition, Figma UI, Render execution or deployment is approved. Trace FR-08/09/10, UC-08/09/10, Q-03, BR-01/08/09/14.
+
+POST T/academic/classes/{classId}/activate. Existing SessionGuard and selected-tenant bearer transaction, no query parameters, required nonblank Idempotency-Key <=200 characters. Exact body:
+
+~~~json
+{"expectedStatus":"PLANNED","reason":"Lớp đã đủ điều kiện hoạt động","confirmed":true}
+~~~
+
+Strict UUID tenant/class IDs; expectedStatus exactly PLANNED; confirmed exactly true; reason nonblank, raw length <=2000. Reject unknown fields, actor/permission/tenant/time overrides. No new permission: current class.update with actual target scope, checked server-side inside the guarded transaction. Roles alone are not authority.
+
+At the server activation instant: Class PLANNED; active same-tenant course/subject/level, positive capacity consistent with existing academic capacity invariant; dates not inverted if both present. At least one current assignment to an ACTIVE same-tenant Teacher profile, using [validFrom,validTo), and one ACTIVE enrollment to an ACTIVE Student profile using [effectiveFrom,effectiveTo). Ordinary P0 assignment does not require a login account or add a new competency rubric; existing P1 substitution rules do not become activation requirements. No CONFIRMED session requirement and no requirement that startDate has arrived or activation precedes endDate.
+
+Success201 returns exactly {id,tenantId,previousStatus:"PLANNED",status:"ACTIVE",activatedAt,policyVersionId,correlationId}. IDs/status come from the persisted target, activatedAt from server time after guarded source locks. Only Class.status/updatedAt, one CLASS_ACTIVATED audit and one successful R13:CLASS_ACTIVATE receipt change. No enrollment/session/attendance/invoice/payment/assignment/notification effects.
+
+400 invalid input/confirmation/key;401 missing/invalid authentication;403 current tenant/permission/scope denial;404 target missing/foreign under an otherwise authorized tenant scope (existing concealment precedence);409 actual status not PLANNED or same-key changed intent;422 approved unmet prerequisites/inconsistent class data. Unknown SQL/cancellation errors are not converted to success.
+
+Same tenant+operation key with exact class/body returns the original committed response only after fresh current authorization and target lookup; it creates no second effect/audit/receipt. A subsequent natural expiry of prerequisites does not rerun a completed operation. The response correlation belongs to the original receipt on replay; the HTTP request trace can differ. Same key on another class is conflicting intent. Different key after success is stale409. Manual confirmed intent is not privilege elevation.
+
+Function educore_r4.class_activate(uuid,uuid,jsonb), forward migration202611050003_r13_class_activation; existing R4 owner/API boundary. No new tables or Prisma model fields. API execution depends on this migration and its prior attendance/profile-link chain. Local/native/browser evidence is not staging approval. FIGMA_REFERENCE: NOT_PROVIDED; VISUAL_CHANGES: NONE. Existing AC07/AC08/G01/PO04 consume the next normal GET; no frontend activation control is added.

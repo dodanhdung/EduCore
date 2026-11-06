@@ -47,6 +47,20 @@ function placement(value: unknown) {
 export class AcademicCommandController {
   constructor(@Inject(AuthService) private readonly auth: AuthService) {}
 
+  @Post('classes/:classId/activate')
+  activateClass(@Param('tenantId') tenantId: string, @Param('classId') classId: string, @Body() input: unknown,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('idempotency-key') key: string | undefined, @Req() req: Request) {
+    if (Object.keys(req.query).length) throw new BadRequestException('INVALID_INPUT');
+    const body = object(input, ['expectedStatus', 'reason', 'confirmed']);
+    if (body.confirmed !== true) throw new BadRequestException('CONFIRMATION_REQUIRED');
+    if (body.expectedStatus !== 'PLANNED') throw new BadRequestException('INVALID_EXPECTED_STATUS');
+    const command = { expectedStatus: 'PLANNED', confirmed: true, reason: field(body, 'reason', 2000), key: operationKey(key) };
+    return this.auth.repository.transaction(bearer(authorization), (tx) =>
+      result(tx, 'SELECT educore_r4.class_activate($1::uuid,$2::uuid,$3::jsonb) result',
+        uuid(tenantId), uuid(classId), JSON.stringify(command)));
+  }
+
   @Post('enrollments')
   enroll(@Param('tenantId') tenantId: string, @Body() input: unknown,
     @Headers('authorization') authorization: string | undefined,

@@ -25,7 +25,7 @@ export type BrowserDriver = {
   select: (selector: string, value: string) => Promise<void>;
   login: (email: string, password: string, tenantId: string, tenantName?: string) => Promise<void>;
   viewport: (width: number, height: number, mobile: boolean) => Promise<void>;
-  capture: (label: string) => Promise<void>;
+  capture: (label: string, focusSelector?: string) => Promise<void>;
   deferResponse: (path: string) => Promise<{
     waitPaused: () => Promise<number>;
     release: () => Promise<boolean>;
@@ -193,7 +193,7 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
         await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile }, sessionId);
         viewport = { width, height, mobile };
       },
-      capture: async (label) => {
+      capture: async (label, focusSelector) => {
         const configured = process.env.R4_BROWSER_EVIDENCE_DIR;
         if (!configured) return; // Optional evidence; all journey assertions still run.
         const localRoot = resolve(fileURLToPath(new URL('../../../../.local/', import.meta.url)));
@@ -211,13 +211,20 @@ export async function withAcademicBrowser<T>(app: INestApplication, run: (driver
           for (const [width, height] of [[1440, 900], [390, 844]]) {
             await driver.viewport(width, height, width === 390);
             await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+            if (focusSelector) {
+              const focused = await evaluate<boolean>(`(() => { const el=document.querySelector(${JSON.stringify(focusSelector)});
+                if(!el)return false;el.scrollIntoView({block:'center',inline:'center'});return true; })()`);
+              if (!focused) throw Error('SCREENSHOT_FOCUS_TARGET_MISSING');
+              await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+            }
             const geometry = await evaluate<{ scrollWidth: number; innerWidth: number }>('({scrollWidth:document.documentElement.scrollWidth,innerWidth})');
             const image = await send<{ data: string }>('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false }, sessionId);
             const file = `${label}-${width}.png`;
             await writeFile(join(destination, file), Buffer.from(image.data, 'base64'));
             shots.push({ file, width, height, ...geometry, overflow: geometry.scrollWidth > geometry.innerWidth });
           }
-          await writeFile(join(destination, `${label}.json`), JSON.stringify({ source: 'LOCAL_NATIVE_POSTGRES_REAL_HTTP', browser: version.product, shots }, null, 2));
+          await writeFile(join(destination, `${label}.json`), JSON.stringify({ source: 'LOCAL_NATIVE_POSTGRES_REAL_HTTP', browser: version.product, shots,
+            ...(focusSelector ? { focusSelector } : {}) }, null, 2));
         } finally { await driver.viewport(original.width, original.height, original.mobile); }
       },
       login: async (email, password, tenantId, tenantName) => {

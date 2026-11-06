@@ -140,7 +140,7 @@ classDiagram
 | Method/contract (đề xuất) | Trách nhiệm / kiểm soát |
 |---|---|
 | `assertHasCapacity(reservedSeats): void` | không quá giới hạn |
-| `activate(): void` | chuyển ACTIVE hợp lệ |
+| `activate(expectedStatus,reason,key): result` | **B1.3 BUSINESS APPROVED 05/11/2026**: manual PLANNED→ACTIVE, current class.update scope, current valid Teacher + ACTIVE enrollment, valid catalog/capacity/dates; no CONFIRMED-session requirement; atomic audit/receipt. Local SQL/API review candidate; see Decision Register §H and API B1.3. Other transitions remain proposed. |
 | `complete(): void` | giữ enrollments cũ |
 
 ### 3.5. `TeacherCompetency`
